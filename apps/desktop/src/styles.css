@@ -1,1 +1,73 @@
+/* Inter — the design-system typeface for technical / developer tooling.
+   Must precede the Tailwind import so it stays ahead of all emitted rules. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
 @import "tailwindcss";
+
+/*
+ * Anchor design tokens (dark, developer-tool aesthetic).
+ * Slate surfaces + an emerald "run/installed" accent. Dark mode only.
+ */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
+
+  --color-canvas: #0b1120; /* app background, a touch deeper than slate-950 */
+  --color-surface: #0f172a; /* slate-900 — cards / panels */
+  --color-surface-raised: #131c31; /* hover / raised surfaces */
+  --color-hairline: #1e293b; /* slate-800 — borders / dividers */
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-canvas);
+    color: var(--color-slate-100);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Tabular figures for spec numbers so columns don't jitter. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Slim, theme-aware scrollbars — the default macOS ones look out of place on dark surfaces. */
+@layer utilities {
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-hairline) transparent;
+  }
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background-color: var(--color-hairline);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+  }
+  .scrollbar-slim::-webkit-scrollbar-thumb:hover {
+    background-color: #2b3a55;
+  }
+}
+
+/* Honour reduced-motion: drop transitions/animations for users who ask. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
