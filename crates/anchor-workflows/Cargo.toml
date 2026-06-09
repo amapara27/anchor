@@ -1,0 +1,16 @@
+[package]
+name = "anchor-workflows"
+description = "Workflow library and tool system for Anchor."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anchor-core = { workspace = true }
+serde = { workspace = true }
+# TODO: tokio + reqwest for tool execution (web search, HTTP), PDF crate for the file reader.
+
+[dev-dependencies]
+serde_json = { workspace = true }

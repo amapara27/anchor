@@ -1,0 +1,13 @@
+[package]
+name = "anchor-hub"
+description = "Unified local-model registry for Anchor (Ollama + Hugging Face cache)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anchor-core = { workspace = true }
+serde = { workspace = true }
+# TODO: rusqlite for the SQLite registry, walkdir for blob/cache scanning.

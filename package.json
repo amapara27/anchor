@@ -1,0 +1,17 @@
+{
+  "name": "anchor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Manage and configure local models with ease.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @anchor/desktop tauri dev",
+    "dev:web": "pnpm --filter @anchor/desktop dev",
+    "build": "pnpm --filter @anchor/desktop tauri build",
+    "tauri": "pnpm --filter @anchor/desktop tauri"
+  }
+}

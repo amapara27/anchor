@@ -1,0 +1,24 @@
+[package]
+name = "anchor-desktop"
+description = "Anchor desktop application."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+# The Tauri-recommended layout: a library that both the binary and mobile
+# entry points call into.
+name = "anchor_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anchor-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
