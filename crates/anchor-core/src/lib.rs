@@ -19,6 +19,22 @@ pub struct Model {
     pub size_bytes: Option<u64>,
     /// Whether the model is installed locally or merely available to install.
     pub status: ModelStatus,
+    /// Ollama's parameter-size label, e.g. `"8.0B"`, if known.
+    #[serde(default)]
+    pub parameter_size: Option<String>,
+    /// Quantisation level reported by Ollama, e.g. `"Q4_K_M"`, if known.
+    #[serde(default)]
+    pub quantization: Option<String>,
+    /// Maximum context window in tokens, if known (from Ollama's `/api/show`).
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
+    /// Last-modified timestamp Ollama reports (ISO 8601), if known.
+    #[serde(default)]
+    pub modified_at: Option<String>,
+    /// Producing lab / organisation, e.g. `"Meta"`, when the model's GGUF
+    /// metadata exposes it (`general.organization` / `general.author`).
+    #[serde(default)]
+    pub publisher: Option<String>,
 }
 
 /// Installation state of a [`Model`].
@@ -31,22 +47,9 @@ pub enum ModelStatus {
     Available,
 }
 
-/// Returns the models Anchor currently knows about.
-///
-/// This is a placeholder until real on-disk discovery is implemented. It
-/// exists so the desktop shell has a concrete command to call end-to-end.
-pub fn list_models() -> Vec<Model> {
-    Vec::new()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn list_models_starts_empty() {
-        assert!(list_models().is_empty());
-    }
 
     #[test]
     fn model_status_serializes_lowercase() {

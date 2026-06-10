@@ -11,6 +11,31 @@ export interface Model {
   family: string;
   size_bytes: number | null;
   status: ModelStatus;
+  /** Ollama's parameter-size label, e.g. "8.0B". Null when unknown. */
+  parameter_size: string | null;
+  /** Quantisation reported by Ollama, e.g. "Q4_K_M". Null when unknown. */
+  quantization: string | null;
+  /** Max context window in tokens (from `/api/show`). Null when unknown. */
+  context_tokens: number | null;
+  /** Last-modified timestamp Ollama reports (ISO 8601). Null when unknown. */
+  modified_at: string | null;
+  /** Producing lab/org from GGUF metadata, e.g. "Meta". Null when unknown. */
+  publisher: string | null;
+}
+
+/**
+ * One progress event from a streaming `ollama pull`, mirrored from
+ * `anchor_hub::PullProgress`. Sent over a Tauri `Channel` during download.
+ */
+export interface PullProgress {
+  /** Phase, e.g. "pulling manifest", "downloading", "verifying sha256", "success". */
+  status: string;
+  /** Layer digest being transferred, when applicable. */
+  digest?: string;
+  /** Total bytes for the current layer, when known. */
+  total?: number;
+  /** Bytes transferred so far for the current layer, when known. */
+  completed?: number;
 }
 
 // ---------------------------------------------------------------------------

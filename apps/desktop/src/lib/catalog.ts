@@ -198,7 +198,14 @@ export function buildLibrary(installed: Model[]): LibraryModel[] {
       family: entry.family,
       status: live ? "installed" : "available",
       size_bytes: live?.size_bytes ?? entry.spec.download_bytes,
-      spec: entry.spec,
+      // Real Ollama-reported fields when installed; null for available entries.
+      parameter_size: live?.parameter_size ?? null,
+      quantization: live?.quantization ?? null,
+      context_tokens: live?.context_tokens ?? null,
+      modified_at: live?.modified_at ?? null,
+      publisher: live?.publisher ?? null,
+      // Prefer real specs from Ollama over the catalog estimates when installed.
+      spec: live ? enrichSpec(entry.spec, live) : entry.spec,
       tags: [],
       note: "",
     };
@@ -217,16 +224,44 @@ export function buildLibrary(installed: Model[]): LibraryModel[] {
   return [...fromCatalog, ...extras];
 }
 
+/**
+ * Parse Ollama's parameter-size label (e.g. "8.0B", "137M") into a count in
+ * billions. Returns `null` when it can't be parsed.
+ */
+export function parseParamSize(label: string | null | undefined): number | null {
+  if (!label) return null;
+  const m = label.trim().match(/^([\d.]+)\s*([BMK])?$/i);
+  if (!m) return null;
+  const value = parseFloat(m[1]);
+  if (Number.isNaN(value)) return null;
+  const unit = (m[2] ?? "B").toUpperCase();
+  const scale = unit === "B" ? 1 : unit === "M" ? 1e-3 : 1e-6; // K → billions
+  return value * scale;
+}
+
+/** Overlay real Ollama-reported facts onto a catalog spec when installed. */
+function enrichSpec(base: ModelSpec, live: Model): ModelSpec {
+  const params = parseParamSize(live.parameter_size);
+  return {
+    ...base,
+    params_b: params ?? base.params_b,
+    quant: live.quantization ?? base.quant,
+    context_tokens: live.context_tokens ?? base.context_tokens,
+    download_bytes: live.size_bytes ?? base.download_bytes,
+    publisher: live.publisher ?? base.publisher,
+  };
+}
+
 /** Best-effort spec for an installed model not present in the catalog. */
 function placeholderSpec(m: Model): ModelSpec {
   return {
-    params_b: 0,
-    quant: "unknown",
-    context_tokens: 0,
+    params_b: parseParamSize(m.parameter_size) ?? 0,
+    quant: m.quantization ?? "unknown",
+    context_tokens: m.context_tokens ?? 0,
     download_bytes: m.size_bytes ?? 0,
     min_memory_bytes: m.size_bytes ? m.size_bytes * 1.5 : 0,
-    publisher: "Local",
-    blurb: "Installed locally — detailed metadata pending registry scan.",
+    publisher: m.publisher ?? "Local",
+    blurb: "Installed locally via Ollama.",
     use_cases: [],
   };
 }

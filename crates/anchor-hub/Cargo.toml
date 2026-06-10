@@ -10,4 +10,11 @@ repository.workspace = true
 [dependencies]
 anchor-core = { workspace = true }
 serde = { workspace = true }
-# TODO: rusqlite for the SQLite registry, walkdir for blob/cache scanning.
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
