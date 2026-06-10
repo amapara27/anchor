@@ -2,7 +2,7 @@ import type { DownloadState, LibraryModel } from "../types";
 import { formatBytes, formatContext, formatParams } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 import { SpecPill } from "./SpecPill";
-import { ChipIcon, DownloadIcon, LayersIcon, MemoryIcon, RulerIcon, XIcon } from "./icons";
+import { ChipIcon, DownloadIcon, LayersIcon, MemoryIcon, RulerIcon, StarIcon, XIcon } from "./icons";
 
 interface ModelCardProps {
   model: LibraryModel;
@@ -11,9 +11,20 @@ interface ModelCardProps {
   onSelect: () => void;
   onDownload: () => void;
   onCancel: () => void;
+  favorite?: boolean;
+  onToggleFavorite?: () => void;
 }
 
-export function ModelCard({ model, download, selected, onSelect, onDownload, onCancel }: ModelCardProps) {
+export function ModelCard({
+  model,
+  download,
+  selected,
+  onSelect,
+  onDownload,
+  onCancel,
+  favorite = false,
+  onToggleFavorite,
+}: ModelCardProps) {
   const { spec } = model;
   const installed = model.status === "installed";
   const isDownloading = download != null;
@@ -51,8 +62,27 @@ export function ModelCard({ model, download, selected, onSelect, onDownload, onC
           </p>
         </div>
 
-        {/* Primary action — one per card */}
-        {installed ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onToggleFavorite && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFavorite();
+              }}
+              aria-pressed={favorite}
+              aria-label={favorite ? `Unfavorite ${model.name}` : `Favorite ${model.name}`}
+              className={[
+                "cursor-pointer rounded-md p-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40",
+                favorite ? "text-emerald-400" : "text-slate-500 hover:text-slate-300",
+              ].join(" ")}
+            >
+              <StarIcon className="size-4" filled={favorite} />
+            </button>
+          )}
+
+          {/* Primary action — one per card */}
+          {installed ? (
           <span className="shrink-0 text-xs font-medium text-emerald-400">Ready</span>
         ) : isDownloading ? (
           <button
@@ -78,7 +108,8 @@ export function ModelCard({ model, download, selected, onSelect, onDownload, onC
           >
             <DownloadIcon className="size-3.5" /> Download
           </button>
-        )}
+          )}
+        </div>
       </div>
 
       <p className="mt-3 line-clamp-2 text-sm text-slate-400">{spec.blurb}</p>

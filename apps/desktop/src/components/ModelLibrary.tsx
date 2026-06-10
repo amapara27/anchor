@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { LibraryModel, SortKey, StatusFilter } from "../types";
 import { useModels } from "../lib/useModels";
+import { useFavorites } from "../lib/useFavorites";
 import { catalogFamilies } from "../lib/catalog";
 import { LibraryToolbar } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
@@ -23,6 +24,7 @@ const SORTERS: Record<SortKey, (a: LibraryModel, b: LibraryModel) => number> = {
 export function ModelLibrary() {
   const { models, loading, error, downloads, reload, startDownload, cancelDownload, removeModel, setTags, setNote } =
     useModels();
+  const { isFavorite, toggleFavorite } = useFavorites();
 
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -60,6 +62,13 @@ export function ModelLibrary() {
 
   return (
     <div className="space-y-5">
+      <header className="flex flex-col gap-1">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-50">Model Library</h1>
+        <p className="text-sm text-slate-400">
+          Browse, download, and manage your local models — without the terminal.
+        </p>
+      </header>
+
       <LibraryToolbar
         query={query}
         onQuery={setQuery}
@@ -90,6 +99,8 @@ export function ModelLibrary() {
               onSelect={() => setSelectedId(m.id)}
               onDownload={() => startDownload(m)}
               onCancel={() => cancelDownload(m.id)}
+              favorite={isFavorite(m.id)}
+              onToggleFavorite={() => toggleFavorite(m.id)}
             />
           ))}
         </div>

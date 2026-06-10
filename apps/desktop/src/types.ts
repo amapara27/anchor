@@ -97,3 +97,31 @@ export interface DownloadState {
 
 export type StatusFilter = "all" | ModelStatus;
 export type SortKey = "name" | "size" | "params";
+
+// ---------------------------------------------------------------------------
+// Navigation & workflows.
+// ---------------------------------------------------------------------------
+
+/** The top-level sections selectable from the sidebar. */
+export type Tab = "home" | "models" | "workflows";
+
+/**
+ * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`
+ * (`rename_all = "snake_case"`). The crate is a stub today, so these only drive
+ * the frontend mock library until the registry/executor lands.
+ */
+export type Tool = "web_search" | "file_reader" | "memory";
+
+/**
+ * A workflow template shown in the Workflow Library. Superset of the Rust
+ * `anchor_workflows::Workflow { id, name, tools }` with frontend-only display
+ * fields; the extra fields move onto the wire when the backend is implemented.
+ */
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  /** Suggested model id (e.g. a catalog id like "llama3.1:8b"). */
+  model: string;
+  tools: Tool[];
+}
