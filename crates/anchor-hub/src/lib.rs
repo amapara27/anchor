@@ -18,6 +18,31 @@ pub use ollama::PullProgress;
 /// Default address of a locally running Ollama server.
 pub const DEFAULT_HOST: &str = "http://localhost:11434";
 
+/// Resolves the Ollama host from `OLLAMA_HOST`, falling back to [`DEFAULT_HOST`].
+///
+/// Matches the `ollama` CLI: the value may be a full URL (`http://host:port`) or
+/// a bare `host:port`, in which case `http://` is prepended. An empty/unset var
+/// yields the default.
+fn host_from_env() -> String {
+    normalize_host(std::env::var("OLLAMA_HOST").ok().as_deref())
+}
+
+/// Normalises a raw `OLLAMA_HOST` value into a base URL (pure; see
+/// [`host_from_env`]). `None`/empty → [`DEFAULT_HOST`]; a bare `host:port` gets
+/// an `http://` scheme; an already-qualified URL is passed through.
+fn normalize_host(raw: Option<&str>) -> String {
+    match raw.map(str::trim) {
+        Some(v) if !v.is_empty() => {
+            if v.contains("://") {
+                v.to_string()
+            } else {
+                format!("http://{v}")
+            }
+        }
+        _ => DEFAULT_HOST.to_string(),
+    }
+}
+
 /// Errors surfaced by the registry. Stringified at the Tauri boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -49,9 +74,14 @@ pub struct Registry {
 
 impl Registry {
     /// Opens (creating if needed) the registry cache at `db_path`, ensuring the
-    /// parent directory and schema exist. Uses [`DEFAULT_HOST`] for Ollama.
+    /// parent directory and schema exist.
+    ///
+    /// The Ollama host honours the `OLLAMA_HOST` environment variable (the same
+    /// knob the `ollama` CLI uses) so a server bound to a non-default address or
+    /// port is still reachable; it falls back to [`DEFAULT_HOST`] when unset. A
+    /// bare `host:port` (no scheme) is normalised to an `http://` URL.
     pub fn open(db_path: impl Into<PathBuf>) -> Result<Self> {
-        Self::open_with_host(db_path, DEFAULT_HOST)
+        Self::open_with_host(db_path, host_from_env())
     }
 
     /// Like [`open`](Self::open) but with an explicit Ollama host (e.g. tests).
@@ -118,5 +148,23 @@ impl Registry {
         ollama::delete(&self.host, id).await?;
         db::delete_one(&self.connect()?, id)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_host_handles_unset_bare_and_full() {
+        assert_eq!(normalize_host(None), DEFAULT_HOST);
+        assert_eq!(normalize_host(Some("")), DEFAULT_HOST);
+        assert_eq!(normalize_host(Some("  ")), DEFAULT_HOST);
+        // Bare host:port gets an http scheme.
+        assert_eq!(normalize_host(Some("127.0.0.1:11434")), "http://127.0.0.1:11434");
+        assert_eq!(normalize_host(Some("ollama.local:1234")), "http://ollama.local:1234");
+        // Already-qualified URLs pass through (incl. https / trimmed whitespace).
+        assert_eq!(normalize_host(Some(" http://host:9 ")), "http://host:9");
+        assert_eq!(normalize_host(Some("https://remote:443")), "https://remote:443");
     }
 }

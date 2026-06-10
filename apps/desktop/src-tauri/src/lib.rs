@@ -26,8 +26,15 @@ async fn list_models(app: AppHandle) -> Result<Vec<Model>, String> {
     let registry = registry(&app)?;
     match registry.sync().await {
         Ok(models) => Ok(models),
-        // Ollama down / unreachable: serve the cache so the UI still has data.
-        Err(_) => registry.cached_models().map_err(|e| e.to_string()),
+        // Ollama down / unreachable: serve the last-synced cache so the UI still
+        // has data. But if the cache is also empty we'd otherwise return an empty
+        // list and silently hide the failure — surface the original sync error so
+        // the UI can show *why* nothing appeared instead of a blank library.
+        Err(sync_err) => match registry.cached_models() {
+            Ok(cached) if !cached.is_empty() => Ok(cached),
+            Ok(_) => Err(sync_err.to_string()),
+            Err(db_err) => Err(format!("{sync_err}; cache unavailable: {db_err}")),
+        },
     }
 }
 

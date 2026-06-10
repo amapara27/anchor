@@ -44,8 +44,23 @@ struct TagDetails {
 #[derive(Debug, Deserialize)]
 struct ShowResponse {
     /// Architecture-keyed metadata, e.g. `{ "llama.context_length": 131072 }`.
-    #[serde(default)]
+    ///
+    /// Some models report this as an explicit JSON `null` rather than omitting
+    /// it; `deserialize_with` coalesces both an absent key and a `null` to an
+    /// empty map so a missing field can't fail the whole parse (and thus lose
+    /// the model's enrichment).
+    #[serde(default, deserialize_with = "null_as_empty_map")]
     model_info: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Deserialises a possibly-`null` JSON object as an empty map.
+fn null_as_empty_map<'de, D>(
+    de: D,
+) -> std::result::Result<serde_json::Map<String, serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::deserialize(de)?.unwrap_or_default())
 }
 
 /// A single progress event from a streaming `POST /api/pull`.

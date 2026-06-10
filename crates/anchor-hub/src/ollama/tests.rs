@@ -78,6 +78,11 @@ fn show_response_falls_back_to_author_and_tolerates_missing() {
 
     let empty = parse_show(r#"{"model_info": {}}"#);
     assert_eq!(empty, ShowDetails::default());
+
+    // An absent `model_info` and an explicit `null` must both parse cleanly to
+    // an empty map rather than erroring (which would drop the model's metadata).
+    assert_eq!(parse_show(r#"{}"#), ShowDetails::default());
+    assert_eq!(parse_show(r#"{"model_info": null}"#), ShowDetails::default());
 }
 
 #[test]
