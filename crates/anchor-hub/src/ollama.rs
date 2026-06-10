@@ -94,6 +94,11 @@ where
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct PullProgress {
     /// Human-readable phase, e.g. `"pulling manifest"`, `"downloading"`, `"success"`.
+    ///
+    /// Defaults to empty: Ollama's mid-stream error frame is a bare
+    /// `{"error": ...}` with no `status`, and this must still parse so the error
+    /// is surfaced rather than skipped as an unparseable line.
+    #[serde(default)]
     pub status: String,
     /// Layer digest being transferred, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -198,7 +203,13 @@ where
     F: FnMut(PullProgress) + Send,
 {
     let url = format!("{host}/api/pull");
-    let resp = reqwest::Client::new()
+    // A pull can run for many minutes, so no total timeout — just bound the
+    // connect and the idle gap between reads so a wedged server can't hang us.
+    let client = reqwest::Client::builder()
+        .connect_timeout(PULL_CONNECT_TIMEOUT)
+        .read_timeout(PULL_READ_TIMEOUT)
+        .build()?;
+    let resp = client
         .post(&url)
         .json(&serde_json::json!({ "name": id, "stream": true }))
         .send()
@@ -217,13 +228,28 @@ where
                 continue;
             }
             if let Ok(event) = serde_json::from_slice::<PullProgress>(line) {
+                // Ollama reports failures as a `{"error": ...}` frame on an
+                // HTTP-200 stream, so surface it rather than report success.
+                if let Some(err) = &event.error {
+                    return Err(Error::Ollama(err.clone()));
+                }
                 on_progress(event);
             }
+        }
+        // A single line past the cap means a malformed/hostile stream — bail
+        // rather than buffer unboundedly.
+        if buf.len() > MAX_PULL_LINE_BYTES {
+            return Err(Error::Ollama(format!(
+                "pull stream line exceeded {MAX_PULL_LINE_BYTES} bytes"
+            )));
         }
     }
     // Flush a trailing line with no terminating newline.
     if !buf.iter().all(u8::is_ascii_whitespace) {
         if let Ok(event) = serde_json::from_slice::<PullProgress>(&buf) {
+            if let Some(err) = &event.error {
+                return Err(Error::Ollama(err.clone()));
+            }
             on_progress(event);
         }
     }
@@ -233,7 +259,7 @@ where
 /// Removes a model from the local Ollama server via `DELETE /api/delete`.
 pub async fn delete(host: &str, id: &str) -> Result<()> {
     let url = format!("{host}/api/delete");
-    reqwest::Client::new()
+    request_client()?
         .delete(&url)
         .json(&serde_json::json!({ "name": id }))
         .send()

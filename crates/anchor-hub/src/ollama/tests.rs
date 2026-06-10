@@ -100,3 +100,14 @@ fn pull_progress_parses_partial_fields() {
     assert_eq!(downloading.completed, Some(40));
     assert_eq!(downloading.digest.as_deref(), Some("sha256:abc"));
 }
+
+#[test]
+fn pull_progress_captures_error_frame() {
+    // Ollama signals failures with a bare `{"error": ...}` frame (no `status`)
+    // on an HTTP-200 stream; it must still parse so `pull` can fail on it rather
+    // than skip it as an unparseable line.
+    let frame: PullProgress =
+        serde_json::from_str(r#"{"error":"model not found"}"#).unwrap();
+    assert_eq!(frame.error.as_deref(), Some("model not found"));
+    assert_eq!(frame.status, "");
+}

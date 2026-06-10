@@ -36,6 +36,8 @@ export interface PullProgress {
   total?: number;
   /** Bytes transferred so far for the current layer, when known. */
   completed?: number;
+  /** An error Ollama reported mid-stream (HTTP 200), e.g. an unknown model. */
+  error?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -15,11 +15,20 @@ use anchor_hub::{PullProgress, Registry};
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
 
-/// Holds the `ollama serve` process Anchor started, if any, so it can be stopped
-/// when Anchor exits. Stays `None` when a server was already running (we never
-/// kill a server we didn't start).
+/// Owns Anchor's relationship to the Ollama server.
+///
+/// - `child` holds the `ollama serve` process Anchor started, if any, so it can
+///   be stopped on exit. It stays `None` when a server was already running (we
+///   never kill a server we didn't start).
+/// - `start_lock` serializes startup so two commands firing at once (e.g. an
+///   initial `list_models` while the user clicks download) can't both observe a
+///   down server and each spawn `ollama serve`. The holder re-checks liveness
+///   inside [`server::ensure_running`] before spawning.
 #[derive(Default)]
-struct ServerProcess(Mutex<Option<Child>>);
+struct ServerState {
+    child: Mutex<Option<Child>>,
+    start_lock: tokio::sync::Mutex<()>,
+}
 
 /// Builds a [`Registry`] backed by `registry.db` in the app's data directory.
 fn registry(app: &AppHandle) -> Result<Registry, String> {
@@ -32,17 +41,24 @@ fn registry(app: &AppHandle) -> Result<Registry, String> {
 
 /// Makes sure an Ollama server is reachable, starting one if needed.
 ///
-/// Idempotent and cheap once up: [`server::ensure_running`] health-checks first
-/// and only spawns when nothing is listening. A process Anchor starts is stashed
-/// in [`ServerProcess`] state so it can be killed on exit.
+/// Fast-paths the common case (server already up) without locking, then
+/// serializes actual startup behind `start_lock` so concurrent commands can't
+/// double-spawn: [`server::ensure_running`] re-checks liveness under the lock and
+/// only spawns when nothing is listening. A process Anchor starts is stashed in
+/// [`ServerState`] so it can be killed on exit.
 async fn ensure_server(app: &AppHandle) -> Result<(), String> {
     let host = anchor_hub::ollama_host();
+    if server::is_running(&host).await {
+        return Ok(());
+    }
+    let state = app.state::<ServerState>();
+    // Only one startup runs at a time; the loser re-checks and sees it up.
+    let _start = state.start_lock.lock().await;
     match server::ensure_running(&host).await {
         EnsureOutcome::AlreadyRunning => Ok(()),
         EnsureOutcome::Started(child) => {
             // Replace any prior handle; killing a stale one avoids orphans.
-            let slot = app.state::<ServerProcess>();
-            let mut guard = slot.0.lock().unwrap();
+            let mut guard = state.child.lock().unwrap();
             if let Some(mut old) = guard.replace(child) {
                 let _ = old.kill();
             }
@@ -105,7 +121,7 @@ async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(ServerProcess::default())
+        .manage(ServerState::default())
         .invoke_handler(tauri::generate_handler![
             list_models,
             download_model,
@@ -117,7 +133,7 @@ pub fn run() {
             // On exit, stop the Ollama server *we* started (if any). A server
             // that was already running isn't ours to kill, so its handle is None.
             if let RunEvent::Exit = event {
-                if let Some(mut child) = app.state::<ServerProcess>().0.lock().unwrap().take() {
+                if let Some(mut child) = app.state::<ServerState>().child.lock().unwrap().take() {
                     let _ = child.kill();
                 }
             }
