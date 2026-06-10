@@ -12,11 +12,20 @@ use rusqlite::Connection;
 
 pub mod db;
 pub mod ollama;
+pub mod server;
 
 pub use ollama::PullProgress;
 
 /// Default address of a locally running Ollama server.
 pub const DEFAULT_HOST: &str = "http://localhost:11434";
+
+/// The resolved Ollama base URL (honours `OLLAMA_HOST`, else [`DEFAULT_HOST`]).
+///
+/// Exposed so the Tauri shell can health-check / start the server against the
+/// exact host a [`Registry`] will talk to.
+pub fn ollama_host() -> String {
+    host_from_env()
+}
 
 /// Resolves the Ollama host from `OLLAMA_HOST`, falling back to [`DEFAULT_HOST`].
 ///

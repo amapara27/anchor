@@ -1,4 +1,6 @@
-#[tokio::main]
+// current_thread keeps this buildable under anchor-hub's dev `tokio` features
+// (`rt`, no `rt-multi-thread`), so `cargo test -p anchor-hub` compiles examples.
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".into());
     let models = anchor_hub::ollama::list_local_models(&host).await.expect("list failed");
