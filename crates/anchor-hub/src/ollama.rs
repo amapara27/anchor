@@ -4,11 +4,36 @@
 //! Ollama server (default `http://localhost:11434`) to discover, pull, and remove
 //! models. Everything here maps Ollama's wire shapes onto [`anchor_core::Model`].
 
+use std::time::Duration;
+
 use anchor_core::{Model, ModelStatus};
 use futures_util::StreamExt;
 use serde::Deserialize;
 
 use crate::{Error, Result};
+
+/// Timeout for the quick request/response calls (`/api/tags`, `/api/show`,
+/// `/api/delete`). The streaming pull uses its own timeouts (see [`pull`]).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long to wait to connect when pulling.
+const PULL_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Max idle gap between pull-stream reads before we give up. Ollama emits
+/// progress frequently, so a long stall means the server is wedged.
+const PULL_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Cap on a single NDJSON line. Ollama progress frames are tiny (<1 KiB), so a
+/// line past this is a malformed/hostile stream, not real progress — bail rather
+/// than buffer unboundedly.
+const MAX_PULL_LINE_BYTES: usize = 1 << 20; // 1 MiB
+
+/// A reqwest client with a total timeout, for the non-streaming endpoints.
+fn request_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()?)
+}
 
 /// Response shape of `GET /api/tags`.
 #[derive(Debug, Deserialize)]
@@ -79,6 +104,10 @@ pub struct PullProgress {
     /// Bytes transferred so far for the current layer, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed: Option<u64>,
+    /// An error Ollama reported mid-stream (e.g. unknown model). Ollama sends
+    /// these with HTTP 200, so without this the pull would look successful.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Maps a `/api/tags` entry onto an Anchor [`Model`] marked installed.
@@ -109,7 +138,13 @@ pub struct ShowDetails {
 /// Lists every model installed in the local Ollama server.
 pub async fn list_local_models(host: &str) -> Result<Vec<Model>> {
     let url = format!("{host}/api/tags");
-    let resp: TagsResponse = reqwest::get(&url).await?.error_for_status()?.json().await?;
+    let resp: TagsResponse = request_client()?
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
     Ok(resp.models.into_iter().map(tag_to_model).collect())
 }
 
@@ -124,7 +159,7 @@ pub async fn list_local_models(host: &str) -> Result<Vec<Model>> {
 /// enrichment, never required.
 pub async fn show_details(host: &str, id: &str) -> Result<ShowDetails> {
     let url = format!("{host}/api/show");
-    let resp: ShowResponse = reqwest::Client::new()
+    let resp: ShowResponse = request_client()?
         .post(&url)
         .json(&serde_json::json!({ "name": id }))
         .send()

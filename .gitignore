@@ -24,3 +24,4 @@ apps/desktop/src-tauri/gen
 *.log
 
 CLAUDE.md
+SKILL.md

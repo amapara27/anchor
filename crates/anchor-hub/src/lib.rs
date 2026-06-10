@@ -58,6 +58,10 @@ pub enum Error {
     /// An HTTP / Ollama transport failure.
     #[error("ollama request failed: {0}")]
     Http(String),
+    /// An error the Ollama server reported in a response body (HTTP 200), e.g. a
+    /// `{"error": "..."}` frame mid-pull for an unknown model.
+    #[error("ollama error: {0}")]
+    Ollama(String),
     /// A SQLite failure.
     #[error("registry database error: {0}")]
     Db(#[from] rusqlite::Error),
