@@ -1,6 +1,7 @@
 import type { DownloadState, LibraryModel } from "../types";
 import { formatBytes, formatContext, formatParams } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
+import { FitBadge } from "./FitBadge";
 import { SpecPill } from "./SpecPill";
 import { ChipIcon, DownloadIcon, LayersIcon, MemoryIcon, RulerIcon, StarIcon, XIcon } from "./icons";
 
@@ -13,6 +14,8 @@ interface ModelCardProps {
   onCancel: () => void;
   favorite?: boolean;
   onToggleFavorite?: () => void;
+  /** Host total memory in bytes, for the hardware-fit flag. */
+  totalMemoryBytes?: number | null;
 }
 
 export function ModelCard({
@@ -24,6 +27,7 @@ export function ModelCard({
   onCancel,
   favorite = false,
   onToggleFavorite,
+  totalMemoryBytes,
 }: ModelCardProps) {
   const { spec } = model;
   const installed = model.status === "installed";
@@ -54,6 +58,7 @@ export function ModelCard({
           <div className="flex items-center gap-2">
             <h3 className="truncate font-semibold text-slate-100">{model.name}</h3>
             <StatusBadge status={model.status} />
+            <FitBadge minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
           </div>
           <p className="mt-0.5 text-xs text-slate-500">
             <span className="capitalize">{model.family}</span>

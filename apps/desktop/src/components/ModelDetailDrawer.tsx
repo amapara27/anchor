@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DownloadState, LibraryModel } from "../types";
 import { formatBytes, formatContext, formatParams } from "../lib/format";
+import { memoryFit } from "../lib/fit";
 import { StatusBadge } from "./StatusBadge";
 import {
   ChipIcon,
@@ -24,6 +25,8 @@ interface DrawerProps {
   onRemove: () => void;
   onTagsChange: (tags: string[]) => void;
   onNoteChange: (note: string) => void;
+  /** Host total memory in bytes, for the hardware-compatibility line. */
+  totalMemoryBytes?: number | null;
 }
 
 export function ModelDetailDrawer({
@@ -35,6 +38,7 @@ export function ModelDetailDrawer({
   onRemove,
   onTagsChange,
   onNoteChange,
+  totalMemoryBytes,
 }: DrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const open = model != null;
@@ -87,6 +91,7 @@ export function ModelDetailDrawer({
             onRemove={onRemove}
             onTagsChange={onTagsChange}
             onNoteChange={onNoteChange}
+            totalMemoryBytes={totalMemoryBytes}
           />
         )}
       </div>
@@ -103,6 +108,7 @@ function DrawerBody({
   onRemove,
   onTagsChange,
   onNoteChange,
+  totalMemoryBytes,
 }: DrawerProps & { model: LibraryModel }) {
   const { spec } = model;
   const installed = model.status === "installed";
@@ -157,6 +163,7 @@ function DrawerBody({
               <p className="text-xs text-slate-500">Unified memory on Apple Silicon, or RAM + VRAM elsewhere.</p>
             </div>
           </div>
+          <Compatibility minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
         </section>
 
         {/* Use cases */}
@@ -225,6 +232,27 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{children}</h3>
   );
+}
+
+/** A line stating whether this model fits the host's memory. */
+function Compatibility({
+  minMemoryBytes,
+  totalMemoryBytes,
+}: {
+  minMemoryBytes: number;
+  totalMemoryBytes?: number | null;
+}) {
+  const tier = memoryFit(minMemoryBytes, totalMemoryBytes);
+  if (tier === "unknown") return null;
+  const host = formatBytes(totalMemoryBytes);
+  const need = formatBytes(minMemoryBytes);
+  const { className, label } =
+    tier === "wont_fit"
+      ? { className: "text-red-300", label: `Too large for your ${host} Mac` }
+      : tier === "tight"
+        ? { className: "text-amber-300", label: `Tight fit — needs ${need} of your ${host}` }
+        : { className: "text-emerald-300", label: `Fits your ${host} Mac` };
+  return <p className={`mt-1.5 text-xs ${className}`}>{label}</p>;
 }
 
 function SpecRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

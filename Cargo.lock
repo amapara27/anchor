@@ -58,6 +58,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-core",
  "anchor-hub",
+ "anchor-system",
  "serde",
  "serde_json",
  "tauri",
@@ -78,6 +79,16 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "anchor-system"
+version = "0.1.0"
+dependencies = [
+ "anchor-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

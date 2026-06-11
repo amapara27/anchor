@@ -47,6 +47,35 @@ pub enum ModelStatus {
     Available,
 }
 
+/// A snapshot of the host machine's static hardware specs.
+///
+/// Profiled once (on macOS, from `system_profiler`) and cached to disk by the
+/// `anchor-system` crate, then surfaced on the home screen and used to flag
+/// models too large for the machine. Every probed field is optional: a parse
+/// miss degrades that field to `None` rather than failing the whole profile, so
+/// the UI always has *something* to show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HardwareProfile {
+    /// Marketing chip/CPU name, e.g. `"Apple M3 Pro"` or `"Intel Core i7"`.
+    pub chip: Option<String>,
+    /// CPU architecture from the running binary: `"aarch64"` or `"x86_64"`.
+    pub arch: String,
+    /// Total physical (unified, on Apple Silicon) memory in bytes.
+    pub memory_bytes: Option<u64>,
+    /// Total CPU cores (performance + efficiency on Apple Silicon).
+    pub total_cores: Option<u32>,
+    /// Performance cores, when the platform reports the split.
+    pub performance_cores: Option<u32>,
+    /// Efficiency cores, when the platform reports the split.
+    pub efficiency_cores: Option<u32>,
+    /// macOS product version, e.g. `"15.5"`.
+    pub os_version: Option<String>,
+    /// True on Apple Silicon (unified memory), i.e. `arch == "aarch64"`.
+    pub apple_silicon: bool,
+    /// Human model name, e.g. `"MacBook Pro"`.
+    pub model_name: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

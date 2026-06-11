@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { LibraryModel, SortKey, StatusFilter } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
+import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { catalogFamilies } from "../lib/catalog";
 import { LibraryToolbar } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
@@ -25,6 +26,8 @@ export function ModelLibrary() {
   const { models, loading, error, downloads, reload, startDownload, cancelDownload, removeModel, setTags, setNote } =
     useModels();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { profile } = useHardwareProfile();
+  const totalMemoryBytes = profile?.memory_bytes ?? null;
 
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -101,6 +104,7 @@ export function ModelLibrary() {
               onCancel={() => cancelDownload(m.id)}
               favorite={isFavorite(m.id)}
               onToggleFavorite={() => toggleFavorite(m.id)}
+              totalMemoryBytes={totalMemoryBytes}
             />
           ))}
         </div>
@@ -115,6 +119,7 @@ export function ModelLibrary() {
         onRemove={() => selected && removeModel(selected.id)}
         onTagsChange={(tags) => selected && setTags(selected.id, tags)}
         onNoteChange={(note) => selected && setNote(selected.id, note)}
+        totalMemoryBytes={totalMemoryBytes}
       />
     </div>
   );

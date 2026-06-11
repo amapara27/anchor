@@ -1,10 +1,21 @@
 import { useMemo } from "react";
-import type { Tab } from "../types";
+import type { HardwareProfile, Tab } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
+import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { formatBytes } from "../lib/format";
 import { ModelCard } from "./ModelCard";
-import { BoxesIcon, ClockIcon, HardDriveIcon, LayersIcon, StarIcon } from "./icons";
+import { SpecPill } from "./SpecPill";
+import {
+  BoxesIcon,
+  ChipIcon,
+  ClockIcon,
+  HardDriveIcon,
+  LayersIcon,
+  MemoryIcon,
+  RefreshIcon,
+  StarIcon,
+} from "./icons";
 
 interface HomePageProps {
   onNavigate: (tab: Tab) => void;
@@ -14,6 +25,8 @@ interface HomePageProps {
 export function HomePage({ onNavigate }: HomePageProps) {
   const { models, downloads, startDownload, cancelDownload } = useModels();
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { profile, loading: hwLoading, refresh: refreshHardware } = useHardwareProfile();
+  const totalMemoryBytes = profile?.memory_bytes ?? null;
 
   const stats = useMemo(() => {
     const installed = models.filter((m) => m.status === "installed");
@@ -35,6 +48,8 @@ export function HomePage({ onNavigate }: HomePageProps) {
         <h1 className="text-2xl font-semibold tracking-tight text-slate-50">Home</h1>
         <p className="text-sm text-slate-400">Your local AI at a glance.</p>
       </header>
+
+      <MacPanel profile={profile} loading={hwLoading} onRefresh={refreshHardware} />
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard icon={<BoxesIcon className="size-4" />} label="Installed models" value={String(stats.installed)} />
@@ -58,6 +73,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 onCancel={() => cancelDownload(m.id)}
                 favorite
                 onToggleFavorite={() => toggleFavorite(m.id)}
+                totalMemoryBytes={totalMemoryBytes}
               />
             ))}
           </div>
@@ -78,6 +94,84 @@ export function HomePage({ onNavigate }: HomePageProps) {
           hint="Once workflows run locally, your recent models and sessions will show up here."
         />
       </section>
+    </div>
+  );
+}
+
+/** "Your Mac" panel: the host hardware profile, at a glance. */
+function MacPanel({
+  profile,
+  loading,
+  onRefresh,
+}: {
+  profile: HardwareProfile | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  // First-ever profiling can take a beat (a subprocess); show a placeholder.
+  if (loading && !profile) {
+    return (
+      <div className="animate-pulse rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+        <div className="h-4 w-40 rounded bg-slate-800" />
+        <div className="mt-3 flex gap-1.5">
+          <div className="h-6 w-24 rounded-md bg-slate-800" />
+          <div className="h-6 w-28 rounded-md bg-slate-800" />
+          <div className="h-6 w-20 rounded-md bg-slate-800" />
+        </div>
+      </div>
+    );
+  }
+
+  const title = profile?.chip
+    ? profile.model_name
+      ? `${profile.chip} · ${profile.model_name}`
+      : profile.chip
+    : (profile?.model_name ?? "Your Mac");
+
+  const cores =
+    profile?.total_cores != null
+      ? `${profile.total_cores}-core CPU` +
+        (profile.performance_cores != null && profile.efficiency_cores != null
+          ? ` · ${profile.performance_cores}P + ${profile.efficiency_cores}E`
+          : "")
+      : null;
+
+  // Both unknown → profiling failed or returned nothing useful.
+  const unavailable = !profile || (profile.chip == null && profile.memory_bytes == null);
+
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-slate-500">
+            <ChipIcon className="size-4" />
+            <span className="text-xs font-medium uppercase tracking-wide">Your Mac</span>
+          </div>
+          <p className="mt-1 truncate text-lg font-semibold text-slate-100">{title}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          aria-label="Refresh hardware profile"
+          className="-mr-1 shrink-0 cursor-pointer rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+        >
+          <RefreshIcon className={`size-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {unavailable ? (
+        <p className="mt-3 text-sm text-slate-500">Hardware details unavailable.</p>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {profile.memory_bytes != null && (
+            <SpecPill icon={<MemoryIcon className="size-3.5" />} label="Memory" value={formatBytes(profile.memory_bytes)} />
+          )}
+          {cores && <SpecPill icon={<ChipIcon className="size-3.5" />} label="CPU" value={cores} />}
+          {profile.os_version && (
+            <SpecPill icon={<HardDriveIcon className="size-3.5" />} label="macOS" value={`macOS ${profile.os_version}`} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -9,9 +9,10 @@
 use std::process::Child;
 use std::sync::Mutex;
 
-use anchor_core::Model;
+use anchor_core::{HardwareProfile, Model};
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{PullProgress, Registry};
+use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
 
@@ -117,6 +118,37 @@ async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
     registry(&app)?.remove(&id).await.map_err(|e| e.to_string())
 }
 
+/// Builds a [`Profiler`] backed by `hardware.json` in the app's data directory.
+fn profiler(app: &AppHandle) -> Result<Profiler, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve app data dir: {e}"))?;
+    Ok(Profiler::new(dir.join("hardware.json")))
+}
+
+/// Returns the host hardware profile, profiling once and caching to disk on the
+/// first call (then reading the cache on later launches).
+#[tauri::command]
+async fn get_hardware_profile(app: AppHandle) -> Result<HardwareProfile, String> {
+    let profiler = profiler(&app)?;
+    // `system_profiler` is a blocking subprocess; keep the async runtime free.
+    tauri::async_runtime::spawn_blocking(move || profiler.get())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Re-runs the profiler, overwriting the cache. Backs a manual refresh.
+#[tauri::command]
+async fn refresh_hardware_profile(app: AppHandle) -> Result<HardwareProfile, String> {
+    let profiler = profiler(&app)?;
+    tauri::async_runtime::spawn_blocking(move || profiler.refresh())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -125,7 +157,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_models,
             download_model,
-            remove_model
+            remove_model,
+            get_hardware_profile,
+            refresh_hardware_profile
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

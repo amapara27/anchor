@@ -24,6 +24,32 @@ export interface Model {
 }
 
 /**
+ * The host's static hardware specs, mirrored from `anchor_core::HardwareProfile`.
+ * Best-effort: every probed field may be null when `system_profiler` doesn't
+ * report it. Profiled once on first launch and cached to disk by `anchor-system`.
+ */
+export interface HardwareProfile {
+  /** Chip/CPU name, e.g. "Apple M3 Pro" / "Intel Core i7". Null when unknown. */
+  chip: string | null;
+  /** CPU architecture: "aarch64" | "x86_64". */
+  arch: string;
+  /** Total physical/unified memory in bytes. Null when unknown. */
+  memory_bytes: number | null;
+  /** Total CPU cores (performance + efficiency). Null when unknown. */
+  total_cores: number | null;
+  /** Performance cores, when the platform reports the split. */
+  performance_cores: number | null;
+  /** Efficiency cores, when the platform reports the split. */
+  efficiency_cores: number | null;
+  /** macOS product version, e.g. "15.5". Null when unknown. */
+  os_version: string | null;
+  /** True on Apple Silicon (unified memory). */
+  apple_silicon: boolean;
+  /** Human model name, e.g. "MacBook Pro". Null when unknown. */
+  model_name: string | null;
+}
+
+/**
  * One progress event from a streaming `ollama pull`, mirrored from
  * `anchor_hub::PullProgress`. Sent over a Tauri `Channel` during download.
  */
