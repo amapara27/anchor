@@ -15,6 +15,36 @@
   --color-surface: #0f172a; /* slate-900 — cards / panels */
   --color-surface-raised: #131c31; /* hover / raised surfaces */
   --color-hairline: #1e293b; /* slate-800 — borders / dividers */
+
+  /* Elevation — dark UIs read depth from shadow + a faint top edge, not light. */
+  --shadow-card: 0 1px 2px rgb(2 6 23 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.02) inset;
+  --shadow-card-hover:
+    0 8px 24px -8px rgb(2 6 23 / 0.8), 0 2px 6px rgb(2 6 23 / 0.4),
+    0 0 0 1px rgb(255 255 255 / 0.03) inset;
+  --shadow-glow-emerald: 0 0 24px -6px rgb(16 185 129 / 0.35);
+
+  /* Page-enter: small rise + fade, snappy spring-ish ease. */
+  --animate-fade-up: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-fade-in: fade-in 0.3s ease both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 }
 
 @layer base {
@@ -26,12 +56,31 @@
 
   body {
     margin: 0;
+    /* Ambient depth: a faint emerald bloom up top + a cool counter-glow, over the canvas. */
     background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(1100px 520px at 75% -12%, rgb(16 185 129 / 0.07), transparent 65%),
+      radial-gradient(900px 480px at -10% -8%, rgb(56 189 248 / 0.05), transparent 60%);
+    background-attachment: fixed;
     color: var(--color-slate-100);
     font-family: var(--font-sans);
     font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+
+  /* Blueprint grid overlay, masked so it fades out below the fold. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgb(148 163 184 / 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(148 163 184 / 0.04) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: linear-gradient(to bottom, black, transparent 55%);
+    -webkit-mask-image: linear-gradient(to bottom, black, transparent 55%);
   }
 
   /* Tabular figures for spec numbers so columns don't jitter. */
@@ -40,8 +89,8 @@
   }
 }
 
-/* Slim, theme-aware scrollbars — the default macOS ones look out of place on dark surfaces. */
 @layer utilities {
+  /* Slim, theme-aware scrollbars — the default macOS ones look out of place on dark surfaces. */
   .scrollbar-slim {
     scrollbar-width: thin;
     scrollbar-color: var(--color-hairline) transparent;
@@ -58,6 +107,84 @@
   }
   .scrollbar-slim::-webkit-scrollbar-thumb:hover {
     background-color: #2b3a55;
+  }
+
+  /* Standard card surface: hairline border, faint inner top-edge, soft drop. */
+  .card {
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-xl);
+    background-color: rgb(15 23 42 / 0.55);
+    box-shadow: var(--shadow-card);
+  }
+  /* Interactive cards lift and pick up a slightly brighter edge. */
+  .card-interactive {
+    transition:
+      transform 0.18s ease,
+      border-color 0.18s ease,
+      box-shadow 0.18s ease,
+      background-color 0.18s ease;
+  }
+  .card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: #334155; /* slate-700 */
+    background-color: var(--color-surface);
+    box-shadow: var(--shadow-card-hover);
+  }
+
+  /* Staggered entrance for card grids: items rise 40ms apart, capped at 8. */
+  .stagger-children > * {
+    animation: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .stagger-children > *:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .stagger-children > *:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .stagger-children > *:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .stagger-children > *:nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .stagger-children > *:nth-child(6) {
+    animation-delay: 200ms;
+  }
+  .stagger-children > *:nth-child(7) {
+    animation-delay: 240ms;
+  }
+  .stagger-children > *:nth-child(n + 8) {
+    animation-delay: 280ms;
+  }
+
+  /* Primary-CTA emerald bloom: stronger on hover so the glow reads as feedback. */
+  .glow-accent {
+    box-shadow: 0 0 16px -6px rgb(16 185 129 / 0.45);
+  }
+  .glow-accent:hover {
+    box-shadow: 0 0 22px -4px rgb(16 185 129 / 0.55);
+  }
+
+  /* Skeleton shimmer — a gradient sweep reads more "loading" than a blink. */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgb(148 163 184 / 0.08) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: shimmer-sweep 1.6s ease-in-out infinite;
+  }
+  @keyframes shimmer-sweep {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
   }
 }
 

@@ -10,7 +10,7 @@ export function SpecPill({
 }) {
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/40 px-2 py-1 text-xs text-slate-400"
+      className="inline-flex items-center gap-1.5 rounded-md bg-slate-800/50 px-2 py-1 text-xs text-slate-400 ring-1 ring-inset ring-slate-700/40"
       title={label}
     >
       <span className="text-slate-500">{icon}</span>

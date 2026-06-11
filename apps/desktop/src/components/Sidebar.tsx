@@ -36,12 +36,15 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
   return (
     <aside
       className={[
-        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-slate-800 bg-surface px-3 py-5 transition-[width] duration-200",
+        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-slate-800/80 bg-surface/80 px-3 py-5 backdrop-blur transition-[width] duration-200",
         collapsed ? "w-16" : "w-56",
       ].join(" ")}
     >
-      <div className={["flex items-center gap-2.5 px-2", collapsed ? "justify-center" : ""].join(" ")}>
-        <AnchorMark className="size-6 shrink-0 text-emerald-400" />
+      <div className={["flex items-center gap-2.5 px-1", collapsed ? "justify-center" : ""].join(" ")}>
+        {/* Brand tile: emerald gradient + soft glow so the mark reads as the app's identity. */}
+        <span className="glow-accent flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600">
+          <AnchorMark className="size-5 text-slate-950" />
+        </span>
         {!collapsed && (
           <span className="flex-1 truncate text-lg font-semibold tracking-tight text-slate-50">Anchor</span>
         )}
@@ -66,20 +69,36 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
               aria-label={collapsed ? label : undefined}
               title={collapsed ? label : undefined}
               className={[
-                "flex w-full cursor-pointer items-center gap-2.5 rounded-lg py-2 text-sm font-medium transition-colors",
+                "relative flex w-full cursor-pointer items-center gap-2.5 rounded-lg py-2 text-sm font-medium transition-colors active:scale-[0.98]",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40",
                 collapsed ? "justify-center px-0" : "px-3",
                 isActive
-                  ? "bg-slate-800/70 text-slate-100"
+                  ? "bg-slate-800/70 text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]"
                   : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200",
               ].join(" ")}
             >
+              {/* Active rail: a slim emerald bar marks the current page (a11y: not colour-only — bg + bar). */}
+              {isActive && !collapsed && (
+                <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400" aria-hidden />
+              )}
               <Icon className={["size-4 shrink-0", isActive ? "text-emerald-400" : ""].join(" ")} />
               {!collapsed && label}
             </button>
           );
         })}
       </nav>
+
+      {/* Footer: version + the local-first promise. */}
+      <div
+        className={[
+          "mt-auto flex items-center gap-2 border-t border-slate-800/70 pt-4 text-[11px] text-slate-500",
+          collapsed ? "justify-center px-0" : "px-2",
+        ].join(" ")}
+        title="Everything runs on this Mac"
+      >
+        <span className="size-1.5 shrink-0 rounded-full bg-emerald-400/80" aria-hidden />
+        {!collapsed && <span className="truncate">100% local · v0.1.0</span>}
+      </div>
     </aside>
   );
 }
@@ -105,7 +124,7 @@ function AnchorMark({ className }: { className?: string }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.75}
+      strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}

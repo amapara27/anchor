@@ -218,7 +218,7 @@ function DrawerBody({
           <button
             type="button"
             onClick={onDownload}
-            className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60"
+            className="glow-accent inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-emerald-400 to-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-all hover:from-emerald-300 hover:to-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 active:scale-[0.99]"
           >
             <DownloadIcon className="size-4" /> Download · {formatBytes(spec.download_bytes)}
           </button>
@@ -257,7 +257,7 @@ function Compatibility({
 
 function SpecRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-800/30 px-3 py-2">
+    <div className="rounded-lg border border-slate-800 bg-slate-800/30 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
       <div className="flex items-center gap-1.5 text-slate-500">
         {icon}
         <span className="text-xs">{label}</span>
@@ -350,7 +350,7 @@ function DrawerProgress({
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-emerald-500 transition-[width] duration-150 ease-out"
+          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 shadow-[0_0_8px_rgb(16_185_129/0.5)] transition-[width] duration-150 ease-out"
           style={{ width: `${verifying ? 100 : pct}%` }}
         />
       </div>

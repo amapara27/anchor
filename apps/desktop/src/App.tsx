@@ -12,7 +12,8 @@ export default function App() {
     <div className="flex min-h-dvh">
       <Sidebar active={tab} onSelect={setTab} />
       <main className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-7xl px-6 py-10 lg:px-8">
+        {/* key remounts on tab switch so the page-enter animation replays */}
+        <div key={tab} className="animate-fade-up mx-auto max-w-7xl px-6 py-10 lg:px-8">
           {tab === "home" && <HomePage onNavigate={setTab} />}
           {tab === "models" && <ModelLibrary />}
           {tab === "workflows" && <WorkflowLibrary />}

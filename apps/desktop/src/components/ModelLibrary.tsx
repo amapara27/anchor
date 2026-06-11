@@ -7,6 +7,7 @@ import { catalogFamilies } from "../lib/catalog";
 import { LibraryToolbar } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
 import { ModelDetailDrawer } from "./ModelDetailDrawer";
+import { PageHeader } from "./PageHeader";
 import { RefreshIcon, SearchIcon, WarningIcon } from "./icons";
 
 function matchesQuery(m: LibraryModel, q: string): boolean {
@@ -65,12 +66,11 @@ export function ModelLibrary() {
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-50">Model Library</h1>
-        <p className="text-sm text-slate-400">
-          Browse, download, and manage your local models — without the terminal.
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Catalog"
+        title="Model Library"
+        subtitle="Browse, download, and manage your local models — without the terminal."
+      />
 
       <LibraryToolbar
         query={query}
@@ -92,7 +92,7 @@ export function ModelLibrary() {
       {!loading && visible.length === 0 && <EmptyState hasModels={models.length > 0} />}
 
       {!loading && visible.length > 0 && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="stagger-children grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visible.map((m) => (
             <ModelCard
               key={m.id}
@@ -129,7 +129,7 @@ function SkeletonGrid() {
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3" aria-hidden>
       {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="animate-pulse rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+        <div key={i} className="card shimmer p-4">
           <div className="flex items-center justify-between">
             <div className="h-4 w-32 rounded bg-slate-800" />
             <div className="h-5 w-20 rounded-full bg-slate-800" />
@@ -149,9 +149,11 @@ function SkeletonGrid() {
 
 function EmptyState({ hasModels }: { hasModels: boolean }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 px-6 py-16 text-center">
-      <SearchIcon className="size-6 text-slate-600" />
-      <p className="mt-3 text-slate-300">No models match your filters</p>
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 bg-slate-900/20 px-6 py-14 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full bg-slate-800/60 text-slate-500 ring-1 ring-slate-700/60">
+        <SearchIcon className="size-5" />
+      </span>
+      <p className="mt-4 font-medium text-slate-300">No models match your filters</p>
       <p className="mt-1 max-w-xs text-sm text-slate-500">
         {hasModels
           ? "Try a different search term, family, or status filter."
