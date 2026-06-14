@@ -64,7 +64,7 @@ export function ModelDetailDrawer({
     >
       {/* Scrim — strong enough to isolate the panel (a11y: modal legibility). */}
       <div
-        className="absolute inset-0 bg-slate-950/70 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/65 backdrop-blur-sm"
         onClick={onClose}
         aria-hidden
       />
@@ -77,7 +77,7 @@ export function ModelDetailDrawer({
         tabIndex={-1}
         className={[
           "scrollbar-slim absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-y-auto",
-          "border-l border-slate-800 bg-slate-900 shadow-2xl outline-none transition-transform duration-300 ease-out",
+          "border-l border-white/10 bg-surface-solid/85 shadow-2xl outline-none backdrop-blur-xl transition-transform duration-300 [transition-timing-function:var(--ease-spring)]",
           open ? "translate-x-0" : "translate-x-full",
         ].join(" ")}
       >
@@ -117,26 +117,26 @@ function DrawerBody({
   return (
     <>
       {/* Header */}
-      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-slate-800 bg-slate-900/95 px-5 py-4 backdrop-blur">
+      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/8 bg-surface-solid/85 px-5 py-4 backdrop-blur-xl">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-lg font-semibold text-slate-100">{model.name}</h2>
+            <h2 className="truncate text-lg font-semibold text-fg">{model.name}</h2>
             <StatusBadge status={model.status} />
           </div>
-          <p className="mt-0.5 font-mono text-xs text-slate-500">{model.id}</p>
+          <p className="data mt-0.5 text-xs text-fg-subtle">{model.id}</p>
         </div>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close details"
-          className="-mr-1 shrink-0 cursor-pointer rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+          className="-mr-1 shrink-0 cursor-pointer rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-white/6 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
         >
           <CloseIcon className="size-5" />
         </button>
       </div>
 
       <div className="flex-1 space-y-6 px-5 py-5">
-        <p className="text-sm leading-relaxed text-slate-300">{spec.blurb}</p>
+        <p className="text-sm leading-relaxed text-fg-muted">{spec.blurb}</p>
 
         {/* Specs */}
         <section>
@@ -156,11 +156,11 @@ function DrawerBody({
         {/* Hardware */}
         <section>
           <SectionLabel>Hardware</SectionLabel>
-          <div className="flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-800/30 px-3 py-2.5">
-            <MemoryIcon className="size-4 shrink-0 text-slate-500" />
+          <div className="flex items-center gap-3 rounded-lg border border-white/8 bg-white/4 px-3 py-2.5">
+            <MemoryIcon className="size-4 shrink-0 text-fg-subtle" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm text-slate-200">{formatBytes(spec.min_memory_bytes)} memory recommended</p>
-              <p className="text-xs text-slate-500">Unified memory on Apple Silicon, or RAM + VRAM elsewhere.</p>
+              <p className="text-sm text-fg">{formatBytes(spec.min_memory_bytes)} memory recommended</p>
+              <p className="text-xs text-fg-subtle">Unified memory on Apple Silicon, or RAM + VRAM elsewhere.</p>
             </div>
           </div>
           <Compatibility minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
@@ -174,7 +174,7 @@ function DrawerBody({
               {spec.use_cases.map((uc) => (
                 <span
                   key={uc}
-                  className="rounded-md bg-slate-800/60 px-2.5 py-1 text-xs text-slate-300 ring-1 ring-inset ring-slate-700/60"
+                  className="rounded-md bg-white/5 px-2.5 py-1 text-xs text-fg-muted ring-1 ring-inset ring-white/10"
                 >
                   {uc}
                 </span>
@@ -197,13 +197,13 @@ function DrawerBody({
             onChange={(e) => onNoteChange(e.target.value)}
             rows={4}
             placeholder="Add your own notes about this model…"
-            className="scrollbar-slim w-full resize-none rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            className="scrollbar-slim w-full resize-none rounded-lg border border-white/8 bg-black/20 px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25"
           />
         </section>
       </div>
 
       {/* Sticky action bar */}
-      <div className="sticky bottom-0 border-t border-slate-800 bg-slate-900/95 px-5 py-4 backdrop-blur">
+      <div className="sticky bottom-0 border-t border-white/8 bg-surface-solid/85 px-5 py-4 backdrop-blur-xl">
         {isDownloading ? (
           <DrawerProgress download={download} totalBytes={spec.download_bytes} onCancel={onCancel} />
         ) : installed ? (
@@ -218,7 +218,7 @@ function DrawerBody({
           <button
             type="button"
             onClick={onDownload}
-            className="glow-accent inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-emerald-400 to-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-all hover:from-emerald-300 hover:to-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 active:scale-[0.99]"
+            className="glow-accent inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-indigo-500 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:from-indigo-400 hover:to-violet-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.99]"
           >
             <DownloadIcon className="size-4" /> Download · {formatBytes(spec.download_bytes)}
           </button>
@@ -230,7 +230,7 @@ function DrawerBody({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{children}</h3>
+    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-subtle">{children}</h3>
   );
 }
 
@@ -257,12 +257,12 @@ function Compatibility({
 
 function SpecRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-800/30 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.03)]">
-      <div className="flex items-center gap-1.5 text-slate-500">
+    <div className="rounded-lg border border-white/8 bg-white/4 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]">
+      <div className="flex items-center gap-1.5 text-fg-subtle">
         {icon}
         <span className="text-xs">{label}</span>
       </div>
-      <p className="tabular mt-1 text-sm font-medium text-slate-100">{value}</p>
+      <p className="data mt-1 text-sm font-medium text-fg">{value}</p>
     </div>
   );
 }
@@ -283,14 +283,14 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           {tags.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 py-0.5 pl-2 pr-1 text-xs font-medium text-emerald-300 ring-1 ring-inset ring-emerald-500/20"
+              className="inline-flex items-center gap-1 rounded-md bg-accent/10 py-0.5 pl-2 pr-1 text-xs font-medium text-accent-text ring-1 ring-inset ring-accent/20"
             >
               {tag}
               <button
                 type="button"
                 onClick={() => onChange(tags.filter((x) => x !== tag))}
                 aria-label={`Remove tag ${tag}`}
-                className="cursor-pointer rounded p-0.5 text-emerald-400/70 transition-colors hover:bg-emerald-500/20 hover:text-emerald-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-emerald-400"
+                className="cursor-pointer rounded p-0.5 text-accent-text/70 transition-colors hover:bg-accent/20 hover:text-accent-text focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <XIcon className="size-3" />
               </button>
@@ -299,7 +299,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
         </div>
       )}
       <div className="relative">
-        <TagIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" />
+        <TagIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -312,7 +312,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           onBlur={add}
           placeholder="Add a tag and press Enter"
           aria-label="Add a tag"
-          className="w-full rounded-lg border border-slate-800 bg-slate-950/40 py-1.5 pl-8 pr-3 text-sm text-slate-200 placeholder:text-slate-600 focus:border-emerald-500/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+          className="w-full rounded-lg border border-white/8 bg-black/20 py-1.5 pl-8 pr-3 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
       </div>
     </div>
@@ -333,28 +333,28 @@ function DrawerProgress({
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between text-sm">
-        <span className="font-medium text-slate-200">{verifying ? "Verifying…" : `Downloading… ${pct}%`}</span>
+        <span className="font-medium text-fg">{verifying ? "Verifying…" : `Downloading… ${pct}%`}</span>
         <button
           type="button"
           onClick={onCancel}
-          className="cursor-pointer text-xs font-medium text-slate-400 transition-colors hover:text-slate-200 focus:outline-none focus-visible:underline"
+          className="cursor-pointer text-xs font-medium text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:underline"
         >
           Cancel
         </button>
       </div>
       <div
-        className="h-2 overflow-hidden rounded-full bg-slate-800"
+        className="h-2 overflow-hidden rounded-full bg-white/8"
         role="progressbar"
         aria-valuenow={pct}
         aria-valuemin={0}
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 shadow-[0_0_8px_rgb(16_185_129/0.5)] transition-[width] duration-150 ease-out"
+          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-400 shadow-[0_0_8px_rgb(99_102_241/0.6)] transition-[width] duration-150 ease-out"
           style={{ width: `${verifying ? 100 : pct}%` }}
         />
       </div>
-      <p className="tabular mt-1.5 text-xs text-slate-500">
+      <p className="data mt-1.5 text-xs text-fg-subtle">
         {formatBytes(download.receivedBytes)} / {formatBytes(totalBytes)}
       </p>
     </div>

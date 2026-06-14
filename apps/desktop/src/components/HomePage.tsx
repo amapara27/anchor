@@ -6,7 +6,6 @@ import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { formatBytes } from "../lib/format";
 import { ModelCard } from "./ModelCard";
 import { PageHeader } from "./PageHeader";
-import { SpecPill } from "./SpecPill";
 import {
   BoxesIcon,
   ChipIcon,
@@ -22,7 +21,7 @@ interface HomePageProps {
   onNavigate: (tab: Tab) => void;
 }
 
-/** Landing page: at-a-glance stats, favorited models, and recent usage. */
+/** Landing page: a bento dashboard of system + library stats, favorites, and usage. */
 export function HomePage({ onNavigate }: HomePageProps) {
   const { models, downloads, startDownload, cancelDownload } = useModels();
   const { isFavorite, toggleFavorite } = useFavorites();
@@ -47,9 +46,9 @@ export function HomePage({ onNavigate }: HomePageProps) {
     <div className="space-y-8">
       <PageHeader eyebrow="Overview" title="Home" subtitle="Your local AI at a glance." />
 
-      <MacPanel profile={profile} loading={hwLoading} onRefresh={refreshHardware} />
-
-      <section className="stagger-children grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* Bento: a 2×2 hardware hero anchors the grid; four stat tiles fill the rest. */}
+      <section className="stagger-children grid grid-cols-2 gap-3 lg:grid-cols-4 lg:auto-rows-[132px]">
+        <HardwareHero profile={profile} loading={hwLoading} onRefresh={refreshHardware} />
         <StatCard icon={<BoxesIcon className="size-4" />} label="Installed models" value={String(stats.installed)} />
         <StatCard icon={<HardDriveIcon className="size-4" />} label="On disk" value={formatBytes(stats.onDisk)} />
         <StatCard icon={<LayersIcon className="size-4" />} label="Families" value={String(stats.families)} />
@@ -80,6 +79,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
             icon={<StarIcon className="size-5" />}
             title="No favorites yet"
             hint="Star a model in the library to pin it here for quick access."
+            action={{ label: "Browse the library", onClick: () => onNavigate("models") }}
           />
         )}
       </section>
@@ -96,8 +96,8 @@ export function HomePage({ onNavigate }: HomePageProps) {
   );
 }
 
-/** "Your Mac" panel: the host hardware profile, at a glance. */
-function MacPanel({
+/** "Your Mac" hero tile: the host hardware profile, made prominent (bento 2×2). */
+function HardwareHero({
   profile,
   loading,
   onRefresh,
@@ -106,114 +106,154 @@ function MacPanel({
   loading: boolean;
   onRefresh: () => void;
 }) {
+  const base = "card relative col-span-2 overflow-hidden p-5 lg:col-span-2 lg:row-span-2";
+
   // First-ever profiling can take a beat (a subprocess); show a placeholder.
   if (loading && !profile) {
     return (
-      <div className="card shimmer p-5">
-        <div className="h-4 w-40 rounded bg-slate-800" />
-        <div className="mt-3 flex gap-1.5">
-          <div className="h-6 w-24 rounded-md bg-slate-800" />
-          <div className="h-6 w-28 rounded-md bg-slate-800" />
-          <div className="h-6 w-20 rounded-md bg-slate-800" />
+      <div className={`${base} shimmer`}>
+        <div className="h-4 w-28 rounded bg-white/8" />
+        <div className="mt-3 h-7 w-48 rounded bg-white/8" />
+        <div className="mt-6 grid grid-cols-2 gap-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-14 rounded-lg bg-white/5" />
+          ))}
         </div>
       </div>
     );
   }
 
-  const title = profile?.chip
-    ? profile.model_name
-      ? `${profile.chip} · ${profile.model_name}`
-      : profile.chip
-    : (profile?.model_name ?? "Your Mac");
-
+  const chip = profile?.chip ?? profile?.model_name ?? "Your Mac";
   const cores =
     profile?.total_cores != null
-      ? `${profile.total_cores}-core CPU` +
+      ? `${profile.total_cores}-core` +
         (profile.performance_cores != null && profile.efficiency_cores != null
-          ? ` · ${profile.performance_cores}P + ${profile.efficiency_cores}E`
+          ? ` · ${profile.performance_cores}P+${profile.efficiency_cores}E`
           : "")
       : null;
-
-  // Both unknown → profiling failed or returned nothing useful.
   const unavailable = !profile || (profile.chip == null && profile.memory_bytes == null);
 
   return (
-    <div className="card relative overflow-hidden p-5">
-      {/* Corner bloom ties the hero panel to the canvas's ambient emerald. */}
+    <div className={base}>
+      {/* Corner bloom ties the hero to the canvas's ambient indigo. */}
       <div
-        className="pointer-events-none absolute -right-16 -top-20 size-56 rounded-full bg-emerald-500/10 blur-3xl"
+        className="pointer-events-none absolute -right-20 -top-24 size-64 rounded-full bg-indigo-500/15 blur-3xl"
         aria-hidden
       />
-      <div className="relative flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-3.5">
-          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-slate-800/80 text-emerald-400 ring-1 ring-slate-700/60">
-            <ChipIcon className="size-5" />
-          </span>
-          <div className="min-w-0">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Your Mac
+      <div className="relative flex h-full flex-col">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3.5">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent/12 text-accent-text ring-1 ring-accent/25">
+              <ChipIcon className="size-5" />
             </span>
-            <p className="mt-0.5 truncate text-xl font-semibold tracking-tight text-slate-100">{title}</p>
+            <div className="min-w-0">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">Your Mac</span>
+              <p className="mt-0.5 truncate text-xl font-semibold tracking-tight text-fg">{chip}</p>
+              {profile?.model_name && profile?.chip && (
+                <p className="truncate text-xs text-fg-muted">{profile.model_name}</p>
+              )}
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            aria-label="Refresh hardware profile"
+            className="-mr-1 shrink-0 cursor-pointer rounded-lg p-1.5 text-fg-subtle transition-colors hover:bg-white/6 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.96]"
+          >
+            <RefreshIcon className={`size-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          aria-label="Refresh hardware profile"
-          className="-mr-1 shrink-0 cursor-pointer rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 active:scale-[0.96]"
-        >
-          <RefreshIcon className={`size-4 ${loading ? "animate-spin" : ""}`} />
-        </button>
-      </div>
 
-      {unavailable ? (
-        <p className="relative mt-3 text-sm text-slate-500">Hardware details unavailable.</p>
-      ) : (
-        <div className="relative mt-4 flex flex-wrap gap-1.5">
-          {profile.memory_bytes != null && (
-            <SpecPill icon={<MemoryIcon className="size-3.5" />} label="Memory" value={formatBytes(profile.memory_bytes)} />
-          )}
-          {cores && <SpecPill icon={<ChipIcon className="size-3.5" />} label="CPU" value={cores} />}
-          {profile.os_version && (
-            <SpecPill icon={<HardDriveIcon className="size-3.5" />} label="macOS" value={`macOS ${profile.os_version}`} />
-          )}
-        </div>
-      )}
+        {unavailable ? (
+          <p className="relative mt-4 text-sm text-fg-subtle">Hardware details unavailable.</p>
+        ) : (
+          <>
+            <div className="mt-auto grid grid-cols-2 gap-2 pt-5">
+              {profile.memory_bytes != null && (
+                <HeroStat icon={<MemoryIcon className="size-4" />} label="Memory" value={formatBytes(profile.memory_bytes)} />
+              )}
+              {cores && <HeroStat icon={<ChipIcon className="size-4" />} label="CPU" value={cores} />}
+              {profile.os_version && (
+                <HeroStat icon={<HardDriveIcon className="size-4" />} label="macOS" value={profile.os_version} />
+              )}
+              <HeroStat icon={<LayersIcon className="size-4" />} label="Arch" value={profile.arch} />
+            </div>
+            {profile.apple_silicon && (
+              <span className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-0.5 text-[11px] font-medium text-accent-text ring-1 ring-inset ring-accent/20">
+                <span className="size-1.5 rounded-full bg-accent-text" aria-hidden />
+                Apple Silicon · unified memory
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One spec inside the hardware hero. */
+function HeroStat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/4 px-3 py-2 ring-1 ring-inset ring-white/8">
+      <div className="flex items-center gap-1.5 text-fg-subtle">
+        {icon}
+        <span className="text-[11px] uppercase tracking-wide">{label}</span>
+      </div>
+      <p className="data mt-1 truncate text-sm text-fg">{value}</p>
     </div>
   );
 }
 
 function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="card card-interactive p-4">
+    <div className="card card-interactive flex flex-col justify-between p-4">
       <div className="flex items-center gap-2.5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-800/80 text-emerald-400/90 ring-1 ring-slate-700/50">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-text ring-1 ring-inset ring-accent/20">
           {icon}
         </span>
-        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
+        <span className="text-xs font-medium uppercase tracking-wide text-fg-subtle">{label}</span>
       </div>
-      <p className="tabular mt-3 text-3xl font-semibold tracking-tight text-slate-100">{value}</p>
+      <p className="data mt-3 text-3xl font-semibold tracking-tight text-fg">{value}</p>
     </div>
   );
 }
 
 function SectionHeading({ title }: { title: string }) {
   return (
-    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-200">
+    <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
       {title}
-      <span className="h-px flex-1 bg-gradient-to-r from-slate-800 to-transparent" aria-hidden />
+      <span className="h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" aria-hidden />
     </h2>
   );
 }
 
-function EmptyState({ icon, title, hint }: { icon: React.ReactNode; title: string; hint: string }) {
+function EmptyState({
+  icon,
+  title,
+  hint,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  hint: string;
+  action?: { label: string; onClick: () => void };
+}) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 bg-slate-900/20 px-6 py-14 text-center">
-      <span className="flex size-12 items-center justify-center rounded-full bg-slate-800/60 text-slate-500 ring-1 ring-slate-700/60">
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.015] px-6 py-14 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full bg-white/5 text-fg-subtle ring-1 ring-inset ring-white/10">
         {icon}
       </span>
-      <p className="mt-4 font-medium text-slate-300">{title}</p>
-      <p className="mt-1 max-w-xs text-sm text-slate-500">{hint}</p>
+      <p className="mt-4 font-medium text-fg">{title}</p>
+      <p className="mt-1 max-w-xs text-sm text-fg-muted">{hint}</p>
+      {action && (
+        <button
+          type="button"
+          onClick={action.onClick}
+          className="glow-accent mt-4 cursor-pointer rounded-lg bg-gradient-to-b from-indigo-500 to-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-all hover:from-indigo-400 hover:to-violet-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.97]"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

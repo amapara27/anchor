@@ -14,6 +14,9 @@ const NAV: { tab: Tab; label: string; Icon: typeof HomeIcon }[] = [
 ];
 
 const STORAGE_KEY = "anchor.sidebarCollapsed";
+// Geometry for the sliding active indicator: item height + gap between items.
+const ITEM_H = 38;
+const GAP = 4;
 
 /** Persistent, collapsible left navigation rail. */
 export function Sidebar({ active, onSelect }: SidebarProps) {
@@ -33,20 +36,23 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
     }
   }, [collapsed]);
 
+  const activeIndex = NAV.findIndex((n) => n.tab === active);
+
   return (
     <aside
       className={[
-        "sticky top-0 flex h-dvh shrink-0 flex-col border-r border-slate-800/80 bg-surface/80 px-3 py-5 backdrop-blur transition-[width] duration-200",
+        "flex h-full shrink-0 flex-col border-r border-white/8 bg-surface-solid/60 px-3 py-5 backdrop-blur-xl transition-[width] duration-300",
+        "[transition-timing-function:var(--ease-spring)]",
         collapsed ? "w-16" : "w-56",
       ].join(" ")}
     >
       <div className={["flex items-center gap-2.5 px-1", collapsed ? "justify-center" : ""].join(" ")}>
-        {/* Brand tile: emerald gradient + soft glow so the mark reads as the app's identity. */}
-        <span className="glow-accent flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-teal-600">
-          <AnchorMark className="size-5 text-slate-950" />
+        {/* Brand tile: indigo→violet gradient + accent glow so the mark reads as identity. */}
+        <span className="glow-accent flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600">
+          <AnchorMark className="size-5 text-white" />
         </span>
         {!collapsed && (
-          <span className="flex-1 truncate text-lg font-semibold tracking-tight text-slate-50">Anchor</span>
+          <span className="flex-1 truncate text-lg font-semibold tracking-tight text-fg">Anchor</span>
         )}
         {!collapsed && <ToggleButton collapsed={collapsed} onClick={() => setCollapsed((c) => !c)} />}
       </div>
@@ -57,7 +63,15 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         </div>
       )}
 
-      <nav className="mt-7 flex flex-col gap-1">
+      <nav className="relative mt-7 flex flex-col gap-1">
+        {/* Sliding active indicator: one pill that springs between items (a11y: bg + bar, not colour-only). */}
+        {activeIndex >= 0 && (
+          <span
+            className="pointer-events-none absolute inset-x-0 rounded-lg border-l-2 border-accent bg-accent/12 transition-transform duration-300 [transition-timing-function:var(--ease-spring)]"
+            style={{ height: ITEM_H, transform: `translateY(${activeIndex * (ITEM_H + GAP)}px)` }}
+            aria-hidden
+          />
+        )}
         {NAV.map(({ tab, label, Icon }) => {
           const isActive = active === tab;
           return (
@@ -68,36 +82,31 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
               aria-current={isActive ? "page" : undefined}
               aria-label={collapsed ? label : undefined}
               title={collapsed ? label : undefined}
+              style={{ height: ITEM_H }}
               className={[
-                "relative flex w-full cursor-pointer items-center gap-2.5 rounded-lg py-2 text-sm font-medium transition-colors active:scale-[0.98]",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40",
+                "relative z-10 flex w-full cursor-pointer items-center gap-2.5 rounded-lg text-sm font-medium transition-colors active:scale-[0.98]",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
                 collapsed ? "justify-center px-0" : "px-3",
-                isActive
-                  ? "bg-slate-800/70 text-slate-100 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]"
-                  : "text-slate-400 hover:bg-slate-800/40 hover:text-slate-200",
+                isActive ? "text-fg" : "text-fg-muted hover:text-fg",
               ].join(" ")}
             >
-              {/* Active rail: a slim emerald bar marks the current page (a11y: not colour-only — bg + bar). */}
-              {isActive && !collapsed && (
-                <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400" aria-hidden />
-              )}
-              <Icon className={["size-4 shrink-0", isActive ? "text-emerald-400" : ""].join(" ")} />
+              <Icon className={["size-4 shrink-0", isActive ? "text-accent-text" : ""].join(" ")} />
               {!collapsed && label}
             </button>
           );
         })}
       </nav>
 
-      {/* Footer: version + the local-first promise. */}
+      {/* Footer: version + the local-first promise. Green dot = running locally. */}
       <div
         className={[
-          "mt-auto flex items-center gap-2 border-t border-slate-800/70 pt-4 text-[11px] text-slate-500",
+          "mt-auto flex items-center gap-2 border-t border-white/8 pt-4 text-[11px] text-fg-subtle",
           collapsed ? "justify-center px-0" : "px-2",
         ].join(" ")}
         title="Everything runs on this Mac"
       >
-        <span className="size-1.5 shrink-0 rounded-full bg-emerald-400/80" aria-hidden />
-        {!collapsed && <span className="truncate">100% local · v0.1.0</span>}
+        <span className="size-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_rgb(52_211_153/0.7)]" aria-hidden />
+        {!collapsed && <span className="data truncate">100% local · v0.1.0</span>}
       </div>
     </aside>
   );
@@ -111,7 +120,7 @@ function ToggleButton({ collapsed, onClick }: { collapsed: boolean; onClick: () 
       aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       aria-pressed={collapsed}
       title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      className="cursor-pointer rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-800/40 hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+      className="cursor-pointer rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-white/6 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
     >
       <PanelLeftIcon className="size-4" />
     </button>

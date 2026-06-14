@@ -36,7 +36,7 @@ export function LibraryToolbar({
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       {/* Search */}
       <div className="relative w-full lg:max-w-sm">
-        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
+        <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
         <input
           type="text"
           inputMode="search"
@@ -44,14 +44,14 @@ export function LibraryToolbar({
           onChange={(e) => onQuery(e.target.value)}
           placeholder="Search models, families, use cases…"
           aria-label="Search models"
-          className="w-full rounded-lg border border-slate-800 bg-slate-900/70 py-2 pl-9 pr-9 text-sm text-slate-100 shadow-[inset_0_1px_2px_rgb(2_6_23/0.4)] placeholder:text-slate-500 backdrop-blur transition-colors focus:border-emerald-500/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+          className="w-full rounded-lg border border-white/8 bg-white/4 py-2 pl-9 pr-9 text-sm text-fg shadow-[inset_0_1px_2px_rgb(0_0_0/0.3)] placeholder:text-fg-subtle backdrop-blur transition-colors focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
         {query && (
           <button
             type="button"
             onClick={() => onQuery("")}
             aria-label="Clear search"
-            className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-slate-500 transition-colors hover:text-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+            className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-fg-subtle transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
           >
             <XIcon className="size-3.5" />
           </button>
@@ -63,7 +63,7 @@ export function LibraryToolbar({
         <div
           role="tablist"
           aria-label="Filter by install status"
-          className="inline-flex rounded-lg border border-slate-800 bg-slate-900/70 p-0.5 backdrop-blur"
+          className="inline-flex rounded-lg border border-white/8 bg-white/4 p-0.5 backdrop-blur"
         >
           {STATUS_TABS.map((tab) => {
             const active = status === tab.key;
@@ -74,14 +74,14 @@ export function LibraryToolbar({
                 aria-selected={active}
                 onClick={() => onStatus(tab.key)}
                 className={[
-                  "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40 active:scale-[0.97]",
+                  "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.97]",
                   active
-                    ? "bg-emerald-500/15 text-emerald-300 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)] ring-1 ring-inset ring-emerald-500/20"
-                    : "text-slate-400 hover:text-slate-200",
+                    ? "bg-accent/15 text-accent-text shadow-[inset_0_1px_0_rgb(255_255_255/0.06)] ring-1 ring-inset ring-accent/25"
+                    : "text-fg-muted hover:text-fg",
                 ].join(" ")}
               >
                 {tab.label}
-                <span className={["tabular ml-1.5", active ? "text-emerald-400/70" : "text-slate-500"].join(" ")}>
+                <span className={["data ml-1.5", active ? "text-accent-text/70" : "text-fg-subtle"].join(" ")}>
                   {counts[tab.key]}
                 </span>
               </button>
@@ -128,11 +128,11 @@ function SelectChip({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={ariaLabel}
-        className="cursor-pointer appearance-none rounded-lg border border-slate-800 bg-slate-900/70 py-1.5 pl-2.5 pr-7 text-xs font-medium text-slate-300 backdrop-blur transition-colors hover:border-slate-700 hover:text-slate-100 focus:border-emerald-500/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+        className="cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/4 py-1.5 pl-2.5 pr-7 text-xs font-medium text-fg-muted backdrop-blur transition-colors hover:border-white/15 hover:text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25 [&>option]:bg-surface-solid [&>option]:text-fg"
       >
         {children}
       </select>
-      <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-500" />
+      <ChevronDownIcon className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-fg-subtle" />
     </span>
   );
 }

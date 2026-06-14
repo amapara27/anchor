@@ -14,7 +14,7 @@ export function StatusBadge({ status, className = "" }: { status: ModelStatus; c
         "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset",
         installed
           ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30"
-          : "bg-slate-700/30 text-slate-300 ring-slate-600/40",
+          : "bg-white/5 text-fg-muted ring-white/10",
         className,
       ].join(" ")}
     >

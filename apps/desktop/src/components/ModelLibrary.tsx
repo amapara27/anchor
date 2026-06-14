@@ -131,15 +131,15 @@ function SkeletonGrid() {
       {Array.from({ length: 6 }).map((_, i) => (
         <div key={i} className="card shimmer p-4">
           <div className="flex items-center justify-between">
-            <div className="h-4 w-32 rounded bg-slate-800" />
-            <div className="h-5 w-20 rounded-full bg-slate-800" />
+            <div className="h-4 w-32 rounded bg-white/8" />
+            <div className="h-5 w-20 rounded-full bg-white/8" />
           </div>
-          <div className="mt-3 h-3 w-full rounded bg-slate-800" />
-          <div className="mt-2 h-3 w-2/3 rounded bg-slate-800" />
+          <div className="mt-3 h-3 w-full rounded bg-white/8" />
+          <div className="mt-2 h-3 w-2/3 rounded bg-white/8" />
           <div className="mt-4 flex gap-1.5">
-            <div className="h-6 w-14 rounded-md bg-slate-800" />
-            <div className="h-6 w-16 rounded-md bg-slate-800" />
-            <div className="h-6 w-12 rounded-md bg-slate-800" />
+            <div className="h-6 w-14 rounded-md bg-white/5" />
+            <div className="h-6 w-16 rounded-md bg-white/5" />
+            <div className="h-6 w-12 rounded-md bg-white/5" />
           </div>
         </div>
       ))}
@@ -149,12 +149,12 @@ function SkeletonGrid() {
 
 function EmptyState({ hasModels }: { hasModels: boolean }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 bg-slate-900/20 px-6 py-14 text-center">
-      <span className="flex size-12 items-center justify-center rounded-full bg-slate-800/60 text-slate-500 ring-1 ring-slate-700/60">
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.015] px-6 py-14 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full bg-white/5 text-fg-subtle ring-1 ring-inset ring-white/10">
         <SearchIcon className="size-5" />
       </span>
-      <p className="mt-4 font-medium text-slate-300">No models match your filters</p>
-      <p className="mt-1 max-w-xs text-sm text-slate-500">
+      <p className="mt-4 font-medium text-fg">No models match your filters</p>
+      <p className="mt-1 max-w-xs text-sm text-fg-muted">
         {hasModels
           ? "Try a different search term, family, or status filter."
           : "The registry is empty — download a model to get started."}
