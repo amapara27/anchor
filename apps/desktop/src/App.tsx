@@ -4,6 +4,7 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { HomePage } from "./components/HomePage";
 import { ModelLibrary } from "./components/ModelLibrary";
+import { ModelComparison } from "./components/ModelComparison";
 import { WorkflowLibrary } from "./components/WorkflowLibrary";
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
           <div key={tab} className="animate-fade-up mx-auto max-w-7xl px-6 py-9 lg:px-8">
             {tab === "home" && <HomePage onNavigate={setTab} />}
             {tab === "models" && <ModelLibrary />}
+            {tab === "comparison" && <ModelComparison />}
             {tab === "workflows" && <WorkflowLibrary />}
           </div>
         </main>

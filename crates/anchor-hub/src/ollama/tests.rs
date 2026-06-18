@@ -179,4 +179,17 @@ fn comparison_request_uses_brevity_and_zero_keep_alive() {
     assert_eq!(req.num_predict, Some(DEFAULT_NUM_PREDICT));
     assert_eq!(req.system.as_deref(), Some(DEFAULT_SYSTEM_PROMPT));
     assert_eq!(req.keep_alive_secs, 0);
+    // think: false so reasoning models answer directly instead of spending the
+    // whole token budget on a `thinking` stream (leaving `response` empty).
+    assert_eq!(req.think, Some(false));
+}
+
+#[test]
+fn generate_chunk_captures_thinking() {
+    // Thinking models stream reasoning in a separate `thinking` field with an
+    // empty `response`; we must parse it so an answer-less stream can fall back.
+    let frame: GenerateChunk =
+        serde_json::from_str(r#"{"response":"","thinking":"Let me think","done":false}"#).unwrap();
+    assert_eq!(frame.response, "");
+    assert_eq!(frame.thinking, "Let me think");
 }

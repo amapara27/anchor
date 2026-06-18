@@ -148,12 +148,21 @@ pub struct GenerateRequest {
     /// `keep_alive` in seconds. `0` evicts the model's weights immediately after
     /// responding (used so a comparison can free RAM before loading the next model).
     pub keep_alive_secs: i64,
+    /// Whether a thinking-capable model should emit its reasoning. `Some(false)`
+    /// makes such models answer directly (reasoning otherwise streams in a
+    /// separate `thinking` field, leaving `response` empty — see [`generate`]).
+    /// Ignored by models that don't support thinking. `None` omits the field.
+    pub think: Option<bool>,
 }
 
 impl GenerateRequest {
     /// A comparison-tuned request: brevity preprompt, capped length, and
     /// `keep_alive: 0` so the weights are evicted the instant the model finishes,
     /// freeing RAM for the next model in a side-by-side comparison.
+    ///
+    /// `think: false` keeps thinking-capable models (e.g. qwen3) answering
+    /// directly — otherwise their reasoning eats the whole `num_predict` budget
+    /// and `response` comes back empty.
     pub fn for_comparison(model: impl Into<String>, prompt: impl Into<String>) -> Self {
         Self {
             model: model.into(),
@@ -161,6 +170,7 @@ impl GenerateRequest {
             system: Some(DEFAULT_SYSTEM_PROMPT.to_string()),
             num_predict: Some(DEFAULT_NUM_PREDICT),
             keep_alive_secs: 0,
+            think: Some(false),
         }
     }
 }
@@ -172,6 +182,10 @@ impl GenerateRequest {
 struct GenerateChunk {
     #[serde(default)]
     response: String,
+    /// Reasoning text from a thinking model. Normally suppressed via
+    /// `think: false`; captured so a thinking-only stream can still surface text.
+    #[serde(default)]
+    thinking: String,
     #[serde(default)]
     done: bool,
     /// An error Ollama reported mid-stream (HTTP 200), same shape as a pull error.
@@ -408,6 +422,9 @@ where
     if let Some(num_predict) = req.num_predict {
         body["options"] = serde_json::json!({ "num_predict": num_predict });
     }
+    if let Some(think) = req.think {
+        body["think"] = serde_json::Value::Bool(think);
+    }
 
     let resp = client
         .post(&url)
@@ -419,7 +436,29 @@ where
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
     let mut text = String::new();
+    // Reasoning text, kept only as a fallback for a model that thinks anyway.
+    let mut thinking = String::new();
     let mut stats = GenerationStats::default();
+
+    // Folds one parsed frame into text/thinking/stats; returns the Ollama error
+    // from an error frame, if any, so the caller can bail.
+    let mut handle = |frame: GenerateChunk| -> Option<Error> {
+        if let Some(err) = frame.error {
+            return Some(Error::Ollama(err));
+        }
+        if !frame.response.is_empty() {
+            on_token(&frame.response);
+            text.push_str(&frame.response);
+        }
+        if !frame.thinking.is_empty() {
+            thinking.push_str(&frame.thinking);
+        }
+        if frame.done {
+            stats = frame.into_stats();
+        }
+        None
+    };
+
     while let Some(chunk) = stream.next().await {
         buf.extend_from_slice(&chunk?);
         while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
@@ -429,15 +468,8 @@ where
                 continue;
             }
             if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(line) {
-                if let Some(err) = &frame.error {
-                    return Err(Error::Ollama(err.clone()));
-                }
-                if !frame.response.is_empty() {
-                    on_token(&frame.response);
-                    text.push_str(&frame.response);
-                }
-                if frame.done {
-                    stats = frame.into_stats();
+                if let Some(err) = handle(frame) {
+                    return Err(err);
                 }
             }
         }
@@ -450,17 +482,18 @@ where
     // Flush a trailing line with no terminating newline.
     if !buf.iter().all(u8::is_ascii_whitespace) {
         if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(&buf) {
-            if let Some(err) = &frame.error {
-                return Err(Error::Ollama(err.clone()));
-            }
-            if !frame.response.is_empty() {
-                on_token(&frame.response);
-                text.push_str(&frame.response);
-            }
-            if frame.done {
-                stats = frame.into_stats();
+            if let Some(err) = handle(frame) {
+                return Err(err);
             }
         }
+    }
+    drop(handle); // release the borrows on text/thinking before reading them
+
+    // A thinking model can ignore `think: false` and spend its whole budget on
+    // reasoning, leaving `response` empty — fall back to the reasoning so the
+    // caller never gets a blank answer when the model clearly produced output.
+    if text.is_empty() && !thinking.is_empty() {
+        text = thinking;
     }
     Ok((text, stats))
 }

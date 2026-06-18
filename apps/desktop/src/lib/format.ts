@@ -1,4 +1,5 @@
 // Small, dependency-free formatting helpers for the model library.
+import type { GenerationStats } from "../types";
 
 /** Human-readable byte size, e.g. 4_700_000_000 → "4.7 GB". */
 export function formatBytes(bytes: number | null | undefined): string {
@@ -24,4 +25,28 @@ export function formatContext(tokens: number): string {
     return `${Number.isInteger(k) ? k : k.toFixed(0)}K`;
   }
   return String(tokens);
+}
+
+/**
+ * Generation throughput, tokens/sec, from Ollama's eval timings:
+ * `eval_count / (eval_duration_ns / 1e9)`. Null when the stats are absent.
+ */
+export function tokensPerSecond(stats: GenerationStats | undefined): number | null {
+  if (!stats?.eval_count || !stats.eval_duration_ns) return null;
+  return stats.eval_count / (stats.eval_duration_ns / 1e9);
+}
+
+/** Nanosecond duration → readable string, e.g. 1_500_000_000 → "1.5 s", 420_000_000 → "420 ms". */
+export function formatDuration(ns: number | null | undefined): string {
+  if (ns == null || ns < 0) return "—";
+  const ms = ns / 1e6;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const s = ms / 1000;
+  return `${s.toFixed(s < 10 ? 1 : 0)} s`;
+}
+
+/** Throughput label, e.g. 21.04 → "21.0 tok/s". */
+export function formatTokSec(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return `${n.toFixed(1)} tok/s`;
 }

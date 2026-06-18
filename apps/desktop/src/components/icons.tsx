@@ -224,3 +224,18 @@ export const SparkleIcon = (p: IconProps) => (
     <path d="M19 15l.7 2.1L22 18l-2.3.9L19 21l-.7-2.1L16 18l2.3-.9Z" />
   </Svg>
 );
+
+/** Two side-by-side panels — the model-comparison nav glyph. */
+export const ColumnsIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M12 4v16" />
+  </Svg>
+);
+
+/** Lightning bolt — used for the tok/sec throughput stat. */
+export const ZapIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
+  </Svg>
+);
