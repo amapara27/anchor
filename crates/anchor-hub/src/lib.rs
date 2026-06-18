@@ -14,7 +14,60 @@ pub mod db;
 pub mod ollama;
 pub mod server;
 
-pub use ollama::PullProgress;
+pub use ollama::{GenerateRequest, GenerationStats, PullProgress};
+
+use serde::Serialize;
+
+/// Which side of a two-model comparison an event belongs to.
+///
+/// Mirrored on the frontend as `Slot` in `types.ts` (`"a" | "b"`).
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Slot {
+    A,
+    B,
+}
+
+/// Lifecycle phase of one model's run within a comparison.
+///
+/// Mirrored on the frontend as `Phase` in `types.ts`.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// Waiting its turn (the other model is currently running).
+    Queued,
+    /// Weights are loading into RAM (no token has arrived yet).
+    Loading,
+    /// Tokens are streaming.
+    Generating,
+    /// Finished; weights have been evicted.
+    Done,
+}
+
+/// A single streamed event from [`Registry::compare`], carrying everything the
+/// comparison UI needs: download progress, per-token deltas, the final buffered
+/// response with stats, or a per-slot failure.
+///
+/// Mirrored on the frontend as the `CompareEvent` union in `types.ts`, keyed on
+/// the `kind` tag.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CompareEvent {
+    /// Download progress while a not-yet-installed model is pulled.
+    Pull { slot: Slot, progress: PullProgress },
+    /// A lifecycle transition for the slot.
+    Status { slot: Slot, phase: Phase },
+    /// One streamed response delta (for liveness; the frontend may buffer these).
+    Token { slot: Slot, text: String },
+    /// The final, complete response and its generation stats.
+    Result {
+        slot: Slot,
+        response: String,
+        stats: GenerationStats,
+    },
+    /// The slot failed (pull or generation error); the other slot still runs.
+    Failed { slot: Slot, message: String },
+}
 
 /// Default address of a locally running Ollama server.
 pub const DEFAULT_HOST: &str = "http://localhost:11434";
@@ -161,6 +214,126 @@ impl Registry {
         ollama::delete(&self.host, id).await?;
         db::delete_one(&self.connect()?, id)?;
         Ok(())
+    }
+
+    /// Runs a streaming generation, forwarding each token delta to `on_token` and
+    /// returning the full text plus final [`GenerationStats`].
+    pub async fn generate<F>(
+        &self,
+        req: &GenerateRequest,
+        on_token: F,
+    ) -> Result<(String, GenerationStats)>
+    where
+        F: FnMut(&str) + Send,
+    {
+        ollama::generate(&self.host, req, on_token).await
+    }
+
+    /// Whether a model is currently installed in Ollama. Queries the live server
+    /// (`/api/tags`) rather than the cache, so a model pulled this session — but
+    /// not yet re-synced — is still detected.
+    pub async fn is_installed(&self, id: &str) -> Result<bool> {
+        let models = ollama::list_local_models(&self.host).await?;
+        Ok(models.iter().any(|m| m.id == id))
+    }
+
+    /// Compares two models against one prompt, emitting [`CompareEvent`]s as it
+    /// goes. The whole reason this is **sequential** (slot A fully, then slot B)
+    /// is the RAM constraint: each model uses `keep_alive: 0`, so its weights are
+    /// evicted the instant it finishes, freeing memory before the next loads.
+    ///
+    /// A missing model is pulled first (streaming [`CompareEvent::Pull`]). A pull
+    /// or generation failure is reported as [`CompareEvent::Failed`] for that slot
+    /// only; the other slot still runs.
+    pub async fn compare<F>(&self, model_a: &str, model_b: &str, prompt: &str, mut on_event: F)
+    where
+        F: FnMut(CompareEvent) + Send,
+    {
+        // Seed both panes as queued so the UI can render the side-by-side layout
+        // immediately, then drive each slot through its lifecycle in turn.
+        on_event(CompareEvent::Status {
+            slot: Slot::A,
+            phase: Phase::Queued,
+        });
+        on_event(CompareEvent::Status {
+            slot: Slot::B,
+            phase: Phase::Queued,
+        });
+        for (slot, id) in [(Slot::A, model_a), (Slot::B, model_b)] {
+            self.compare_one(slot, id, prompt, &mut on_event).await;
+        }
+    }
+
+    /// Runs one slot of a [`compare`](Self::compare): ensure installed (pulling if
+    /// needed), then generate, emitting status/token/result events along the way.
+    async fn compare_one<F>(&self, slot: Slot, id: &str, prompt: &str, on_event: &mut F)
+    where
+        F: FnMut(CompareEvent) + Send,
+    {
+        match self.is_installed(id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let pulled = self
+                    .pull(id, |progress| on_event(CompareEvent::Pull { slot, progress }))
+                    .await;
+                if let Err(e) = pulled {
+                    on_event(CompareEvent::Failed {
+                        slot,
+                        message: e.to_string(),
+                    });
+                    return;
+                }
+            }
+            Err(e) => {
+                on_event(CompareEvent::Failed {
+                    slot,
+                    message: e.to_string(),
+                });
+                return;
+            }
+        }
+
+        // Weights load on the first request; the UI shows "loading" until the
+        // first token arrives, at which point we flip to "generating".
+        on_event(CompareEvent::Status {
+            slot,
+            phase: Phase::Loading,
+        });
+        let req = GenerateRequest::for_comparison(id, prompt);
+        let mut started = false;
+        let result = self
+            .generate(&req, |tok| {
+                if !started {
+                    started = true;
+                    on_event(CompareEvent::Status {
+                        slot,
+                        phase: Phase::Generating,
+                    });
+                }
+                on_event(CompareEvent::Token {
+                    slot,
+                    text: tok.to_string(),
+                });
+            })
+            .await;
+
+        match result {
+            Ok((response, stats)) => {
+                on_event(CompareEvent::Result {
+                    slot,
+                    response,
+                    stats,
+                });
+                on_event(CompareEvent::Status {
+                    slot,
+                    phase: Phase::Done,
+                });
+            }
+            Err(e) => on_event(CompareEvent::Failed {
+                slot,
+                message: e.to_string(),
+            }),
+        }
     }
 }
 

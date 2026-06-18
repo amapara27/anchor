@@ -11,7 +11,7 @@ use std::sync::Mutex;
 
 use anchor_core::{HardwareProfile, Model};
 use anchor_hub::server::{self, EnsureOutcome};
-use anchor_hub::{PullProgress, Registry};
+use anchor_hub::{CompareEvent, PullProgress, Registry};
 use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
@@ -25,10 +25,14 @@ use tauri::{AppHandle, Manager, RunEvent};
 ///   initial `list_models` while the user clicks download) can't both observe a
 ///   down server and each spawn `ollama serve`. The holder re-checks liveness
 ///   inside [`server::ensure_running`] before spawning.
+/// - `compare_lock` serializes [`compare_models`] runs so two side-by-side
+///   comparisons can't load models concurrently and exhaust RAM — the whole
+///   point of the feature is that only one model is resident at a time.
 #[derive(Default)]
 struct ServerState {
     child: Mutex<Option<Child>>,
     start_lock: tokio::sync::Mutex<()>,
+    compare_lock: tokio::sync::Mutex<()>,
 }
 
 /// Builds a [`Registry`] backed by `registry.db` in the app's data directory.
@@ -111,6 +115,32 @@ async fn download_model(
         .map_err(|e| e.to_string())
 }
 
+/// Compares two models against one prompt, streaming progress, tokens, and final
+/// results+stats back over `on_event`. Runs the models sequentially (each evicts
+/// its weights on finish) so they don't have to fit in RAM at once; the frontend
+/// buffers the two responses and reveals them side-by-side. Serialized behind
+/// `compare_lock` so two runs can't compete for memory.
+#[tauri::command]
+async fn compare_models(
+    app: AppHandle,
+    model_a: String,
+    model_b: String,
+    prompt: String,
+    on_event: Channel<CompareEvent>,
+) -> Result<(), String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+    let state = app.state::<ServerState>();
+    let _run = state.compare_lock.lock().await;
+    registry
+        .compare(&model_a, &model_b, &prompt, |event| {
+            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
+            let _ = on_event.send(event);
+        })
+        .await;
+    Ok(())
+}
+
 /// Removes a model from Ollama and the cache.
 #[tauri::command]
 async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
@@ -157,6 +187,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_models,
             download_model,
+            compare_models,
             remove_model,
             get_hardware_profile,
             refresh_hardware_profile

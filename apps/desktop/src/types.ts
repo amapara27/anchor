@@ -66,6 +66,50 @@ export interface PullProgress {
   error?: string;
 }
 
+/**
+ * Timing/throughput stats from a completed generation, mirrored from
+ * `anchor_hub::GenerationStats`. Raw nanosecond durations and token counts; the
+ * UI derives readable values, e.g. tok/sec = `eval_count / (eval_duration_ns / 1e9)`.
+ */
+export interface GenerationStats {
+  /** Total wall time for the request, in nanoseconds. */
+  total_duration_ns?: number;
+  /** Time spent loading the model's weights into RAM, in nanoseconds. */
+  load_duration_ns?: number;
+  /** Tokens in the prompt that were evaluated. */
+  prompt_eval_count?: number;
+  /** Time spent evaluating the prompt, in nanoseconds. */
+  prompt_eval_duration_ns?: number;
+  /** Tokens generated in the response. */
+  eval_count?: number;
+  /** Time spent generating the response, in nanoseconds. */
+  eval_duration_ns?: number;
+}
+
+/** Which side of a two-model comparison an event belongs to. */
+export type Slot = "a" | "b";
+
+/** Lifecycle phase of one model's run within a comparison. */
+export type Phase = "queued" | "loading" | "generating" | "done";
+
+/**
+ * One streamed event from the `compare_models` command, mirrored from
+ * `anchor_hub::CompareEvent` (serde-tagged on `kind`). Sent over a Tauri
+ * `Channel` while the two models run sequentially; the frontend buffers tokens
+ * and reveals both responses side-by-side.
+ */
+export type CompareEvent =
+  /** Download progress while a not-yet-installed model is pulled. */
+  | { kind: "pull"; slot: Slot; progress: PullProgress }
+  /** A lifecycle transition for the slot. */
+  | { kind: "status"; slot: Slot; phase: Phase }
+  /** One streamed response delta (for liveness; may be buffered). */
+  | { kind: "token"; slot: Slot; text: string }
+  /** The final, complete response and its generation stats. */
+  | { kind: "result"; slot: Slot; response: string; stats: GenerationStats }
+  /** The slot failed (pull or generation error); the other slot still runs. */
+  | { kind: "failed"; slot: Slot; message: string };
+
 // ---------------------------------------------------------------------------
 // Frontend-only enrichment.
 //
@@ -129,7 +173,7 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "home" | "models" | "workflows";
+export type Tab = "home" | "models" | "workflows" | "comparison";
 
 /**
  * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`

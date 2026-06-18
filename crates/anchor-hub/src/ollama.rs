@@ -28,6 +28,25 @@ const PULL_READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// than buffer unboundedly.
 const MAX_PULL_LINE_BYTES: usize = 1 << 20; // 1 MiB
 
+/// How long to wait to connect when generating.
+const GENERATE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Max idle gap between generate-stream reads. The first token can lag while a
+/// large model's weights load into RAM, so this is generous; a longer stall means
+/// the server is wedged.
+const GENERATE_READ_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Cap on a single generate NDJSON line. Token frames are tiny; the final frame
+/// carries a `context` token array we ignore, but it stays well under this.
+const MAX_GENERATE_LINE_BYTES: usize = 1 << 20; // 1 MiB
+
+/// Default brevity preprompt for comparison runs — shorter answers mean less
+/// wait time when generating both models back-to-back.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "Answer concisely and directly.";
+
+/// Default hard cap on generated tokens for comparison runs.
+pub const DEFAULT_NUM_PREDICT: u64 = 256;
+
 /// A reqwest client with a total timeout, for the non-streaming endpoints.
 fn request_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -113,6 +132,104 @@ pub struct PullProgress {
     /// these with HTTP 200, so without this the pull would look successful.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Parameters for a streaming `POST /api/generate` call.
+#[derive(Debug, Clone)]
+pub struct GenerateRequest {
+    /// Model id (Ollama name, e.g. `"llama3.1:8b"`).
+    pub model: String,
+    /// The user prompt to run.
+    pub prompt: String,
+    /// System preprompt (e.g. a brevity instruction). `None` omits it.
+    pub system: Option<String>,
+    /// Hard cap on generated tokens (`options.num_predict`). `None` leaves it to Ollama.
+    pub num_predict: Option<u64>,
+    /// `keep_alive` in seconds. `0` evicts the model's weights immediately after
+    /// responding (used so a comparison can free RAM before loading the next model).
+    pub keep_alive_secs: i64,
+}
+
+impl GenerateRequest {
+    /// A comparison-tuned request: brevity preprompt, capped length, and
+    /// `keep_alive: 0` so the weights are evicted the instant the model finishes,
+    /// freeing RAM for the next model in a side-by-side comparison.
+    pub fn for_comparison(model: impl Into<String>, prompt: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            prompt: prompt.into(),
+            system: Some(DEFAULT_SYSTEM_PROMPT.to_string()),
+            num_predict: Some(DEFAULT_NUM_PREDICT),
+            keep_alive_secs: 0,
+        }
+    }
+}
+
+/// One NDJSON frame from a streaming `POST /api/generate`. Intermediate frames
+/// carry a `response` token; the final frame has `done: true` plus the timing
+/// fields below (all in nanoseconds). Unknown fields (e.g. `context`) are ignored.
+#[derive(Debug, Default, Deserialize)]
+struct GenerateChunk {
+    #[serde(default)]
+    response: String,
+    #[serde(default)]
+    done: bool,
+    /// An error Ollama reported mid-stream (HTTP 200), same shape as a pull error.
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+    #[serde(default)]
+    load_duration: Option<u64>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    prompt_eval_duration: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    eval_duration: Option<u64>,
+}
+
+impl GenerateChunk {
+    /// Pulls the timing fields out of a final (`done`) frame.
+    fn into_stats(self) -> GenerationStats {
+        GenerationStats {
+            total_duration_ns: self.total_duration,
+            load_duration_ns: self.load_duration,
+            prompt_eval_count: self.prompt_eval_count,
+            prompt_eval_duration_ns: self.prompt_eval_duration,
+            eval_count: self.eval_count,
+            eval_duration_ns: self.eval_duration,
+        }
+    }
+}
+
+/// Timing/throughput stats from a completed generation, surfaced to the UI.
+///
+/// Raw nanosecond durations and token counts — the frontend formats them (e.g.
+/// tok/sec = `eval_count / (eval_duration_ns / 1e9)`). Mirrored on the frontend
+/// as `GenerationStats` in `types.ts`.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct GenerationStats {
+    /// Total wall time for the request, in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_duration_ns: Option<u64>,
+    /// Time spent loading the model's weights into RAM, in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_duration_ns: Option<u64>,
+    /// Tokens in the prompt that were evaluated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_eval_count: Option<u64>,
+    /// Time spent evaluating the prompt, in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_eval_duration_ns: Option<u64>,
+    /// Tokens generated in the response.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eval_count: Option<u64>,
+    /// Time spent generating the response, in nanoseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eval_duration_ns: Option<u64>,
 }
 
 /// Maps a `/api/tags` entry onto an Anchor [`Model`] marked installed.
@@ -254,6 +371,98 @@ where
         }
     }
     Ok(())
+}
+
+/// Runs a streaming generation, invoking `on_token` for each non-empty response
+/// delta and returning the full text plus the final [`GenerationStats`].
+///
+/// Mirrors [`pull`]'s NDJSON handling: buffer bytes, drain complete lines, skip
+/// malformed ones, surface a mid-stream `{"error": ...}` frame (HTTP 200) as an
+/// error, and bound the per-line buffer. `keep_alive: 0` (set via
+/// [`GenerateRequest`]) makes Ollama evict the weights as soon as this returns.
+pub async fn generate<F>(
+    host: &str,
+    req: &GenerateRequest,
+    mut on_token: F,
+) -> Result<(String, GenerationStats)>
+where
+    F: FnMut(&str) + Send,
+{
+    let url = format!("{host}/api/generate");
+    // Like a pull, a generation has no useful total deadline (it depends on the
+    // answer length); bound the connect and the idle gap between reads instead.
+    let client = reqwest::Client::builder()
+        .connect_timeout(GENERATE_CONNECT_TIMEOUT)
+        .read_timeout(GENERATE_READ_TIMEOUT)
+        .build()?;
+
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "prompt": req.prompt,
+        "stream": true,
+        "keep_alive": req.keep_alive_secs,
+    });
+    if let Some(system) = &req.system {
+        body["system"] = serde_json::Value::String(system.clone());
+    }
+    if let Some(num_predict) = req.num_predict {
+        body["options"] = serde_json::json!({ "num_predict": num_predict });
+    }
+
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut text = String::new();
+    let mut stats = GenerationStats::default();
+    while let Some(chunk) = stream.next().await {
+        buf.extend_from_slice(&chunk?);
+        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=nl).collect();
+            let line = &line[..line.len() - 1];
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(line) {
+                if let Some(err) = &frame.error {
+                    return Err(Error::Ollama(err.clone()));
+                }
+                if !frame.response.is_empty() {
+                    on_token(&frame.response);
+                    text.push_str(&frame.response);
+                }
+                if frame.done {
+                    stats = frame.into_stats();
+                }
+            }
+        }
+        if buf.len() > MAX_GENERATE_LINE_BYTES {
+            return Err(Error::Ollama(format!(
+                "generate stream line exceeded {MAX_GENERATE_LINE_BYTES} bytes"
+            )));
+        }
+    }
+    // Flush a trailing line with no terminating newline.
+    if !buf.iter().all(u8::is_ascii_whitespace) {
+        if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(&buf) {
+            if let Some(err) = &frame.error {
+                return Err(Error::Ollama(err.clone()));
+            }
+            if !frame.response.is_empty() {
+                on_token(&frame.response);
+                text.push_str(&frame.response);
+            }
+            if frame.done {
+                stats = frame.into_stats();
+            }
+        }
+    }
+    Ok((text, stats))
 }
 
 /// Removes a model from the local Ollama server via `DELETE /api/delete`.

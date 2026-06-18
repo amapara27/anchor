@@ -111,3 +111,72 @@ fn pull_progress_captures_error_frame() {
     assert_eq!(frame.error.as_deref(), Some("model not found"));
     assert_eq!(frame.status, "");
 }
+
+#[test]
+fn generate_intermediate_frame_carries_token() {
+    // A mid-stream frame has the next token in `response` and `done: false`.
+    let frame: GenerateChunk =
+        serde_json::from_str(r#"{"model":"llama3.1:8b","response":"Hello","done":false}"#)
+            .unwrap();
+    assert_eq!(frame.response, "Hello");
+    assert!(!frame.done);
+    assert!(frame.error.is_none());
+    // No timing fields on an intermediate frame.
+    assert_eq!(frame.eval_count, None);
+}
+
+#[test]
+fn generate_final_frame_yields_stats() {
+    // The terminal frame has `done: true`, an empty `response`, a `context`
+    // array we ignore, and the timing fields used for tok/sec etc.
+    let frame: GenerateChunk = serde_json::from_str(
+        r#"{
+            "model":"llama3.1:8b",
+            "response":"",
+            "done":true,
+            "context":[1,2,3],
+            "total_duration":5000000000,
+            "load_duration":1000000000,
+            "prompt_eval_count":12,
+            "prompt_eval_duration":500000000,
+            "eval_count":42,
+            "eval_duration":2000000000
+        }"#,
+    )
+    .unwrap();
+    assert!(frame.done);
+    let stats = frame.into_stats();
+    assert_eq!(stats.total_duration_ns, Some(5_000_000_000));
+    assert_eq!(stats.load_duration_ns, Some(1_000_000_000));
+    assert_eq!(stats.prompt_eval_count, Some(12));
+    assert_eq!(stats.prompt_eval_duration_ns, Some(500_000_000));
+    assert_eq!(stats.eval_count, Some(42));
+    assert_eq!(stats.eval_duration_ns, Some(2_000_000_000));
+    // tok/sec the UI would compute: 42 / (2e9 / 1e9) = 21.
+    let tok_per_sec =
+        stats.eval_count.unwrap() as f64 / (stats.eval_duration_ns.unwrap() as f64 / 1e9);
+    assert_eq!(tok_per_sec, 21.0);
+}
+
+#[test]
+fn generate_captures_error_frame() {
+    // Like pull, a generation failure arrives as an `{"error": ...}` frame on an
+    // HTTP-200 stream and must parse so `generate` can surface it.
+    let frame: GenerateChunk =
+        serde_json::from_str(r#"{"error":"model 'ghost' not found"}"#).unwrap();
+    assert_eq!(frame.error.as_deref(), Some("model 'ghost' not found"));
+    assert!(!frame.done);
+    assert_eq!(frame.response, "");
+}
+
+#[test]
+fn comparison_request_uses_brevity_and_zero_keep_alive() {
+    // The comparison preset must cap length and set keep_alive: 0 so weights are
+    // evicted the instant the model finishes (freeing RAM for the next model).
+    let req = GenerateRequest::for_comparison("llama3.1:8b", "Why is the sky blue?");
+    assert_eq!(req.model, "llama3.1:8b");
+    assert_eq!(req.prompt, "Why is the sky blue?");
+    assert_eq!(req.num_predict, Some(DEFAULT_NUM_PREDICT));
+    assert_eq!(req.system.as_deref(), Some(DEFAULT_SYSTEM_PROMPT));
+    assert_eq!(req.keep_alive_secs, 0);
+}
