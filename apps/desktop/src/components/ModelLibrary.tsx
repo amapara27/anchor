@@ -3,7 +3,6 @@ import type { LibraryModel, SortKey, StatusFilter } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
-import { catalogFamilies } from "../lib/catalog";
 import { LibraryToolbar } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
 import { ModelDetailDrawer } from "./ModelDetailDrawer";
@@ -36,7 +35,12 @@ export function ModelLibrary() {
   const [sort, setSort] = useState<SortKey>("name");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const families = useMemo(() => catalogFamilies(), []);
+  // Families come from the loaded library (backend catalog + installed extras),
+  // so the filter always reflects what's actually shown.
+  const families = useMemo(
+    () => [...new Set(models.map((m) => m.family))].sort(),
+    [models],
+  );
   const q = query.trim().toLowerCase();
 
   // Filter on everything except status first, so the status tabs can show counts.

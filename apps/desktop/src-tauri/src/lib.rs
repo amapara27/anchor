@@ -110,6 +110,14 @@ async fn list_models(app: AppHandle) -> Result<Vec<Model>, String> {
     }
 }
 
+/// Returns the curated model catalog (authored profiles + display specs) that
+/// the library joins against live installed models. This is the backend source
+/// of truth that replaces the frontend's old hard-coded catalog.
+#[tauri::command]
+fn list_catalog() -> Result<Vec<anchor_search::ModelProfile>, String> {
+    anchor_search::load_profiles().map_err(|e| e.to_string())
+}
+
 /// Pulls a model via Ollama, streaming progress events back over `on_event`.
 #[tauri::command]
 async fn download_model(
@@ -231,6 +239,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_models,
+            list_catalog,
             download_model,
             compare_models,
             remove_model,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { DownloadState, LibraryModel, Model, PullProgress } from "../types";
+import type { DownloadState, LibraryModel, Model, ModelProfile, PullProgress } from "../types";
 import { buildLibrary } from "./catalog";
 
 /** Per-model, session-local annotations layered on top of catalog data. */
@@ -30,15 +30,23 @@ export function useModels() {
 
   const load = useCallback(() => {
     setLoading(true);
-    invoke<Model[]>("list_models")
-      .then((installed) => {
-        setBase(buildLibrary(installed));
+    // The catalog of available models comes from the backend (curated profiles)
+    // and is bundled, so it effectively never fails — fall back to empty so
+    // installed models still render if it somehow does.
+    const catalog = invoke<ModelProfile[]>("list_catalog").catch(
+      () => [] as ModelProfile[],
+    );
+
+    Promise.all([catalog, invoke<Model[]>("list_models")])
+      .then(([cat, installed]) => {
+        setBase(buildLibrary(installed, cat));
         setError(null);
       })
       .catch((e) => {
-        // Non-fatal: the catalog of available models is frontend data, so still
-        // render it. We just couldn't confirm what's installed on disk.
-        setBase(buildLibrary([]));
+        // Ollama unreachable: still render the catalog (available models). The
+        // catalog promise already resolved with a fallback, so reuse it here so
+        // a `list_models` failure doesn't also hide the available models.
+        catalog.then((cat) => setBase(buildLibrary([], cat)));
         setError(String(e));
       })
       .finally(() => setLoading(false));

@@ -143,6 +143,29 @@ export interface ModelSpec {
 }
 
 /**
+ * A curated catalog entry as returned by the `list_catalog` backend command
+ * (mirrors `anchor_search::ModelProfile`). Replaces the old hard-coded
+ * frontend catalog; `buildLibrary` joins these against live installed models.
+ */
+export interface ModelProfile {
+  id: string;
+  name: string;
+  family: string;
+  publisher: string;
+  params_b: number;
+  context_tokens: number;
+  quant: Quant;
+  /** Catalog estimate of download size in gigabytes (binary, GiB). */
+  download_gb: number;
+  /** Catalog estimate of RAM/VRAM in gigabytes to run comfortably. */
+  min_memory_gb: number;
+  blurb: string;
+  use_cases: string[];
+  /** Authored description used for semantic search (not shown directly). */
+  profile: string;
+}
+
+/**
  * A model as the library UI consumes it: the wire `Model` joined with its
  * catalog spec plus user-local annotations (tags / notes).
  */

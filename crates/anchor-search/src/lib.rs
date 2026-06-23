@@ -53,6 +53,14 @@ pub struct ModelProfile {
     pub params_b: f32,
     /// Maximum context window in tokens.
     pub context_tokens: u64,
+    /// Quantisation of the default Ollama variant, e.g. `"Q4_K_M"` or `"F16"`.
+    pub quant: String,
+    /// Catalog estimate of the download size in gigabytes (binary, GiB). The
+    /// real on-disk size from Ollama overrides this once installed. Kept in GB
+    /// (not bytes) so the JSON stays human-authorable; the frontend converts.
+    pub download_gb: f32,
+    /// Catalog estimate of the RAM/VRAM in gigabytes needed to run comfortably.
+    pub min_memory_gb: f32,
     /// One-line summary shown in the UI.
     pub blurb: String,
     /// Short task tags, e.g. `["Code review", "Refactoring"]`.
