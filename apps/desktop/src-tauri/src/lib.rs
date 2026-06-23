@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use anchor_core::{HardwareProfile, Model};
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{CompareEvent, PullProgress, Registry};
+use anchor_search::SemanticIndex;
 use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
@@ -33,6 +34,18 @@ struct ServerState {
     child: Mutex<Option<Child>>,
     start_lock: tokio::sync::Mutex<()>,
     compare_lock: tokio::sync::Mutex<()>,
+}
+
+/// Holds the semantic-search index built at launch.
+///
+/// The index — every catalogued model profile plus its embedding vector — is
+/// computed in the background during `setup` (the first launch downloads the
+/// embedding model, so it must not block startup) and stored here. `None` until
+/// the build finishes, and stays `None` if it fails: search is best-effort and a
+/// build failure never blocks the rest of the app.
+#[derive(Default)]
+struct SearchState {
+    index: tokio::sync::RwLock<Option<SemanticIndex>>,
 }
 
 /// Builds a [`Registry`] backed by `registry.db` in the app's data directory.
@@ -179,11 +192,43 @@ async fn refresh_hardware_profile(app: AppHandle) -> Result<HardwareProfile, Str
         .map_err(|e| e.to_string())
 }
 
+/// Kicks off the semantic-search index build in the background at launch.
+///
+/// Embedding model files cache under `app_data_dir()/embeddings` so they
+/// download only on first launch and persist afterwards. The build runs on a
+/// blocking thread (it's CPU-bound and the first run downloads the model) so the
+/// UI stays responsive; the result is stashed in [`SearchState`]. Best-effort:
+/// any failure is logged and leaves the index empty rather than crashing.
+fn build_semantic_index(app: AppHandle) {
+    let cache_dir = app
+        .path()
+        .app_data_dir()
+        .map(|dir| dir.join("embeddings"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("anchor-embeddings"));
+
+    tauri::async_runtime::spawn(async move {
+        match tauri::async_runtime::spawn_blocking(move || SemanticIndex::build(cache_dir)).await {
+            Ok(Ok(index)) => {
+                let count = index.len();
+                *app.state::<SearchState>().index.write().await = Some(index);
+                eprintln!("[anchor-search] semantic index ready: {count} models embedded");
+            }
+            Ok(Err(e)) => eprintln!("[anchor-search] failed to build semantic index: {e}"),
+            Err(e) => eprintln!("[anchor-search] index build task failed: {e}"),
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(ServerState::default())
+        .manage(SearchState::default())
+        .setup(|app| {
+            build_semantic_index(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_models,
             download_model,
