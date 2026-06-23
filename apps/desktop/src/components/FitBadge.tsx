@@ -21,10 +21,8 @@ export function FitBadge({
   return (
     <span
       className={[
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
-        wontFit
-          ? "bg-red-950/40 text-red-300 ring-red-900/50"
-          : "bg-amber-950/30 text-amber-300 ring-amber-800/40",
+        "inline-flex items-center gap-1 text-xs font-medium",
+        wontFit ? "text-danger" : "text-warn",
         className,
       ].join(" ")}
       title={wontFit ? "Needs more memory than your Mac has" : "Needs most of your Mac's memory"}

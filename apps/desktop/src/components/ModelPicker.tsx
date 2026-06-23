@@ -41,7 +41,7 @@ export function ModelPicker({
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
           aria-label={`${label} model`}
-          className="w-full cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/4 py-2.5 pl-3 pr-9 text-sm font-medium text-fg backdrop-blur transition-colors hover:border-white/15 focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50 [&>optgroup]:bg-surface-solid [&>option]:bg-surface-solid [&>option]:text-fg"
+          className="w-full cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/5 py-2.5 pl-3 pr-9 text-sm font-medium text-fg transition-colors hover:border-white/15 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50 [&>optgroup]:bg-surface [&>option]:bg-surface [&>option]:text-fg"
         >
           <option value="" disabled>
             Choose a model…
@@ -74,11 +74,8 @@ export function ModelPicker({
           <span className="text-fg-subtle">No model selected</span>
         ) : selected.status === "installed" ? (
           <>
-            <span
-              className="size-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_rgb(52_211_153/0.7)]"
-              aria-hidden
-            />
-            <span className="font-medium text-emerald-300">Installed</span>
+            <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
+            <span className="font-medium text-ok">Installed</span>
           </>
         ) : (
           <>

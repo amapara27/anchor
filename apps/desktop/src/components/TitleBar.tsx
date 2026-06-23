@@ -18,11 +18,11 @@ export function TitleBar({ active }: { active: Tab }) {
   return (
     <header
       data-tauri-drag-region
-      className="z-30 flex h-10 shrink-0 select-none items-center justify-between border-b border-white/8 bg-surface-solid/70 pl-20 pr-3 backdrop-blur-xl"
+      className="z-30 flex h-10 shrink-0 select-none items-center justify-between border-b border-white/8 bg-chrome pl-20 pr-3"
     >
       {/* Left: current location, sitting just past the traffic-lights inset. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-accent-text/80">
+        <span className="text-[13px] font-semibold tracking-tight text-fg">
           Anchor
         </span>
         <span className="text-fg-subtle" aria-hidden>

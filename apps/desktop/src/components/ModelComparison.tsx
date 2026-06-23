@@ -101,7 +101,7 @@ export function ModelComparison() {
             disabled={running}
             rows={3}
             placeholder="Ask both models the same thing…"
-            className="scrollbar-slim w-full resize-y rounded-lg border border-white/8 bg-white/4 px-3 py-2.5 text-sm text-fg shadow-[inset_0_1px_2px_rgb(0_0_0/0.3)] backdrop-blur transition-colors placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+            className="scrollbar-slim w-full resize-y rounded-lg border border-white/8 bg-white/5 px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
           />
         </div>
 
@@ -114,7 +114,7 @@ export function ModelComparison() {
             type="button"
             onClick={() => run(modelA, modelB, prompt)}
             disabled={!canRun}
-            className="glow-accent inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg bg-gradient-to-b from-indigo-500 to-violet-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:from-indigo-400 hover:to-violet-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:from-indigo-500 disabled:hover:to-violet-600"
+            className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent"
           >
             {running ? (
               <>
@@ -196,10 +196,8 @@ function ThroughputBar({
             <div className="h-2 overflow-hidden rounded-full bg-white/8">
               <div
                 className={[
-                  "h-full rounded-full transition-[width] duration-500 [transition-timing-function:var(--ease-spring)]",
-                  row.lead
-                    ? "bg-gradient-to-r from-indigo-500 to-violet-400 shadow-[0_0_8px_rgb(99_102_241/0.6)]"
-                    : "bg-white/20",
+                  "h-full rounded-full transition-[width] duration-500 [transition-timing-function:var(--ease-out)]",
+                  row.lead ? "bg-accent" : "bg-white/20",
                 ].join(" ")}
                 style={{ width: `${(row.tok / max) * 100}%` }}
               />

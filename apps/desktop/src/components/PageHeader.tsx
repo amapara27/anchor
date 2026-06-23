@@ -10,7 +10,7 @@ export function PageHeader({
 }) {
   return (
     <header className="flex flex-col gap-1.5">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent-text/90">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">
         {eyebrow}
       </span>
       <h1 className="text-3xl font-semibold tracking-tight text-fg">{title}</h1>

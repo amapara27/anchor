@@ -17,7 +17,7 @@ export default function App() {
         <Sidebar active={tab} onSelect={setTab} />
         <main className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
           {/* key remounts on tab switch so the page-enter animation replays */}
-          <div key={tab} className="animate-fade-up mx-auto max-w-7xl px-6 py-9 lg:px-8">
+          <div key={tab} className="animate-fade-in mx-auto max-w-7xl px-6 py-9 lg:px-8">
             {tab === "home" && <HomePage onNavigate={setTab} />}
             {tab === "models" && <ModelLibrary />}
             {tab === "comparison" && <ModelComparison />}

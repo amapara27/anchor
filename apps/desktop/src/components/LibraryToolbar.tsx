@@ -44,7 +44,7 @@ export function LibraryToolbar({
           onChange={(e) => onQuery(e.target.value)}
           placeholder="Search models, families, use cases…"
           aria-label="Search models"
-          className="w-full rounded-lg border border-white/8 bg-white/4 py-2 pl-9 pr-9 text-sm text-fg shadow-[inset_0_1px_2px_rgb(0_0_0/0.3)] placeholder:text-fg-subtle backdrop-blur transition-colors focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25"
+          className="w-full rounded-lg border border-white/8 bg-white/5 py-2 pl-9 pr-9 text-sm text-fg placeholder:text-fg-subtle transition-colors focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
         {query && (
           <button
@@ -63,7 +63,7 @@ export function LibraryToolbar({
         <div
           role="tablist"
           aria-label="Filter by install status"
-          className="inline-flex rounded-lg border border-white/8 bg-white/4 p-0.5 backdrop-blur"
+          className="inline-flex rounded-lg border border-white/8 bg-white/5 p-0.5"
         >
           {STATUS_TABS.map((tab) => {
             const active = status === tab.key;
@@ -74,9 +74,9 @@ export function LibraryToolbar({
                 aria-selected={active}
                 onClick={() => onStatus(tab.key)}
                 className={[
-                  "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.97]",
+                  "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
                   active
-                    ? "bg-accent/15 text-accent-text shadow-[inset_0_1px_0_rgb(255_255_255/0.06)] ring-1 ring-inset ring-accent/25"
+                    ? "bg-accent/15 text-accent-text ring-1 ring-inset ring-accent/20"
                     : "text-fg-muted hover:text-fg",
                 ].join(" ")}
               >
@@ -128,7 +128,7 @@ function SelectChip({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={ariaLabel}
-        className="cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/4 py-1.5 pl-2.5 pr-7 text-xs font-medium text-fg-muted backdrop-blur transition-colors hover:border-white/15 hover:text-fg focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25 [&>option]:bg-surface-solid [&>option]:text-fg"
+        className="cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/5 py-1.5 pl-2.5 pr-7 text-xs font-medium text-fg-muted transition-colors hover:border-white/15 hover:text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 [&>option]:bg-surface [&>option]:text-fg"
       >
         {children}
       </select>

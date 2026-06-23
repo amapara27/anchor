@@ -47,7 +47,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
       <PageHeader eyebrow="Overview" title="Home" subtitle="Your local AI at a glance." />
 
       {/* Bento: a 2×2 hardware hero anchors the grid; four stat tiles fill the rest. */}
-      <section className="stagger-children grid grid-cols-2 gap-3 lg:grid-cols-4 lg:auto-rows-[132px]">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:auto-rows-[132px]">
         <HardwareHero profile={profile} loading={hwLoading} onRefresh={refreshHardware} />
         <StatCard icon={<BoxesIcon className="size-4" />} label="Installed models" value={String(stats.installed)} />
         <StatCard icon={<HardDriveIcon className="size-4" />} label="On disk" value={formatBytes(stats.onDisk)} />
@@ -58,7 +58,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
       <section>
         <SectionHeading title="Favorite models" />
         {favorites.length > 0 ? (
-          <div className="stagger-children grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
             {favorites.map((m) => (
               <ModelCard
                 key={m.id}
@@ -135,15 +135,10 @@ function HardwareHero({
 
   return (
     <div className={base}>
-      {/* Corner bloom ties the hero to the canvas's ambient indigo. */}
-      <div
-        className="pointer-events-none absolute -right-20 -top-24 size-64 rounded-full bg-indigo-500/15 blur-3xl"
-        aria-hidden
-      />
       <div className="relative flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3.5">
-            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent/12 text-accent-text ring-1 ring-accent/25">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-white/5 text-fg-muted ring-1 ring-inset ring-white/10">
               <ChipIcon className="size-5" />
             </span>
             <div className="min-w-0">
@@ -179,8 +174,8 @@ function HardwareHero({
               <HeroStat icon={<LayersIcon className="size-4" />} label="Arch" value={profile.arch} />
             </div>
             {profile.apple_silicon && (
-              <span className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-0.5 text-[11px] font-medium text-accent-text ring-1 ring-inset ring-accent/20">
-                <span className="size-1.5 rounded-full bg-accent-text" aria-hidden />
+              <span className="mt-3 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-inset ring-white/10">
+                <span className="size-1.5 rounded-full bg-ok" aria-hidden />
                 Apple Silicon · unified memory
               </span>
             )}
@@ -194,7 +189,7 @@ function HardwareHero({
 /** One spec inside the hardware hero. */
 function HeroStat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-lg bg-white/4 px-3 py-2 ring-1 ring-inset ring-white/8">
+    <div className="rounded-lg bg-white/5 px-3 py-2 ring-1 ring-inset ring-white/10">
       <div className="flex items-center gap-1.5 text-fg-subtle">
         {icon}
         <span className="text-[11px] uppercase tracking-wide">{label}</span>
@@ -208,7 +203,7 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
   return (
     <div className="card card-interactive flex flex-col justify-between p-4">
       <div className="flex items-center gap-2.5">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-text ring-1 ring-inset ring-accent/20">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-fg-muted ring-1 ring-inset ring-white/10">
           {icon}
         </span>
         <span className="text-xs font-medium uppercase tracking-wide text-fg-subtle">{label}</span>
@@ -222,7 +217,7 @@ function SectionHeading({ title }: { title: string }) {
   return (
     <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
       {title}
-      <span className="h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" aria-hidden />
+      <span className="h-px flex-1 bg-white/8" aria-hidden />
     </h2>
   );
 }
@@ -249,7 +244,7 @@ function EmptyState({
         <button
           type="button"
           onClick={action.onClick}
-          className="glow-accent mt-4 cursor-pointer rounded-lg bg-gradient-to-b from-indigo-500 to-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-all hover:from-indigo-400 hover:to-violet-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.97]"
+          className="mt-4 cursor-pointer rounded-lg bg-accent px-3.5 py-1.5 text-xs font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
         >
           {action.label}
         </button>

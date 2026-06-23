@@ -42,15 +42,15 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
   return (
     <aside
       className={[
-        "flex h-full shrink-0 flex-col border-r border-white/8 bg-surface-solid/60 px-3 py-5 backdrop-blur-xl transition-[width] duration-300",
-        "[transition-timing-function:var(--ease-spring)]",
+        "flex h-full shrink-0 flex-col border-r border-white/8 bg-chrome px-3 py-5 transition-[width] duration-300",
+        "[transition-timing-function:var(--ease-out)]",
         collapsed ? "w-16" : "w-56",
       ].join(" ")}
     >
       <div className={["flex items-center gap-2.5 px-1", collapsed ? "justify-center" : ""].join(" ")}>
-        {/* Brand tile: indigo→violet gradient + accent glow so the mark reads as identity. */}
-        <span className="glow-accent flex size-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600">
-          <AnchorMark className="size-5 text-white" />
+        {/* Brand tile: flat neutral square with the mark in the single accent. */}
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/8 bg-white/5">
+          <AnchorMark className="size-5 text-accent-text" />
         </span>
         {!collapsed && (
           <span className="flex-1 truncate text-lg font-semibold tracking-tight text-fg">Anchor</span>
@@ -68,7 +68,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         {/* Sliding active indicator: one pill that springs between items (a11y: bg + bar, not colour-only). */}
         {activeIndex >= 0 && (
           <span
-            className="pointer-events-none absolute inset-x-0 rounded-lg border-l-2 border-accent bg-accent/12 transition-transform duration-300 [transition-timing-function:var(--ease-spring)]"
+            className="pointer-events-none absolute inset-x-0 rounded-lg border-l-2 border-accent bg-accent/10 transition-transform duration-300 [transition-timing-function:var(--ease-out)]"
             style={{ height: ITEM_H, transform: `translateY(${activeIndex * (ITEM_H + GAP)}px)` }}
             aria-hidden
           />
@@ -106,7 +106,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         ].join(" ")}
         title="Everything runs on this Mac"
       >
-        <span className="size-1.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_8px_rgb(52_211_153/0.7)]" aria-hidden />
+        <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
         {!collapsed && <span className="data truncate">100% local · v0.1.0</span>}
       </div>
     </aside>

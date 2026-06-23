@@ -24,23 +24,10 @@ export function ComparisonPane({
   fraction,
   fastest,
 }: ComparisonPaneProps) {
-  const installed = model?.status === "installed";
-
   return (
     <div className="card flex min-h-[18rem] flex-col p-5">
-      {/* Header: monogram + name + phase chip */}
+      {/* Header: name + phase chip */}
       <div className="flex items-center gap-3">
-        <span
-          className={[
-            "data flex size-9 shrink-0 select-none items-center justify-center rounded-lg text-sm font-semibold uppercase ring-1",
-            installed
-              ? "bg-emerald-500/10 text-emerald-300 ring-emerald-500/25"
-              : "bg-white/5 text-fg-muted ring-white/10",
-          ].join(" ")}
-          aria-hidden
-        >
-          {model ? model.family.slice(0, 2) : slotLabel}
-        </span>
         <div className="min-w-0 flex-1">
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">
             Model {slotLabel}
@@ -84,11 +71,11 @@ function PaneBody({
 }) {
   if (state.phase === "failed") {
     return (
-      <div className="flex items-start gap-2 text-sm text-amber-300">
+      <div className="flex items-start gap-2 text-sm text-danger">
         <WarningIcon className="mt-0.5 size-4 shrink-0" />
         <div>
           <p className="font-medium">Couldn’t complete</p>
-          <p className="mt-0.5 text-amber-300/80">{state.error}</p>
+          <p className="mt-0.5 text-danger/80">{state.error}</p>
           <p className="mt-1 text-xs text-fg-subtle">Adjust your selection and run again.</p>
         </div>
       </div>
@@ -155,7 +142,7 @@ function DownloadProgress({ pull }: { pull?: SlotState["pull"] }) {
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-400 shadow-[0_0_8px_rgb(99_102_241/0.6)] transition-[width] duration-150 ease-out"
+          className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -205,8 +192,8 @@ const PHASE_META: Record<SlotState["phase"], { label: string; cls: string }> = {
   downloading: { label: "Downloading", cls: "text-accent-text ring-accent/25" },
   loading: { label: "Loading", cls: "text-accent-text ring-accent/25" },
   generating: { label: "Generating", cls: "text-accent-text ring-accent/25" },
-  done: { label: "Done", cls: "text-emerald-300 ring-emerald-500/25" },
-  failed: { label: "Failed", cls: "text-amber-300 ring-amber-500/30" },
+  done: { label: "Done", cls: "text-ok ring-ok/30" },
+  failed: { label: "Failed", cls: "text-danger ring-danger/30" },
 };
 
 function PhaseChip({ phase }: { phase: SlotState["phase"] }) {
@@ -214,7 +201,7 @@ function PhaseChip({ phase }: { phase: SlotState["phase"] }) {
   return (
     <span
       className={[
-        "rounded-md bg-white/4 px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        "rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
         meta.cls,
       ].join(" ")}
     >

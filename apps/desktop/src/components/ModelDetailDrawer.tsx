@@ -64,7 +64,7 @@ export function ModelDetailDrawer({
     >
       {/* Scrim — strong enough to isolate the panel (a11y: modal legibility). */}
       <div
-        className="absolute inset-0 bg-black/65 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60"
         onClick={onClose}
         aria-hidden
       />
@@ -77,7 +77,7 @@ export function ModelDetailDrawer({
         tabIndex={-1}
         className={[
           "scrollbar-slim absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-y-auto",
-          "border-l border-white/10 bg-surface-solid/85 shadow-2xl outline-none backdrop-blur-xl transition-transform duration-300 [transition-timing-function:var(--ease-spring)]",
+          "border-l border-white/10 bg-surface shadow-overlay outline-none transition-transform duration-300 [transition-timing-function:var(--ease-out)]",
           open ? "translate-x-0" : "translate-x-full",
         ].join(" ")}
       >
@@ -117,7 +117,7 @@ function DrawerBody({
   return (
     <>
       {/* Header */}
-      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/8 bg-surface-solid/85 px-5 py-4 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/8 bg-surface px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="truncate text-lg font-semibold text-fg">{model.name}</h2>
@@ -156,7 +156,7 @@ function DrawerBody({
         {/* Hardware */}
         <section>
           <SectionLabel>Hardware</SectionLabel>
-          <div className="flex items-center gap-3 rounded-lg border border-white/8 bg-white/4 px-3 py-2.5">
+          <div className="flex items-center gap-3 rounded-lg border border-white/8 bg-white/5 px-3 py-2.5">
             <MemoryIcon className="size-4 shrink-0 text-fg-subtle" />
             <div className="min-w-0 flex-1">
               <p className="text-sm text-fg">{formatBytes(spec.min_memory_bytes)} memory recommended</p>
@@ -197,20 +197,20 @@ function DrawerBody({
             onChange={(e) => onNoteChange(e.target.value)}
             rows={4}
             placeholder="Add your own notes about this model…"
-            className="scrollbar-slim w-full resize-none rounded-lg border border-white/8 bg-black/20 px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25"
+            className="scrollbar-slim w-full resize-none rounded-lg border border-white/8 bg-white/5 px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
           />
         </section>
       </div>
 
       {/* Sticky action bar */}
-      <div className="sticky bottom-0 border-t border-white/8 bg-surface-solid/85 px-5 py-4 backdrop-blur-xl">
+      <div className="sticky bottom-0 border-t border-white/8 bg-surface px-5 py-4">
         {isDownloading ? (
           <DrawerProgress download={download} totalBytes={spec.download_bytes} onCancel={onCancel} />
         ) : installed ? (
           <button
             type="button"
             onClick={onRemove}
-            className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40"
+            className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-4 py-2.5 text-sm font-medium text-danger transition-colors hover:bg-danger/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-danger/40"
           >
             <TrashIcon className="size-4" /> Remove from disk
           </button>
@@ -218,7 +218,7 @@ function DrawerBody({
           <button
             type="button"
             onClick={onDownload}
-            className="glow-accent inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-indigo-500 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:from-indigo-400 hover:to-violet-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.99]"
+            className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
           >
             <DownloadIcon className="size-4" /> Download · {formatBytes(spec.download_bytes)}
           </button>
@@ -248,16 +248,16 @@ function Compatibility({
   const need = formatBytes(minMemoryBytes);
   const { className, label } =
     tier === "wont_fit"
-      ? { className: "text-red-300", label: `Too large for your ${host} Mac` }
+      ? { className: "text-danger", label: `Too large for your ${host} Mac` }
       : tier === "tight"
-        ? { className: "text-amber-300", label: `Tight fit — needs ${need} of your ${host}` }
-        : { className: "text-emerald-300", label: `Fits your ${host} Mac` };
+        ? { className: "text-warn", label: `Tight fit — needs ${need} of your ${host}` }
+        : { className: "text-ok", label: `Fits your ${host} Mac` };
   return <p className={`mt-1.5 text-xs ${className}`}>{label}</p>;
 }
 
 function SpecRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/8 bg-white/4 px-3 py-2 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]">
+    <div className="rounded-lg border border-white/8 bg-white/5 px-3 py-2">
       <div className="flex items-center gap-1.5 text-fg-subtle">
         {icon}
         <span className="text-xs">{label}</span>
@@ -283,14 +283,14 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           {tags.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center gap-1 rounded-md bg-accent/10 py-0.5 pl-2 pr-1 text-xs font-medium text-accent-text ring-1 ring-inset ring-accent/20"
+              className="inline-flex items-center gap-1 rounded-md bg-white/5 py-0.5 pl-2 pr-1 text-xs font-medium text-fg-muted ring-1 ring-inset ring-white/10"
             >
               {tag}
               <button
                 type="button"
                 onClick={() => onChange(tags.filter((x) => x !== tag))}
                 aria-label={`Remove tag ${tag}`}
-                className="cursor-pointer rounded p-0.5 text-accent-text/70 transition-colors hover:bg-accent/20 hover:text-accent-text focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                className="cursor-pointer rounded p-0.5 text-fg-subtle transition-colors hover:bg-white/10 hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <XIcon className="size-3" />
               </button>
@@ -312,7 +312,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
           onBlur={add}
           placeholder="Add a tag and press Enter"
           aria-label="Add a tag"
-          className="w-full rounded-lg border border-white/8 bg-black/20 py-1.5 pl-8 pr-3 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/25"
+          className="w-full rounded-lg border border-white/8 bg-white/5 py-1.5 pl-8 pr-3 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
       </div>
     </div>
@@ -350,7 +350,7 @@ function DrawerProgress({
         aria-valuemax={100}
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-400 shadow-[0_0_8px_rgb(99_102_241/0.6)] transition-[width] duration-150 ease-out"
+          className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
           style={{ width: `${verifying ? 100 : pct}%` }}
         />
       </div>

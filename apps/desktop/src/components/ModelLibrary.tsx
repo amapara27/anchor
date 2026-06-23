@@ -92,7 +92,7 @@ export function ModelLibrary() {
       {!loading && visible.length === 0 && <EmptyState hasModels={models.length > 0} />}
 
       {!loading && visible.length > 0 && (
-        <div className="stagger-children grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visible.map((m) => (
             <ModelCard
               key={m.id}
@@ -172,19 +172,19 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   return (
     <div
       role="status"
-      className="flex items-start gap-3 rounded-xl border border-amber-900/40 bg-amber-950/20 px-4 py-3"
+      className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3"
     >
-      <WarningIcon className="mt-0.5 size-4 shrink-0 text-amber-400" />
+      <WarningIcon className="mt-0.5 size-4 shrink-0 text-warn" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-amber-200">Couldn’t confirm installed models</p>
-        <p className="mt-0.5 truncate text-xs text-amber-300/70" title={message}>
+        <p className="text-sm font-medium text-fg">Couldn’t confirm installed models</p>
+        <p className="mt-0.5 truncate text-xs text-fg-muted" title={message}>
           Showing the catalog; install state may be out of date. ({message})
         </p>
       </div>
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-amber-800/50 px-2.5 py-1 text-xs font-medium text-amber-200 transition-colors hover:bg-amber-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/40"
+        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-white/20 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
       >
         <RefreshIcon className="size-3.5" /> Retry
       </button>

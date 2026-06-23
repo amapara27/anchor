@@ -4,74 +4,59 @@
 @import "tailwindcss";
 
 /*
- * Anchor design tokens — "Modern Dark / Cinema".
- * Near-black canvas + frosted-glass surfaces + an electric indigo→violet accent.
- * Green is reserved as a semantic "installed / local / online" status only.
+ * Anchor design tokens — "Refined Minimal Dark".
+ * Flat near-black surfaces, hairline borders, near-monochrome text, and a single
+ * restrained blue accent reserved for the primary action + active nav.
+ * Depth comes from borders and surface steps, not from blur, glow, or gradients.
  * Dark mode only.
  */
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
 
-  /* Surfaces: depth comes from translucency + blur, not lightness. */
-  --color-canvas: #07080d; /* app background — cool near-black */
-  --color-surface-solid: #0d0f16; /* opaque chrome: sidebar, title bar */
+  /* Surfaces — flat and opaque; each step is a small lightness lift. */
+  --color-canvas: #0b0c0e; /* app background */
+  --color-surface: #131417; /* cards, panels */
+  --color-surface-raised: #191b1f; /* hover / elevated */
+  --color-chrome: #0e0f12; /* sidebar, title bar */
 
-  /* Glass + hairlines as white-alpha so they read on the dark canvas. */
-  --surface-glass: rgb(255 255 255 / 0.04);
-  --surface-glass-raised: rgb(255 255 255 / 0.06);
-  --hairline: rgb(255 255 255 / 0.08);
+  /* Hairlines carry the structure. */
+  --hairline: rgb(255 255 255 / 0.07);
   --hairline-strong: rgb(255 255 255 / 0.12);
 
-  /* Brand / action accent: indigo→violet. */
-  --color-accent: #6366f1; /* indigo-500 — fills */
-  --color-accent-hi: #8b5cf6; /* violet-500 — gradient end */
-  --color-accent-text: #a5b4fc; /* indigo-300 — accent text/icons (≥4.5:1 on canvas) */
-
   /* Foreground ramp. */
-  --color-fg: #ededf2;
-  --color-fg-muted: #8a8f98;
-  --color-fg-subtle: #5b606b;
+  --color-fg: #e7e8ea;
+  --color-fg-muted: #9a9ea5;
+  --color-fg-subtle: #6a6e76;
 
-  /* Elevation — soft drop + a faint top edge. */
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 0 0 1px rgb(255 255 255 / 0.02) inset;
-  --shadow-card-hover:
-    0 12px 32px -12px rgb(0 0 0 / 0.85), 0 2px 8px rgb(0 0 0 / 0.5),
-    0 0 0 1px rgb(255 255 255 / 0.05) inset;
-  --shadow-glow-accent: 0 0 40px -8px rgb(99 102 241 / 0.45);
+  /* Accent — single, restrained blue. Solid fills only, no gradient. */
+  --color-accent: #4f7cff;
+  --color-accent-fg: #ffffff;
+  --color-accent-text: #93b0ff; /* ≥4.5:1 on canvas — links, active nav text */
 
-  /* One shared motion rhythm for the whole app. */
-  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Status — desaturated; used as small dots/icons + text, never filled pills. */
+  --color-ok: #5fb585; /* installed / ready / online */
+  --color-warn: #c9a36a; /* tight fit */
+  --color-danger: #d98a8a; /* won't fit / error */
 
-  --animate-fade-up: fade-up 0.5s var(--ease-spring) both;
-  --animate-fade-in: fade-in 0.3s ease both;
+  /* Radii — tighter than before. */
+  --radius-card: 10px;
+  --radius-control: 8px;
 
-  @keyframes fade-up {
-    from {
-      opacity: 0;
-      transform: translateY(12px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
-  }
+  /* Elevation — borders do the work; one soft shadow reserved for overlays. */
+  --shadow-overlay: 0 16px 48px -24px rgb(0 0 0 / 0.7);
+
+  /* One shared motion rhythm. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-fade-in: fade-in 0.2s ease both;
+
   @keyframes fade-in {
     from {
       opacity: 0;
     }
     to {
       opacity: 1;
-    }
-  }
-  /* Slow ambient drift for the background bloom. */
-  @keyframes bloom-drift {
-    0%,
-    100% {
-      transform: translate3d(0, 0, 0) scale(1);
-    }
-    50% {
-      transform: translate3d(-4%, 3%, 0) scale(1.08);
     }
   }
 }
@@ -85,48 +70,12 @@
 
   body {
     margin: 0;
-    /* Ambient depth: an indigo bloom up top + a violet counter-glow over the canvas. */
     background-color: var(--color-canvas);
-    background-image:
-      radial-gradient(1100px 540px at 78% -14%, rgb(99 102 241 / 0.1), transparent 64%),
-      radial-gradient(900px 480px at -12% -6%, rgb(139 92 246 / 0.07), transparent 60%);
-    background-attachment: fixed;
     color: var(--color-fg);
     font-family: var(--font-sans);
     font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-  }
-
-  /* A single slow-drifting bloom for life behind the glass (killed by reduced-motion). */
-  body::after {
-    content: "";
-    position: fixed;
-    top: -20%;
-    right: -10%;
-    width: 60vw;
-    height: 60vw;
-    max-width: 720px;
-    max-height: 720px;
-    pointer-events: none;
-    z-index: -1;
-    background: radial-gradient(circle at center, rgb(99 102 241 / 0.12), transparent 60%);
-    filter: blur(40px);
-    animation: bloom-drift 28s ease-in-out infinite;
-  }
-
-  /* Blueprint grid overlay, masked so it fades out below the fold. */
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background-image:
-      linear-gradient(to right, rgb(165 180 252 / 0.035) 1px, transparent 1px),
-      linear-gradient(to bottom, rgb(165 180 252 / 0.035) 1px, transparent 1px);
-    background-size: 48px 48px;
-    mask-image: linear-gradient(to bottom, black, transparent 58%);
-    -webkit-mask-image: linear-gradient(to bottom, black, transparent 58%);
   }
 
   /* Tabular figures for spec numbers so columns don't jitter. */
@@ -142,12 +91,21 @@
 }
 
 @layer utilities {
-  /* Frosted-glass surface — the core material of the reimagined UI. */
-  .glass {
-    background-color: var(--surface-glass);
-    backdrop-filter: blur(14px) saturate(1.3);
-    -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  /* Standard card: flat opaque surface, hairline border. No blur, no shadow. */
+  .card {
     border: 1px solid var(--hairline);
+    border-radius: var(--radius-card);
+    background-color: var(--color-surface);
+  }
+  /* Interactive cards lift their edge + surface on hover — no transform. */
+  .card-interactive {
+    transition:
+      border-color 0.16s var(--ease-out),
+      background-color 0.16s var(--ease-out);
+  }
+  .card-interactive:hover {
+    border-color: var(--hairline-strong);
+    background-color: var(--color-surface-raised);
   }
 
   /* Slim, theme-aware scrollbars — the default macOS ones look out of place. */
@@ -166,68 +124,10 @@
     background-clip: padding-box;
   }
   .scrollbar-slim::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(255 255 255 / 0.18);
+    background-color: rgb(255 255 255 / 0.2);
   }
 
-  /* Standard card: frosted glass, hairline border, faint inner top-edge, soft drop. */
-  .card {
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-xl);
-    background-color: var(--surface-glass);
-    backdrop-filter: blur(14px) saturate(1.2);
-    -webkit-backdrop-filter: blur(14px) saturate(1.2);
-    box-shadow: var(--shadow-card);
-  }
-  /* Interactive cards lift and pick up a brighter edge + a hint of accent. */
-  .card-interactive {
-    transition:
-      transform 0.22s var(--ease-spring),
-      border-color 0.22s ease,
-      box-shadow 0.22s ease,
-      background-color 0.22s ease;
-  }
-  .card-interactive:hover {
-    transform: translateY(-3px);
-    border-color: var(--hairline-strong);
-    background-color: var(--surface-glass-raised);
-    box-shadow: var(--shadow-card-hover);
-  }
-
-  /* Staggered entrance for card grids: items rise 45ms apart, capped at 8. */
-  .stagger-children > * {
-    animation: fade-up 0.5s var(--ease-spring) both;
-  }
-  .stagger-children > *:nth-child(2) {
-    animation-delay: 45ms;
-  }
-  .stagger-children > *:nth-child(3) {
-    animation-delay: 90ms;
-  }
-  .stagger-children > *:nth-child(4) {
-    animation-delay: 135ms;
-  }
-  .stagger-children > *:nth-child(5) {
-    animation-delay: 180ms;
-  }
-  .stagger-children > *:nth-child(6) {
-    animation-delay: 225ms;
-  }
-  .stagger-children > *:nth-child(7) {
-    animation-delay: 270ms;
-  }
-  .stagger-children > *:nth-child(n + 8) {
-    animation-delay: 315ms;
-  }
-
-  /* Primary-CTA accent bloom: stronger on hover so the glow reads as feedback. */
-  .glow-accent {
-    box-shadow: 0 0 20px -8px rgb(99 102 241 / 0.55);
-  }
-  .glow-accent:hover {
-    box-shadow: 0 0 28px -6px rgb(139 92 246 / 0.65);
-  }
-
-  /* Skeleton shimmer — a gradient sweep reads more "loading" than a blink. */
+  /* Skeleton shimmer — neutral white-alpha sweep, no accent. */
   .shimmer {
     position: relative;
     overflow: hidden;
@@ -236,7 +136,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.06) 50%, transparent 70%);
+    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.05) 50%, transparent 70%);
     background-size: 200% 100%;
     animation: shimmer-sweep 1.6s ease-in-out infinite;
   }
