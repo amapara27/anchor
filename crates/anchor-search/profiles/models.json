@@ -10,8 +10,8 @@
     "download_gb": 4.7,
     "min_memory_gb": 8,
     "blurb": "Well-rounded general-purpose model with a long context window.",
-    "use_cases": ["General chat", "Summarization", "RAG"],
-    "profile": "A well-rounded 8B general-purpose assistant with a very long 128K context window. Best for everyday chat, instruction following, summarizing long documents, drafting and rewriting text, answering questions, and serving as a dependable default model for retrieval-augmented generation (RAG) over your own files and notes. A safe first choice when you are unsure which model to pick."
+    "use_cases": ["General chat", "Summarization", "Long context"],
+    "profile": "A well-rounded general-purpose chat assistant with a 128K context window. Keywords: everyday chat, instruction following, summarize long documents and articles, draft and rewrite text, answer questions, brainstorm. The safe default choice when you are unsure which model to pick."
   },
   {
     "id": "llama3.2:3b",
@@ -24,8 +24,8 @@
     "download_gb": 2.0,
     "min_memory_gb": 4,
     "blurb": "Compact and fast — a good default on memory-constrained machines.",
-    "use_cases": ["On-device", "Drafting", "Classification"],
-    "profile": "A compact, fast 3B model that runs comfortably on laptops with limited memory. Best for on-device assistants, quick drafting, text classification, short summaries, simple question answering, and low-latency tasks where speed and a small footprint matter more than maximum quality."
+    "use_cases": ["Low memory", "Fast chat", "Drafting"],
+    "profile": "A compact, fast 3B chat model that runs on a low-memory laptop. Keywords: small footprint, limited RAM, runs offline on a laptop, low latency, fast everyday assistant, quick drafting, short summaries, simple question answering. Choose it when speed and small size matter more than maximum quality."
   },
   {
     "id": "llama3.2:1b",
@@ -38,8 +38,8 @@
     "download_gb": 1.3,
     "min_memory_gb": 2,
     "blurb": "Tiny model for edge and ultra-low-latency use.",
-    "use_cases": ["Edge", "Autocomplete", "Routing"],
-    "profile": "A tiny 1B model built for edge devices and ultra-low-latency workloads. Best for fast autocomplete, simple text transformations, intent routing and classification, keyword extraction, and embedded uses where memory and battery are scarce. Not suited to complex reasoning."
+    "use_cases": ["Edge", "Autocomplete", "Low memory"],
+    "profile": "A tiny 1B model for edge devices and the lowest-memory machines. Keywords: minimal RAM, runs on a small laptop or phone, ultra-low latency, fast autocomplete, intent routing, keyword extraction, simple text transforms. Not for complex reasoning."
   },
   {
     "id": "llama3.3:70b",
@@ -52,8 +52,8 @@
     "download_gb": 43,
     "min_memory_gb": 64,
     "blurb": "Frontier-class open model rivaling much larger systems.",
-    "use_cases": ["Complex reasoning", "Long-form", "Agents"],
-    "profile": "A frontier-class 70B model offering near state-of-the-art quality among open models. Best for complex reasoning, nuanced instruction following, long-form writing and synthesis, sophisticated agent workflows, and demanding analytical tasks. Requires a high-memory machine but delivers the strongest general results in this catalog."
+    "use_cases": ["Complex reasoning", "Long-form writing", "Agents"],
+    "profile": "A frontier-class 70B model with near state-of-the-art quality. Keywords: hardest complex reasoning, nuanced instruction following, long-form writing and synthesis, sophisticated agent workflows, deep analysis. The strongest general model here, but needs a high-memory machine (64GB+)."
   },
   {
     "id": "qwen2.5:7b",
@@ -66,8 +66,8 @@
     "download_gb": 4.7,
     "min_memory_gb": 8,
     "blurb": "Strong, efficient all-rounder with excellent multilingual support.",
-    "use_cases": ["General chat", "Multilingual", "Structured output"],
-    "profile": "A strong and efficient 7B all-rounder with excellent multilingual ability and reliable structured (JSON) output. Best for general assistance, translation and multilingual chat, data extraction, generating structured responses for downstream tools, and everyday reasoning on modest hardware."
+    "use_cases": ["Multilingual", "Structured output", "Data extraction"],
+    "profile": "A strong, efficient 7B all-rounder with excellent multilingual ability and reliable JSON output. Keywords: general assistant, translation and multilingual chat, extract structured data into JSON, parse and transform text, generate structured responses for downstream tools, everyday reasoning on modest hardware."
   },
   {
     "id": "qwen2.5:14b",
@@ -81,7 +81,7 @@
     "min_memory_gb": 16,
     "blurb": "Strong multilingual and reasoning performance for its size.",
     "use_cases": ["Reasoning", "Multilingual", "Agents"],
-    "profile": "A capable 14B model with strong reasoning and multilingual performance for its size. Best for analytical question answering, multilingual tasks, tool-using agents, structured data extraction, and mid-complexity work that benefits from more depth than a 7B model while staying runnable on a 16GB machine."
+    "profile": "A capable 14B model with strong reasoning and multilingual skill for its size. Keywords: analytical question answering, multilingual tasks, tool-using agents, extract structured data, summarize reports, mid-complexity work that needs more depth than a 7B while still running on a 16GB machine."
   },
   {
     "id": "qwen2.5:32b",
@@ -95,7 +95,7 @@
     "min_memory_gb": 32,
     "blurb": "High-quality reasoning approaching larger frontier models.",
     "use_cases": ["Complex reasoning", "Analysis", "Agents"],
-    "profile": "A high-quality 32B model whose reasoning approaches much larger systems. Best for complex analysis, multi-step reasoning, demanding agent workflows, careful instruction following, and professional writing, when you have the memory to run a larger model but cannot fit a 70B."
+    "profile": "A high-quality 32B model whose reasoning approaches much larger systems. Keywords: complex analysis, multi-step reasoning, demanding agent workflows, careful instruction following, professional writing. For when you have 32GB+ but cannot fit a 70B."
   },
   {
     "id": "qwen2.5-coder:7b",
@@ -108,8 +108,8 @@
     "download_gb": 4.7,
     "min_memory_gb": 8,
     "blurb": "Code-specialized model tuned for completion and review.",
-    "use_cases": ["Code review", "Autocomplete", "Refactoring"],
-    "profile": "A code-specialized 7B model tuned for software development. Best for writing and completing code, reviewing pull requests, refactoring, debugging, explaining unfamiliar code, generating tests, and acting as a local coding assistant or pair programmer across many programming languages."
+    "use_cases": ["Coding", "Web scraping", "Debugging"],
+    "profile": "A code-specialized 7B model for software development in Python, JavaScript, TypeScript, Go, Rust, SQL, and more. Keywords: write and debug code, web scraping and web crawling, parse HTML and JSON, build scrapers and automation scripts, extract structured data from web pages and APIs, code review, refactoring, generate unit tests. A local coding assistant and pair programmer."
   },
   {
     "id": "qwen2.5-coder:32b",
@@ -122,8 +122,8 @@
     "download_gb": 20,
     "min_memory_gb": 32,
     "blurb": "Top-tier open coding model for serious development work.",
-    "use_cases": ["Code generation", "Architecture", "Debugging"],
-    "profile": "A top-tier open coding model at 32B, among the best available for local software development. Best for generating substantial code, designing and reasoning about software architecture, complex debugging, large refactors, code review, and acting as a capable autonomous coding agent when you have the memory to run it."
+    "use_cases": ["Coding", "Architecture", "Debugging"],
+    "profile": "A top-tier 32B coding model, among the best for local software development. Keywords: generate substantial code, design and reason about software architecture, complex debugging, large multi-file refactors, code review, autonomous coding agent. For developers with 32GB+ of memory."
   },
   {
     "id": "mistral:7b",
@@ -136,8 +136,8 @@
     "download_gb": 4.1,
     "min_memory_gb": 8,
     "blurb": "Fast, capable workhorse that punches above its weight.",
-    "use_cases": ["General chat", "Extraction", "Tools"],
-    "profile": "A fast, efficient 7B workhorse that punches above its weight. Best for general chat, information extraction, summarization, tool and function calling, and as a low-latency backbone for applications and agents on everyday hardware."
+    "use_cases": ["Fast chat", "Extraction", "Function calling"],
+    "profile": "A fast, efficient 7B workhorse that punches above its weight. Keywords: fast general-purpose chat, everyday assistant, information extraction, summarization, function and tool calling, low-latency backbone for apps and agents on everyday hardware."
   },
   {
     "id": "mistral-nemo:12b",
@@ -150,8 +150,8 @@
     "download_gb": 7.1,
     "min_memory_gb": 12,
     "blurb": "12B model with a long context and strong tool use.",
-    "use_cases": ["Long context", "Tools", "Multilingual"],
-    "profile": "A 12B model with a long 128K context and strong function-calling ability, built with NVIDIA. Best for long-document processing, multilingual tasks, tool-using agents, and applications that need to reason over large inputs while remaining efficient to run."
+    "use_cases": ["Long context", "Function calling", "Multilingual"],
+    "profile": "A 12B model with a long 128K context and strong function calling, built with NVIDIA. Keywords: process long documents, multilingual tasks, tool-using agents, reason over large inputs while staying efficient to run."
   },
   {
     "id": "mixtral:8x7b",
@@ -164,8 +164,8 @@
     "download_gb": 26,
     "min_memory_gb": 48,
     "blurb": "Sparse mixture-of-experts; high quality but memory-hungry.",
-    "use_cases": ["Reasoning", "Long-form", "Synthesis"],
-    "profile": "A sparse mixture-of-experts model with 8x7B experts, delivering high quality at strong inference speed but with a large memory footprint. Best for demanding reasoning, long-form generation, synthesis across sources, and high-throughput serving when ample RAM is available."
+    "use_cases": ["Reasoning", "Long-form writing", "Synthesis"],
+    "profile": "A sparse mixture-of-experts model (8x7B) with high quality at strong speed but a large memory footprint. Keywords: demanding reasoning, long-form generation, synthesis across sources, high-throughput serving. Needs ample RAM (48GB+)."
   },
   {
     "id": "phi3.5:3.8b",
@@ -178,8 +178,8 @@
     "download_gb": 2.2,
     "min_memory_gb": 4,
     "blurb": "Small model with surprisingly strong reasoning for its footprint.",
-    "use_cases": ["On-device", "Reasoning", "Edge"],
-    "profile": "A small 3.8B model with surprisingly strong reasoning and a long context for its footprint. Best for on-device reasoning, math and logic on constrained hardware, summarization, and edge deployments where you want capable thinking without a large model."
+    "use_cases": ["Low memory", "Reasoning", "Math"],
+    "profile": "A small 3.8B model with strong reasoning for its size. Keywords: runs on a low-memory laptop, on-device math and logic, step-by-step reasoning on constrained hardware, summarization, edge deployment without a large model."
   },
   {
     "id": "phi4:14b",
@@ -192,8 +192,8 @@
     "download_gb": 9.1,
     "min_memory_gb": 16,
     "blurb": "Reasoning-focused 14B that excels at math and logic.",
-    "use_cases": ["Reasoning", "Math", "STEM"],
-    "profile": "A reasoning-focused 14B model that excels at mathematics, logic, and STEM problem solving relative to its size. Best for step-by-step quantitative reasoning, technical question answering, coding logic, and analytical tasks where careful thinking matters more than world knowledge."
+    "use_cases": ["Math", "Reasoning", "STEM"],
+    "profile": "A reasoning-focused 14B model that excels at math, logic, and STEM. Keywords: step-by-step quantitative reasoning, solve math problems, logic puzzles, technical and scientific question answering, coding logic. Prioritizes careful thinking over broad world knowledge."
   },
   {
     "id": "gemma2:2b",
@@ -206,8 +206,8 @@
     "download_gb": 1.6,
     "min_memory_gb": 4,
     "blurb": "Tiny, efficient open model from Google's Gemini lineage.",
-    "use_cases": ["On-device", "Drafting", "Classification"],
-    "profile": "A tiny, efficient 2B open model from Google's Gemini research lineage. Best for on-device chat, quick drafting, classification, and lightweight assistant features where a very small, responsive model is preferred."
+    "use_cases": ["Low memory", "Fast chat", "Drafting"],
+    "profile": "A tiny, efficient 2B open model from Google's Gemini lineage. Keywords: runs on minimal RAM, fast on-device chat, quick drafting, classification, lightweight assistant features where a very small, responsive model is preferred."
   },
   {
     "id": "gemma2:9b",
@@ -221,7 +221,7 @@
     "min_memory_gb": 12,
     "blurb": "Balanced open model from the Gemini research lineage.",
     "use_cases": ["General chat", "Writing", "Q&A"],
-    "profile": "A balanced 9B open model from Google's Gemini lineage. Best for general chat, polished writing and editing, question answering, and summarization, offering a good quality-to-size tradeoff on mainstream hardware."
+    "profile": "A balanced 9B open model from Google's Gemini lineage. Keywords: general-purpose chat, polished writing and editing, question answering, summarization. A good quality-to-size tradeoff on mainstream hardware."
   },
   {
     "id": "gemma2:27b",
@@ -235,7 +235,7 @@
     "min_memory_gb": 32,
     "blurb": "Larger Gemma for higher-quality writing and reasoning.",
     "use_cases": ["Writing", "Reasoning", "Analysis"],
-    "profile": "A larger 27B Gemma model for higher-quality writing and reasoning. Best for professional and creative writing, careful analysis, nuanced question answering, and editing, when you want strong quality from an open Google model and have the memory to run it."
+    "profile": "A larger 27B Gemma for higher-quality writing and reasoning. Keywords: professional and creative writing, careful analysis, nuanced question answering, editing. Strong open Google model for machines with 32GB+."
   },
   {
     "id": "deepseek-r1:7b",
@@ -249,7 +249,7 @@
     "min_memory_gb": 8,
     "blurb": "Reasoning-focused distill that shows its chain of thought.",
     "use_cases": ["Reasoning", "Math", "Planning"],
-    "profile": "A reasoning-focused 7B distillation that thinks step by step and shows its chain of thought. Best for math, logic puzzles, planning, structured problem solving, and tasks where transparent multi-step reasoning is valued over speed."
+    "profile": "A reasoning-focused 7B distillation that thinks step by step and shows its chain of thought. Keywords: solve math and logic, step-by-step reasoning, logic puzzles, planning, structured problem solving where transparent multi-step thinking matters more than speed."
   },
   {
     "id": "deepseek-r1:14b",
@@ -263,7 +263,7 @@
     "min_memory_gb": 16,
     "blurb": "Stronger reasoning distill for harder problems.",
     "use_cases": ["Reasoning", "Math", "Analysis"],
-    "profile": "A 14B reasoning distillation with stronger problem-solving than the 7B. Best for harder math and logic, careful analysis, multi-step planning, and technical reasoning where you want explicit chain-of-thought and can spare more memory."
+    "profile": "A 14B reasoning distillation stronger than the 7B. Keywords: harder math and logic, careful step-by-step analysis, multi-step planning, technical reasoning with explicit chain-of-thought. Needs 16GB."
   },
   {
     "id": "deepseek-r1:32b",
@@ -277,7 +277,7 @@
     "min_memory_gb": 32,
     "blurb": "High-end reasoning distill approaching frontier problem-solving.",
     "use_cases": ["Complex reasoning", "Math", "Research"],
-    "profile": "A high-end 32B reasoning distillation approaching frontier problem-solving. Best for the most demanding math, logic, and research-style reasoning tasks among local models, with explicit step-by-step thinking, when you have substantial memory available."
+    "profile": "A high-end 32B reasoning distillation approaching frontier problem-solving. Keywords: the most demanding math, logic, and research-style reasoning among local models, explicit step-by-step thinking. For machines with 32GB+."
   },
   {
     "id": "deepseek-coder-v2:16b",
@@ -290,8 +290,8 @@
     "download_gb": 8.9,
     "min_memory_gb": 16,
     "blurb": "Mixture-of-experts coder with broad language coverage.",
-    "use_cases": ["Code generation", "Completion", "Debugging"],
-    "profile": "A mixture-of-experts coding model (16B) with broad programming-language coverage and a long context. Best for code generation and completion, debugging, repository-scale understanding, and as a fast local coding assistant for many languages."
+    "use_cases": ["Coding", "Completion", "Debugging"],
+    "profile": "A mixture-of-experts coding model (16B) with broad programming-language coverage and a long context. Keywords: write and debug code, code generation and completion, repository-scale understanding, fast local coding assistant for Python and many other languages."
   },
   {
     "id": "codellama:13b",
@@ -304,8 +304,8 @@
     "download_gb": 7.4,
     "min_memory_gb": 12,
     "blurb": "Llama-based code model for generation and infilling.",
-    "use_cases": ["Code generation", "Infilling", "Completion"],
-    "profile": "A Llama-based 13B code model specialized for programming. Best for code generation, fill-in-the-middle completion, writing functions from descriptions, and general coding assistance, especially in editor and IDE integration scenarios."
+    "use_cases": ["Coding", "Infilling", "Completion"],
+    "profile": "A Llama-based 13B code model for programming. Keywords: write and debug code, fill-in-the-middle completion, write functions from descriptions, IDE and editor integration, general coding assistance in Python, C++, Java, and more."
   },
   {
     "id": "codegemma:7b",
@@ -318,8 +318,8 @@
     "download_gb": 5.0,
     "min_memory_gb": 8,
     "blurb": "Google's code model for completion and generation.",
-    "use_cases": ["Autocomplete", "Code generation", "Infilling"],
-    "profile": "Google's 7B code model built on Gemma. Best for code completion and fill-in-the-middle, generating short functions and snippets, and lightweight coding assistance integrated into editors."
+    "use_cases": ["Coding", "Autocomplete", "Infilling"],
+    "profile": "Google's 7B code model built on Gemma. Keywords: code completion and fill-in-the-middle, generate short functions and snippets, lightweight coding assistance and autocomplete inside editors."
   },
   {
     "id": "starcoder2:7b",
@@ -332,8 +332,8 @@
     "download_gb": 4.0,
     "min_memory_gb": 8,
     "blurb": "Open code model trained on a broad permissive corpus.",
-    "use_cases": ["Code completion", "Infilling", "Multi-language"],
-    "profile": "An open 7B code model from BigCode trained across hundreds of programming languages on a permissively licensed corpus. Best for code completion, fill-in-the-middle, and multi-language programming assistance where licensing transparency matters."
+    "use_cases": ["Coding", "Completion", "Multi-language"],
+    "profile": "An open 7B code model from BigCode trained on hundreds of programming languages with a permissive license. Keywords: code completion, fill-in-the-middle, multi-language programming assistance where license transparency matters."
   },
   {
     "id": "llava:7b",
@@ -347,7 +347,7 @@
     "min_memory_gb": 8,
     "blurb": "Multimodal model that understands images and text.",
     "use_cases": ["Image understanding", "Captioning", "Visual Q&A"],
-    "profile": "A multimodal 7B vision-language model that accepts images alongside text. Best for describing and captioning images, answering questions about pictures, reading charts and screenshots, and visual question answering on everyday hardware."
+    "profile": "A multimodal 7B vision-language model that accepts images. Keywords: describe and caption an image, answer questions about a picture, read a screenshot or chart, visual question answering. Runs on everyday hardware."
   },
   {
     "id": "llava:13b",
@@ -361,7 +361,7 @@
     "min_memory_gb": 12,
     "blurb": "Larger multimodal model for richer image understanding.",
     "use_cases": ["Image understanding", "Document images", "Visual Q&A"],
-    "profile": "A larger 13B vision-language model for richer image understanding. Best for detailed image description, analyzing document images and screenshots, visual reasoning, and visual question answering when you want higher quality than the 7B variant."
+    "profile": "A larger 13B vision-language model for richer image understanding. Keywords: detailed image description, analyze a screenshot or document image, visual reasoning, visual question answering at higher quality than the 7B."
   },
   {
     "id": "llama3.2-vision:11b",
@@ -375,7 +375,7 @@
     "min_memory_gb": 12,
     "blurb": "Meta's multimodal model for image reasoning and OCR-like tasks.",
     "use_cases": ["Image reasoning", "Document understanding", "Charts"],
-    "profile": "Meta's 11B multimodal model that reasons over images and text with a long context. Best for understanding documents and screenshots, interpreting charts and diagrams, image-grounded question answering, and tasks that combine visual input with longer instructions."
+    "profile": "Meta's 11B multimodal model that reasons over images and text with a long context. Keywords: describe what is in an image or screenshot, understand documents and scanned pages, interpret charts and diagrams, image-grounded question answering."
   },
   {
     "id": "command-r:35b",
@@ -388,8 +388,8 @@
     "download_gb": 20,
     "min_memory_gb": 32,
     "blurb": "Built for retrieval-augmented generation and tool use.",
-    "use_cases": ["RAG", "Tool use", "Citations"],
-    "profile": "A 35B model purpose-built for retrieval-augmented generation (RAG) and tool use, with strong grounding and citation behavior over long contexts. Best for building a local knowledge base or document Q&A over your files, answering with citations, multi-step tool-using agents, and enterprise-style retrieval workflows."
+    "use_cases": ["RAG", "Knowledge base", "Citations"],
+    "profile": "A 35B model purpose-built for retrieval-augmented generation (RAG) and tool use, with strong grounding and citations over long contexts. Keywords: build a local knowledge base over your files, document Q&A and chat with your documents, answer with citations, multi-step tool-using agents, enterprise retrieval workflows. This is the model that generates grounded answers from retrieved files."
   },
   {
     "id": "command-r-plus:104b",
@@ -402,8 +402,8 @@
     "download_gb": 59,
     "min_memory_gb": 80,
     "blurb": "Cohere's flagship for advanced RAG and agentic tool use.",
-    "use_cases": ["Advanced RAG", "Agents", "Tool use"],
-    "profile": "Cohere's flagship 104B model for advanced retrieval-augmented generation and agentic tool use. Best for high-accuracy knowledge bases and document Q&A with citations, complex multi-step tool-using agents, and demanding enterprise retrieval tasks, when you have the substantial memory required."
+    "use_cases": ["Advanced RAG", "Knowledge base", "Agents"],
+    "profile": "Cohere's flagship 104B model for advanced retrieval-augmented generation and agentic tool use. Keywords: high-accuracy knowledge base and document Q&A with citations over your files, complex multi-step tool-using agents, demanding enterprise retrieval. Needs substantial memory (80GB+)."
   },
   {
     "id": "nomic-embed-text",
@@ -416,8 +416,8 @@
     "download_gb": 0.27,
     "min_memory_gb": 2,
     "blurb": "High-quality text embeddings for local semantic search.",
-    "use_cases": ["Embeddings", "Search", "RAG"],
-    "profile": "A high-quality text embedding model, not a chat model. Best for turning text into vectors to power semantic search, building the retrieval half of a RAG pipeline or local knowledge base, clustering and deduplication, and similarity matching over documents. Use it to index your files, not to generate answers."
+    "use_cases": ["Text embeddings", "Vector search", "Similarity"],
+    "profile": "An embedding model that converts text into numeric embedding vectors. It does NOT chat, generate text, or answer questions. Keywords: compute text embeddings, generate vectors for semantic search, populate a vector database, nearest-neighbor similarity, clustering, deduplication. Use it to encode and index text; pair it with a separate chat model to produce answers."
   },
   {
     "id": "mxbai-embed-large",
@@ -430,8 +430,8 @@
     "download_gb": 0.67,
     "min_memory_gb": 2,
     "blurb": "State-of-the-art open embedding model for retrieval.",
-    "use_cases": ["Embeddings", "Retrieval", "Reranking"],
-    "profile": "A state-of-the-art open text embedding model, not a chat model. Best for high-accuracy semantic search and retrieval, indexing documents for a RAG pipeline or knowledge base, and similarity and clustering tasks where embedding quality is the priority. Pairs with a chat model to answer questions."
+    "use_cases": ["Text embeddings", "Reranking", "Vector search"],
+    "profile": "A high-accuracy open embedding model that turns text into vectors. It does NOT generate text or hold conversations. Keywords: top-quality text embeddings, semantic search ranking, encode text for a vector database, rerank candidate results, similarity and clustering where embedding precision is the priority."
   },
   {
     "id": "all-minilm:22m",
@@ -444,8 +444,8 @@
     "download_gb": 0.05,
     "min_memory_gb": 1,
     "blurb": "Tiny, fast embedding model for lightweight search.",
-    "use_cases": ["Embeddings", "Search", "On-device"],
-    "profile": "A tiny, very fast text embedding model, not a chat model. Best for lightweight semantic search, on-device similarity matching, quick clustering, and resource-constrained retrieval where speed and small size outweigh maximum embedding accuracy."
+    "use_cases": ["Text embeddings", "Vector search", "On-device"],
+    "profile": "A tiny, very fast embedding model that encodes text into compact vectors. It does NOT chat or generate text. Keywords: lightweight text embeddings, on-device vector similarity, fast semantic search, quick clustering where speed and small size outweigh embedding accuracy."
   },
   {
     "id": "tinyllama:1.1b",
@@ -458,8 +458,8 @@
     "download_gb": 0.64,
     "min_memory_gb": 2,
     "blurb": "Very small chat model for experimentation and edge use.",
-    "use_cases": ["Edge", "Experimentation", "Drafting"],
-    "profile": "A very small 1.1B chat model. Best for experimentation, learning, ultra-low-resource and edge deployments, simple drafting, and prototyping where footprint and speed matter far more than answer quality."
+    "use_cases": ["Low memory", "Edge", "Experimentation"],
+    "profile": "A very small 1.1B chat model. Keywords: runs on minimal RAM, ultra-low-resource and edge deployment, experimentation and learning, prototyping, simple drafting where footprint and speed matter far more than answer quality."
   },
   {
     "id": "smollm2:1.7b",
@@ -472,8 +472,8 @@
     "download_gb": 1.8,
     "min_memory_gb": 2,
     "blurb": "Small but capable model tuned for instruction following.",
-    "use_cases": ["On-device", "Drafting", "Summarization"],
-    "profile": "A small 1.7B model from Hugging Face tuned for instruction following and surprisingly capable for its size. Best for on-device assistants, drafting and rewriting, short summarization, and lightweight tasks on laptops and constrained devices."
+    "use_cases": ["Low memory", "Drafting", "Summarization"],
+    "profile": "A small 1.7B model tuned for instruction following, capable for its size. Keywords: runs on a low-memory laptop, on-device assistant, drafting and rewriting, short summarization, lightweight tasks on constrained devices."
   },
   {
     "id": "granite3-dense:8b",
@@ -486,8 +486,8 @@
     "download_gb": 4.9,
     "min_memory_gb": 8,
     "blurb": "IBM's enterprise model tuned for tools and RAG.",
-    "use_cases": ["Tool use", "RAG", "Enterprise"],
-    "profile": "IBM's 8B enterprise-oriented model tuned for tool use, retrieval-augmented generation, and business workflows. Best for function and tool calling, document Q&A and knowledge bases, summarization of business content, and agentic workflows in professional settings with a permissive license."
+    "use_cases": ["Function calling", "Enterprise", "Knowledge base"],
+    "profile": "IBM's 8B enterprise model tuned for tool use and business workflows under a permissive license. Keywords: function and tool calling, document Q&A and knowledge bases, summarize business content, agentic enterprise workflows."
   },
   {
     "id": "dolphin-mixtral:8x7b",
@@ -500,8 +500,8 @@
     "download_gb": 26,
     "min_memory_gb": 48,
     "blurb": "Uncensored, instruction-tuned mixture-of-experts.",
-    "use_cases": ["Open-ended chat", "Creative writing", "Roleplay"],
-    "profile": "An uncensored, instruction-tuned fine-tune of Mixtral's mixture-of-experts. Best for open-ended and creative chat, roleplay and storytelling, brainstorming without heavy refusals, and tasks where a more compliant, less filtered assistant is wanted. Memory-hungry like the base Mixtral."
+    "use_cases": ["Uncensored chat", "Creative writing", "Roleplay"],
+    "profile": "An uncensored, instruction-tuned fine-tune of Mixtral. Keywords: uncensored and unfiltered assistant, open-ended and creative chat, roleplay and storytelling, brainstorming without refusals, a compliant less-restricted model. Memory-hungry like base Mixtral (48GB+)."
   },
   {
     "id": "neural-chat:7b",
@@ -515,7 +515,7 @@
     "min_memory_gb": 8,
     "blurb": "Intel's fine-tuned conversational model.",
     "use_cases": ["General chat", "Q&A", "Drafting"],
-    "profile": "Intel's 7B conversational fine-tune based on Mistral. Best for friendly general-purpose chat, question answering, drafting, and everyday assistant tasks on mainstream hardware."
+    "profile": "Intel's 7B conversational fine-tune based on Mistral. Keywords: friendly general-purpose chat, everyday assistant, question answering, drafting on mainstream hardware."
   },
   {
     "id": "wizardlm2:7b",
@@ -529,6 +529,6 @@
     "min_memory_gb": 8,
     "blurb": "Instruction-tuned model strong at complex prompts.",
     "use_cases": ["Complex instructions", "Reasoning", "Writing"],
-    "profile": "A 7B instruction-tuned model that handles complex, multi-part prompts well. Best for following detailed instructions, structured writing, reasoning over involved requests, and assistant tasks that require careful adherence to nuanced directions."
+    "profile": "A 7B instruction-tuned model that handles complex, multi-part prompts well. Keywords: follow detailed multi-step instructions, structured writing, reason over involved requests, careful adherence to nuanced directions."
   }
 ]

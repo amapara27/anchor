@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use anchor_core::{HardwareProfile, Model};
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{CompareEvent, PullProgress, Registry};
-use anchor_search::SemanticIndex;
+use anchor_search::{QueryHistory, SemanticIndex};
 use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
@@ -116,6 +116,42 @@ async fn list_models(app: AppHandle) -> Result<Vec<Model>, String> {
 #[tauri::command]
 fn list_catalog() -> Result<Vec<anchor_search::ModelProfile>, String> {
     anchor_search::load_profiles().map_err(|e| e.to_string())
+}
+
+/// Builds a [`QueryHistory`] backed by `search_history.json` in the app's data
+/// directory (the rolling log of the user's recent searches).
+fn history(app: &AppHandle) -> Result<QueryHistory, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve app data dir: {e}"))?;
+    Ok(QueryHistory::new(dir.join("search_history.json")))
+}
+
+/// Ranks the catalog against a natural-language `query` and returns the top
+/// `limit` models (default 3) by cosine similarity. Reads the in-memory index
+/// built at launch; errors while it's still warming up. Recording the query to
+/// history is best-effort and never fails the search.
+#[tauri::command]
+async fn search_models(
+    app: AppHandle,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<anchor_search::ScoredModel>, String> {
+    let k = limit.unwrap_or(3);
+    let state = app.state::<SearchState>();
+    let guard = state.index.read().await;
+    let index = guard
+        .as_ref()
+        .ok_or("Model search is still warming up — try again in a moment.")?;
+    let results = index.search(&query, k).map_err(|e| e.to_string())?;
+
+    // Best-effort: a failed history write shouldn't sink an otherwise-good search.
+    let ids: Vec<String> = results.iter().map(|r| r.profile.id.clone()).collect();
+    if let Err(e) = history(&app).and_then(|h| h.record(&query, &ids).map_err(|e| e.to_string())) {
+        eprintln!("[anchor-search] failed to record query history: {e}");
+    }
+    Ok(results)
 }
 
 /// Pulls a model via Ollama, streaming progress events back over `on_event`.
@@ -240,6 +276,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_models,
             list_catalog,
+            search_models,
             download_model,
             compare_models,
             remove_model,

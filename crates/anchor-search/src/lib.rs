@@ -30,6 +30,8 @@ pub enum Error {
     // `std::error::Error`, so we can't `#[from]` it — carry the message instead.
     #[error("embedding model error: {0}")]
     Embed(String),
+    #[error("query history i/o error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -76,7 +78,7 @@ pub fn load_profiles() -> Result<Vec<ModelProfile>> {
 }
 
 /// Compose the text fed to the embedder for a profile. Centralised so query
-/// embedding (next phase) stays consistent with how profiles were indexed.
+/// embedding stays consistent with how profiles were indexed.
 fn embedding_text(p: &ModelProfile) -> String {
     format!(
         "{name} by {publisher}. {blurb} {profile} Use cases: {use_cases}.",
@@ -86,6 +88,34 @@ fn embedding_text(p: &ModelProfile) -> String {
         profile = p.profile,
         use_cases = p.use_cases.join(", "),
     )
+}
+
+/// BGE is trained for asymmetric retrieval: profiles are embedded as-is, but
+/// queries are prefixed with this instruction. Applying it noticeably improves
+/// query→profile alignment. Centralised as the query counterpart to
+/// [`embedding_text`] so the two never drift.
+fn query_text(query: &str) -> String {
+    format!("Represent this sentence for searching relevant passages: {query}")
+}
+
+/// Cosine similarity between two equal-length vectors. fastembed already
+/// L2-normalises BGE output (so this reduces to a dot product), but computing
+/// the norms keeps it correct regardless; a zero-norm input yields `0.0`.
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let mut dot = 0.0;
+    let mut na = 0.0;
+    let mut nb = 0.0;
+    for (x, y) in a.iter().zip(b) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    let denom = na.sqrt() * nb.sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
 }
 
 /// Thin wrapper over the local embedding model.
@@ -119,14 +149,22 @@ pub struct IndexEntry {
     pub embedding: Vec<f32>,
 }
 
+/// A search hit: a catalogued model and its cosine similarity to the query
+/// (`1.0` = identical direction, `0.0` = unrelated). Crosses the Tauri IPC
+/// boundary, hence `Serialize`/`Deserialize`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoredModel {
+    pub profile: ModelProfile,
+    pub score: f32,
+}
+
 /// The in-RAM index built at launch: every catalogued profile plus its vector,
 /// alongside the embedder (kept so a query can be embedded the same way without
 /// reloading the model).
 pub struct SemanticIndex {
     entries: Vec<IndexEntry>,
-    // Used by the upcoming `search` step to embed the query; behind a `Mutex`
-    // because `TextEmbedding::embed` takes `&mut self`.
-    #[allow(dead_code)]
+    // Used by `search` to embed the query the same way profiles were embedded;
+    // behind a `Mutex` because `TextEmbedding::embed` takes `&mut self`.
     embedder: Mutex<Embedder>,
 }
 
@@ -159,15 +197,47 @@ impl SemanticIndex {
         self.entries.is_empty()
     }
 
-    /// All indexed entries (read access for the upcoming ranking step).
+    /// All indexed entries (read access for ranking).
     pub fn entries(&self) -> &[IndexEntry] {
         &self.entries
     }
 
-    // TODO(next phase): `search(&self, query: &str, k: usize) -> Vec<ScoredModel>`
-    // — embed `query` via `self.embedder` and rank `entries` by cosine
-    // similarity, returning the top-k profiles.
+    /// Rank the catalog against a natural-language `query` and return the top
+    /// `k` models by cosine similarity, most relevant first.
+    ///
+    /// The query is embedded fresh on every call (never cached) through the same
+    /// model used for profiles, then scored against every stored profile vector.
+    /// Takes `&self` — the inner `Mutex` serialises only the embed call — so
+    /// concurrent searches can share one index behind a read lock.
+    pub fn search(&self, query: &str, k: usize) -> Result<Vec<ScoredModel>> {
+        let query_embedding = {
+            let mut embedder = self.embedder.lock().expect("embedder mutex poisoned");
+            embedder.embed(&[query_text(query)])?
+        };
+        let qv = &query_embedding[0];
+
+        let mut scored: Vec<ScoredModel> = self
+            .entries
+            .iter()
+            .map(|e| ScoredModel {
+                profile: e.profile.clone(),
+                score: cosine(qv, &e.embedding),
+            })
+            .collect();
+        // Highest similarity first; `partial_cmp` only fails on NaN, which a
+        // valid embedding won't produce — fall back to Equal to stay total.
+        scored.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.truncate(k);
+        Ok(scored)
+    }
 }
+
+pub mod history;
+pub use history::{QueryHistory, QueryRecord};
 
 #[cfg(test)]
 mod tests;
