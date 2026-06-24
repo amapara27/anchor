@@ -154,6 +154,19 @@ async fn search_models(
     Ok(results)
 }
 
+/// Returns the most recent search queries (newest first), for the Discover
+/// page's "Recent" suggestions. Reads the same `QueryHistory` store that
+/// `search_models` writes to; a missing/empty store yields an empty list.
+#[tauri::command]
+fn recent_searches(
+    app: AppHandle,
+    limit: Option<usize>,
+) -> Result<Vec<anchor_search::QueryRecord>, String> {
+    let mut records = history(&app)?.load();
+    records.truncate(limit.unwrap_or(10));
+    Ok(records)
+}
+
 /// Pulls a model via Ollama, streaming progress events back over `on_event`.
 #[tauri::command]
 async fn download_model(
@@ -277,6 +290,7 @@ pub fn run() {
             list_models,
             list_catalog,
             search_models,
+            recent_searches,
             download_model,
             compare_models,
             remove_model,

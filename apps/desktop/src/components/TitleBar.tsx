@@ -3,6 +3,7 @@ import { SearchIcon } from "./icons";
 
 const PAGE_LABEL: Record<Tab, string> = {
   home: "Home",
+  search: "Discover",
   models: "Model Library",
   workflows: "Workflows",
   comparison: "Model Comparison",

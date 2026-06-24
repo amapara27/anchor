@@ -3,6 +3,7 @@ import type { Tab } from "./types";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { HomePage } from "./components/HomePage";
+import { SearchPage } from "./components/SearchPage";
 import { ModelLibrary } from "./components/ModelLibrary";
 import { ModelComparison } from "./components/ModelComparison";
 import { WorkflowLibrary } from "./components/WorkflowLibrary";
@@ -19,6 +20,7 @@ export default function App() {
           {/* key remounts on tab switch so the page-enter animation replays */}
           <div key={tab} className="animate-fade-in mx-auto max-w-7xl px-6 py-9 lg:px-8">
             {tab === "home" && <HomePage onNavigate={setTab} />}
+            {tab === "search" && <SearchPage />}
             {tab === "models" && <ModelLibrary />}
             {tab === "comparison" && <ModelComparison />}
             {tab === "workflows" && <WorkflowLibrary />}

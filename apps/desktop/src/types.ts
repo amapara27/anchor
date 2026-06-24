@@ -166,6 +166,28 @@ export interface ModelProfile {
 }
 
 /**
+ * A semantic-search hit, mirroring `anchor_search::ScoredModel`. Returned by the
+ * `search_models` command: a catalog profile plus its cosine similarity to the
+ * query (`1.0` = identical direction, higher = more relevant).
+ */
+export interface ScoredModel {
+  profile: ModelProfile;
+  score: number;
+}
+
+/**
+ * One recorded search, mirroring `anchor_search::QueryRecord`. Returned by the
+ * `recent_searches` command (newest first).
+ */
+export interface QueryRecord {
+  query: string;
+  /** Unix epoch milliseconds when the query was recorded. */
+  timestamp_ms: number;
+  /** Model ids that were returned for this query, most relevant first. */
+  results: string[];
+}
+
+/**
  * A model as the library UI consumes it: the wire `Model` joined with its
  * catalog spec plus user-local annotations (tags / notes).
  */
@@ -196,7 +218,7 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "home" | "models" | "workflows" | "comparison";
+export type Tab = "home" | "search" | "models" | "workflows" | "comparison";
 
 /**
  * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`
