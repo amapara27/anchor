@@ -2,6 +2,7 @@ import type { LibraryModel } from "../types";
 import type { SlotState } from "../lib/useComparison";
 import { formatBytes, formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
 import { SparkleIcon, WarningIcon, ZapIcon } from "./icons";
+import { ProgressTrack } from "./DownloadProgressBar";
 
 interface ComparisonPaneProps {
   /** "A" / "B" — shown as an eyebrow so the panes are distinguishable. */
@@ -134,18 +135,7 @@ function DownloadProgress({ pull }: { pull?: SlotState["pull"] }) {
           </span>
         )}
       </div>
-      <div
-        className="h-1.5 overflow-hidden rounded-full bg-white/8"
-        role="progressbar"
-        aria-valuenow={pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-      >
-        <div
-          className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <ProgressTrack pct={pct} />
     </div>
   );
 }

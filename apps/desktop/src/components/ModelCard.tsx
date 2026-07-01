@@ -3,6 +3,7 @@ import { formatBytes, formatContext, formatParams } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 import { FitBadge } from "./FitBadge";
 import { SpecPill } from "./SpecPill";
+import { DownloadProgressBar } from "./DownloadProgressBar";
 import { CheckIcon, ChipIcon, DownloadIcon, LayersIcon, MemoryIcon, RulerIcon, StarIcon, XIcon } from "./icons";
 
 interface ModelCardProps {
@@ -120,7 +121,7 @@ export function ModelCard({
       <p className="mt-3 line-clamp-2 text-sm text-fg-muted">{spec.blurb}</p>
 
       {isDownloading ? (
-        <DownloadBar download={download} totalBytes={spec.download_bytes} />
+        <DownloadProgressBar download={download} totalBytes={spec.download_bytes} />
       ) : (
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
           <SpecPill icon={<RulerIcon className="size-3.5" />} label="Parameters" value={formatParams(spec.params_b)} />
@@ -146,33 +147,6 @@ export function ModelCard({
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function DownloadBar({ download, totalBytes }: { download: DownloadState; totalBytes: number }) {
-  const pct = Math.round(download.progress * 100);
-  const verifying = download.status === "verifying";
-  return (
-    <div className="mt-3">
-      <div className="mb-1.5 flex items-center justify-between text-xs">
-        <span className="font-medium text-fg-muted">{verifying ? "Verifying…" : "Downloading…"}</span>
-        <span className="data text-fg-subtle">
-          {formatBytes(download.receivedBytes)} / {formatBytes(totalBytes)}
-        </span>
-      </div>
-      <div
-        className="h-1.5 overflow-hidden rounded-full bg-white/8"
-        role="progressbar"
-        aria-valuenow={pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-      >
-        <div
-          className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
-          style={{ width: `${verifying ? 100 : pct}%` }}
-        />
-      </div>
     </div>
   );
 }

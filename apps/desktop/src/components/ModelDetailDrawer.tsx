@@ -15,6 +15,7 @@ import {
   TrashIcon,
   XIcon,
 } from "./icons";
+import { ProgressTrack } from "./DownloadProgressBar";
 
 interface DrawerProps {
   model: LibraryModel | null;
@@ -342,18 +343,7 @@ function DrawerProgress({
           Cancel
         </button>
       </div>
-      <div
-        className="h-2 overflow-hidden rounded-full bg-white/8"
-        role="progressbar"
-        aria-valuenow={pct}
-        aria-valuemin={0}
-        aria-valuemax={100}
-      >
-        <div
-          className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
-          style={{ width: `${verifying ? 100 : pct}%` }}
-        />
-      </div>
+      <ProgressTrack pct={verifying ? 100 : pct} className="h-2" />
       <p className="data mt-1.5 text-xs text-fg-subtle">
         {formatBytes(download.receivedBytes)} / {formatBytes(totalBytes)}
       </p>
