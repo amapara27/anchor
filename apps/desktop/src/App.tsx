@@ -6,6 +6,7 @@ import { HomePage } from "./components/HomePage";
 import { SearchPage } from "./components/SearchPage";
 import { ModelLibrary } from "./components/ModelLibrary";
 import { ModelComparison } from "./components/ModelComparison";
+import { DiskPage } from "./components/DiskPage";
 import { WorkflowLibrary } from "./components/WorkflowLibrary";
 import { CommandPalette } from "./components/CommandPalette";
 
@@ -38,6 +39,7 @@ export default function App() {
             {tab === "search" && <SearchPage />}
             {tab === "models" && <ModelLibrary openModel={openModel} />}
             {tab === "comparison" && <ModelComparison />}
+            {tab === "disk" && <DiskPage />}
             {tab === "workflows" && <WorkflowLibrary />}
           </div>
         </main>

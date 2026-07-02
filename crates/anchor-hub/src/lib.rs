@@ -13,6 +13,8 @@ use rusqlite::Connection;
 pub mod db;
 pub mod ollama;
 pub mod server;
+pub mod status;
+pub mod updates;
 
 pub use ollama::{GenerateRequest, GenerationStats, PullProgress};
 

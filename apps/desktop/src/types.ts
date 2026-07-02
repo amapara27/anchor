@@ -229,7 +229,7 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "home" | "search" | "models" | "workflows" | "comparison";
+export type Tab = "home" | "search" | "models" | "workflows" | "comparison" | "disk";
 
 /**
  * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`

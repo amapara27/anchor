@@ -17,6 +17,8 @@ use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
 
+mod tray;
+
 /// Owns Anchor's relationship to the Ollama server.
 ///
 /// - `child` holds the `ollama serve` process Anchor started, if any, so it can
@@ -218,6 +220,48 @@ async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
     registry(&app)?.remove(&id).await.map_err(|e| e.to_string())
 }
 
+/// Lists the models Ollama currently has resident in memory (for the menu-bar).
+/// Delegates to [`anchor_hub::status`]; empty until Phase 2b fills it in.
+#[tauri::command]
+async fn running_models(app: AppHandle) -> Result<Vec<String>, String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+    anchor_hub::status::running_models(&registry)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Reports which installed models have a newer version upstream as
+/// `(model_id, update_available)` pairs. Delegates to [`anchor_hub::updates`];
+/// empty until Phase 2b fills it in.
+#[tauri::command]
+async fn check_updates(app: AppHandle) -> Result<Vec<(String, bool)>, String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+    anchor_hub::updates::check_updates(&registry)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Applies an update by re-pulling the model — the same Ollama pull path as
+/// [`download_model`], streaming progress back over `on_event`.
+#[tauri::command]
+async fn apply_update(
+    app: AppHandle,
+    model_id: String,
+    on_event: Channel<PullProgress>,
+) -> Result<(), String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+    registry
+        .pull(&model_id, |progress| {
+            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
+            let _ = on_event.send(progress);
+        })
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Builds a [`Profiler`] backed by `hardware.json` in the app's data directory.
 fn profiler(app: &AppHandle) -> Result<Profiler, String> {
     let dir = app
@@ -284,6 +328,7 @@ pub fn run() {
         .manage(SearchState::default())
         .setup(|app| {
             build_semantic_index(app.handle().clone());
+            tray::init(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -295,7 +340,10 @@ pub fn run() {
             compare_models,
             remove_model,
             get_hardware_profile,
-            refresh_hardware_profile
+            refresh_hardware_profile,
+            running_models,
+            check_updates,
+            apply_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

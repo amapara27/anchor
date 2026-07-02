@@ -3,6 +3,7 @@ import type { LibraryModel, SortKey, StatusFilter } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
+import { useUpdates } from "../lib/useUpdates";
 import { LibraryToolbar, type LibraryView } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
 import { ModelTable } from "./ModelTable";
@@ -37,6 +38,7 @@ export function ModelLibrary({ openModel }: ModelLibraryProps = {}) {
   const { isFavorite, toggleFavorite } = useFavorites();
   const { profile } = useHardwareProfile();
   const totalMemoryBytes = profile?.memory_bytes ?? null;
+  const updates = useUpdates();
 
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
@@ -136,6 +138,7 @@ export function ModelLibrary({ openModel }: ModelLibraryProps = {}) {
           onCancel={cancelDownload}
           chip={profile?.chip ?? null}
           totalMemoryBytes={totalMemoryBytes}
+          updates={updates}
         />
       )}
 
@@ -153,6 +156,7 @@ export function ModelLibrary({ openModel }: ModelLibraryProps = {}) {
               favorite={isFavorite(m.id)}
               onToggleFavorite={() => toggleFavorite(m.id)}
               totalMemoryBytes={totalMemoryBytes}
+              updateAvailable={updates[m.id]}
             />
           ))}
         </div>
