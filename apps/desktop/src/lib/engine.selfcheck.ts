@@ -2,7 +2,7 @@
 // No test runner is configured, so run it directly:
 //   node --experimental-strip-types apps/desktop/src/lib/engine.selfcheck.ts
 // Not imported anywhere, so it never ships in the bundle.
-import { estimateFit } from "./fit";
+import { estimateFit, fitContext } from "./fit";
 import { QUANTS, quantMeta } from "./quant";
 import { estimateTokPerSec, resolveTokPerSec } from "./tokps";
 
@@ -28,6 +28,12 @@ assert(
     estimateFit(8, "Q3_K_S", 4096, GB16).breakdown.weightsGB,
   "Q8 weights > Q3 weights",
 );
+
+// A 128K-context model must not read "won't fit" at the default context on a
+// normal Mac — fitContext caps the advertised max to Ollama's real default.
+assert(fitContext(131072) === 4096, "fitContext caps 128K max to the 4K default");
+const qwen = estimateFit(7, "Q4_K_M", fitContext(131072), { memory_bytes: 16 * 1e9 });
+assert(qwen.fits && qwen.tier !== "wont_fit", "7B Q4 @128k-max should fit on 16GB at default ctx");
 
 // Missing hardware → unknown.
 assert(estimateFit(8, "Q4_K_M", 4096, { memory_bytes: null }).tier === "unknown", "no memory ⇒ unknown");

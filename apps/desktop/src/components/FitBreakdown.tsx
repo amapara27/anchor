@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { QuantId } from "../types";
-import { estimateFit } from "../lib/fit";
+import { estimateFit, fitContext } from "../lib/fit";
 import { QUANTS } from "../lib/quant";
 import { formatContext } from "../lib/format";
 import { ChevronDownIcon } from "./icons";
@@ -46,7 +46,9 @@ export function FitBreakdown({
   const [open, setOpen] = useState(defaultOpen || headless);
   const [q, setQ] = useState<QuantId>((QUANTS.find((x) => x.id === quant)?.id ?? "Q4_K_M") as QuantId);
   const maxCtx = Math.max(contextTokens || 8192, 8192);
-  const [ctx, setCtx] = useState(Math.min(contextTokens || 8192, maxCtx));
+  // Open at the realistic default context (what Ollama loads), not the model's
+  // advertised max — the slider still explores up to maxCtx.
+  const [ctx, setCtx] = useState(fitContext(contextTokens));
 
   const fit = estimateFit(params_b, q, ctx, { memory_bytes: memoryBytes });
   const { weightsGB, kvCacheGB, osReserveGB, totalNeededGB, availableGB } = fit.breakdown;

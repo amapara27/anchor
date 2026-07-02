@@ -34,6 +34,21 @@ const GIB = 1024 ** 3;
 const TIGHT_HEADROOM_RATIO = 0.15;
 
 /**
+ * Context length to judge at-a-glance fit at. Ollama loads a model with a small
+ * default `num_ctx` (~4K), NOT its advertised maximum — a 128K-context model's
+ * KV cache at full length can exceed total RAM and falsely read "won't fit".
+ * The breakdown slider still explores up to the model's real maximum.
+ * ponytail: mirrors Ollama's num_ctx default; bump if that default changes.
+ */
+export const DEFAULT_CONTEXT = 4096;
+
+/** Realistic context for the default fit check: the default, capped by the
+ *  model's own maximum (some models advertise less than the default). */
+export function fitContext(maxContext: number): number {
+  return Math.min(maxContext || DEFAULT_CONTEXT, DEFAULT_CONTEXT);
+}
+
+/**
  * Estimated fp16 KV-cache bytes per token, bucketed by model size. Real KV cost
  * depends on layers/kv-heads/head-dim/GQA, which the catalog doesn't carry, so
  * these are seeded from typical GQA architectures (e.g. Llama-3 8B ≈ 128 KB/tok,

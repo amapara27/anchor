@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { DownloadState, LibraryModel, QuantId } from "../types";
 import { formatBytes, formatContext, formatParams } from "../lib/format";
-import { estimateFit } from "../lib/fit";
+import { estimateFit, fitContext } from "../lib/fit";
 import { resolveTokPerSec } from "../lib/tokps";
 import { DataTable, Td, Th, Tr } from "./ui/DataTable";
 import { Button } from "./ui/Button";
@@ -64,7 +64,7 @@ export function ModelTable({
         {models.map((m) => {
           const { spec } = m;
           const q = spec.quant as QuantId;
-          const fit = estimateFit(spec.params_b, q, spec.context_tokens, { memory_bytes: totalMemoryBytes });
+          const fit = estimateFit(spec.params_b, q, fitContext(spec.context_tokens), { memory_bytes: totalMemoryBytes });
           const tps = resolveTokPerSec(chip ?? null, m.id, spec.params_b, q);
           const download = downloads[m.id];
           const isDownloading = download != null;
