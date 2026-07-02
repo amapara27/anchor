@@ -36,6 +36,19 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// What a model can do. Drives the hard pre-ranking filter in [`ranking`] (a
+/// vision query must never surface a text-only model) and the UI badges.
+/// Mirrors the frontend `Capability` (serialised lowercase).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Capability {
+    Vision,
+    Code,
+    Embedding,
+    Reasoning,
+    General,
+}
+
 /// A catalogued model and the authored description used to match it to a query.
 ///
 /// Mirrors the entries in `profiles/models.json`. The richer counterpart of the
@@ -70,6 +83,9 @@ pub struct ModelProfile {
     /// Rich, natural-language description of what the model is good for. This is
     /// the text that gets embedded for semantic matching against a user's query.
     pub profile: String,
+    /// What the model can do — at least one entry. Used by the pre-ranking
+    /// capability filter and surfaced as badges in the UI.
+    pub capabilities: Vec<Capability>,
 }
 
 /// Parse the bundled catalog. Runs offline (no model download).
@@ -216,8 +232,11 @@ impl SemanticIndex {
         };
         let qv = &query_embedding[0];
 
-        let mut scored: Vec<ScoredModel> = self
-            .entries
+        // Hard capability gate: if the query implies a capability (e.g. vision),
+        // only models that have it are eligible for ranking. Otherwise all pass.
+        let candidates = ranking::filter_by_capability(&self.entries, query);
+
+        let mut scored: Vec<ScoredModel> = candidates
             .iter()
             .map(|e| ScoredModel {
                 profile: e.profile.clone(),
@@ -238,6 +257,8 @@ impl SemanticIndex {
 
 pub mod history;
 pub use history::{QueryHistory, QueryRecord};
+
+pub mod ranking;
 
 #[cfg(test)]
 mod tests;

@@ -5,6 +5,8 @@ import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { PageHeader } from "./PageHeader";
 import { SearchResultCard } from "./SearchResultCard";
+import { Button } from "./ui/Button";
+import { Chip } from "./ui/Chip";
 import { ClockIcon, RefreshIcon, SearchIcon, SparkleIcon, WarningIcon, XIcon } from "./icons";
 
 /** First-run suggestions so the empty state is never a dead end. */
@@ -17,7 +19,7 @@ const EXAMPLES = [
 ];
 
 export function SearchPage() {
-  const { results, status, error, query, recents, search } = useModelSearch();
+  const { results, confident, status, error, query, recents, search } = useModelSearch();
   const { models, downloads, startDownload, cancelDownload } = useModels();
   const { profile } = useHardwareProfile();
   const totalMemoryBytes = profile?.memory_bytes ?? null;
@@ -31,8 +33,6 @@ export function SearchPage() {
     setInput(q);
     search(q);
   };
-
-  const topScore = results[0]?.score ?? 1;
 
   return (
     <div className="space-y-6">
@@ -72,13 +72,14 @@ export function SearchPage() {
               <XIcon className="size-3.5" />
             </button>
           )}
-          <button
+          <Button
+            variant="primary"
             type="submit"
             disabled={!input.trim() || status === "searching"}
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+            className="text-xs font-semibold"
           >
             <SparkleIcon className="size-3.5" /> Search
-          </button>
+          </Button>
         </div>
       </form>
 
@@ -101,7 +102,15 @@ export function SearchPage() {
       {status === "ready" && (
         <div className="space-y-3">
           <h2 className="text-sm font-medium text-fg-muted">
-            Top {results.length} for <span className="text-fg">“{query}”</span>
+            {confident ? (
+              <>
+                Top {results.length} for <span className="text-fg">“{query}”</span>
+              </>
+            ) : (
+              <>
+                No strong match for <span className="text-fg">“{query}”</span> — showing related models
+              </>
+            )}
           </h2>
           {results.map((result, i) => {
             const lib: LibraryModel | undefined = byId.get(result.profile.id);
@@ -110,7 +119,7 @@ export function SearchPage() {
                 key={result.profile.id}
                 result={result}
                 rank={i + 1}
-                relative={topScore > 0 ? result.score / topScore : 0}
+                confident={confident}
                 libraryModel={lib}
                 download={downloads[result.profile.id]}
                 onDownload={() => lib && startDownload(lib)}
@@ -148,9 +157,9 @@ function ChipRow({
           key={chip}
           type="button"
           onClick={() => onPick(chip)}
-          className="cursor-pointer rounded-lg border border-white/8 bg-white/5 px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-white/15 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+          className="cursor-pointer rounded-md transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
         >
-          {chip}
+          <Chip className="hover:text-fg hover:ring-white/20">{chip}</Chip>
         </button>
       ))}
     </div>

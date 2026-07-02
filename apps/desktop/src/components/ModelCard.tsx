@@ -3,7 +3,10 @@ import { formatBytes, formatContext, formatParams } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 import { FitBadge } from "./FitBadge";
 import { SpecPill } from "./SpecPill";
+import { FitBreakdown } from "./FitBreakdown";
 import { DownloadProgressBar } from "./DownloadProgressBar";
+import { Chip } from "./ui/Chip";
+import { Button } from "./ui/Button";
 import { CheckIcon, ChipIcon, DownloadIcon, LayersIcon, MemoryIcon, RulerIcon, StarIcon, XIcon } from "./icons";
 
 interface ModelCardProps {
@@ -17,6 +20,10 @@ interface ModelCardProps {
   onToggleFavorite?: () => void;
   /** Host total memory in bytes, for the hardware-fit flag. */
   totalMemoryBytes?: number | null;
+  /** Contract slot (Phase 2): show an update indicator when true. */
+  updateAvailable?: boolean;
+  /** Contract slot (Phase 2): epoch ms this model was last used. */
+  lastUsedAt?: number;
 }
 
 export function ModelCard({
@@ -29,6 +36,8 @@ export function ModelCard({
   favorite = false,
   onToggleFavorite,
   totalMemoryBytes,
+  updateAvailable = false,
+  lastUsedAt,
 }: ModelCardProps) {
   const { spec } = model;
   const installed = model.status === "installed";
@@ -55,9 +64,18 @@ export function ModelCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
-            <h3 className="truncate font-semibold text-fg">{model.name}</h3>
+            <h3 className="data truncate font-semibold text-fg">{model.name}</h3>
             <StatusBadge status={model.status} />
             <FitBadge minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
+            {updateAvailable && (
+              <span
+                title="Update available"
+                className="inline-flex items-center gap-1 text-xs font-medium text-accent-text"
+              >
+                <span className="size-1.5 rounded-full bg-accent-text" aria-hidden />
+                Update
+              </span>
+            )}
           </div>
           <p className="mt-0.5 truncate text-xs text-fg-subtle">
             <span className="capitalize">{model.family}</span>
@@ -85,35 +103,35 @@ export function ModelCard({
             </button>
           )}
 
-          {/* Primary action — one per card */}
+          {/* Action — ghost in the list; the drawer carries the one accent CTA */}
           {installed ? (
             <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ok">
               <CheckIcon className="size-3.5" /> Ready
             </span>
           ) : isDownloading ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs"
+              aria-label={`Cancel download of ${model.name}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onCancel();
               }}
-              aria-label={`Cancel download of ${model.name}`}
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-white/20 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.97]"
             >
               <XIcon className="size-3.5" /> Cancel
-            </button>
+            </Button>
           ) : (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs"
+              aria-label={`Download ${model.name}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onDownload();
               }}
-              aria-label={`Download ${model.name}`}
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
             >
               <DownloadIcon className="size-3.5" /> Download
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -135,18 +153,42 @@ export function ModelCard({
         </div>
       )}
 
+      {/* Fit breakdown — interactive; stop clicks/keys from triggering card select. */}
+      {!isDownloading && spec.params_b > 0 && (
+        <div
+          className="mt-3"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <FitBreakdown
+            params_b={spec.params_b}
+            quant={spec.quant}
+            contextTokens={spec.context_tokens}
+            memoryBytes={totalMemoryBytes}
+          />
+        </div>
+      )}
+
       {model.tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
           {model.tags.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-inset ring-white/10"
-            >
-              {tag}
-            </span>
+            <Chip key={tag}>{tag}</Chip>
           ))}
         </div>
       )}
+
+      {lastUsedAt != null && (
+        <p className="mt-3 text-[11px] text-fg-subtle">Last used {timeAgo(lastUsedAt)}</p>
+      )}
     </div>
   );
+}
+
+/** Compact relative time, e.g. "3d ago". ponytail: coarse buckets, good enough for a hint. */
+function timeAgo(ms: number): string {
+  const s = (Date.now() - ms) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }

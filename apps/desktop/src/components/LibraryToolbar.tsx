@@ -1,5 +1,8 @@
 import type { SortKey, StatusFilter } from "../types";
-import { ChevronDownIcon, SearchIcon, XIcon } from "./icons";
+import { ChevronDownIcon, GridIcon, RowsIcon, SearchIcon, XIcon } from "./icons";
+
+/** Library layout: the dense table is the default; cards are the alternative. */
+export type LibraryView = "table" | "cards";
 
 interface ToolbarProps {
   query: string;
@@ -12,6 +15,8 @@ interface ToolbarProps {
   sort: SortKey;
   onSort: (v: SortKey) => void;
   counts: Record<StatusFilter, number>;
+  view: LibraryView;
+  onView: (v: LibraryView) => void;
 }
 
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
@@ -31,6 +36,8 @@ export function LibraryToolbar({
   sort,
   onSort,
   counts,
+  view,
+  onView,
 }: ToolbarProps) {
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -105,6 +112,32 @@ export function LibraryToolbar({
           <option value="params">Parameters</option>
           <option value="size">Size</option>
         </SelectChip>
+
+        {/* View toggle — table is the default, cards the alternative */}
+        <div role="group" aria-label="View" className="inline-flex rounded-lg border border-white/8 bg-white/5 p-0.5">
+          {([
+            { key: "table", label: "Table view", Icon: RowsIcon },
+            { key: "cards", label: "Card view", Icon: GridIcon },
+          ] as const).map(({ key, label, Icon }) => {
+            const active = view === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => onView(key)}
+                aria-pressed={active}
+                aria-label={label}
+                title={label}
+                className={[
+                  "cursor-pointer rounded-md p-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
+                  active ? "bg-accent/15 text-accent-text ring-1 ring-inset ring-accent/20" : "text-fg-muted hover:text-fg",
+                ].join(" ")}
+              >
+                <Icon className="size-4" />
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

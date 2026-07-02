@@ -33,7 +33,7 @@ export function ComparisonPane({
           <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">
             Model {slotLabel}
           </div>
-          <h3 className="truncate font-semibold text-fg">{model?.name ?? "—"}</h3>
+          <h3 className="data truncate font-semibold text-fg">{model?.name ?? "—"}</h3>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {fastest && revealed && fraction >= 1 && (

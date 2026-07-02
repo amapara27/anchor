@@ -3,6 +3,9 @@ import type { DownloadState, LibraryModel } from "../types";
 import { formatBytes, formatContext, formatParams } from "../lib/format";
 import { memoryFit } from "../lib/fit";
 import { StatusBadge } from "./StatusBadge";
+import { FitBreakdown } from "./FitBreakdown";
+import { Chip } from "./ui/Chip";
+import { Button } from "./ui/Button";
 import {
   ChipIcon,
   CloseIcon,
@@ -165,6 +168,16 @@ function DrawerBody({
             </div>
           </div>
           <Compatibility minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
+          {spec.params_b > 0 && (
+            <FitBreakdown
+              className="mt-3"
+              defaultOpen
+              params_b={spec.params_b}
+              quant={spec.quant}
+              contextTokens={spec.context_tokens}
+              memoryBytes={totalMemoryBytes}
+            />
+          )}
         </section>
 
         {/* Use cases */}
@@ -173,12 +186,7 @@ function DrawerBody({
             <SectionLabel>Good for</SectionLabel>
             <div className="flex flex-wrap gap-1.5">
               {spec.use_cases.map((uc) => (
-                <span
-                  key={uc}
-                  className="rounded-md bg-white/5 px-2.5 py-1 text-xs text-fg-muted ring-1 ring-inset ring-white/10"
-                >
-                  {uc}
-                </span>
+                <Chip key={uc}>{uc}</Chip>
               ))}
             </div>
           </section>
@@ -216,13 +224,9 @@ function DrawerBody({
             <TrashIcon className="size-4" /> Remove from disk
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={onDownload}
-            className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-          >
+          <Button variant="primary" onClick={onDownload} className="w-full py-2.5">
             <DownloadIcon className="size-4" /> Download · {formatBytes(spec.download_bytes)}
-          </button>
+          </Button>
         )}
       </div>
     </>
@@ -282,10 +286,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
       {tags.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
           {tags.map((tag) => (
-            <span
-              key={tag}
-              className="inline-flex items-center gap-1 rounded-md bg-white/5 py-0.5 pl-2 pr-1 text-xs font-medium text-fg-muted ring-1 ring-inset ring-white/10"
-            >
+            <Chip key={tag} className="gap-1 pr-1">
               {tag}
               <button
                 type="button"
@@ -295,7 +296,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
               >
                 <XIcon className="size-3" />
               </button>
-            </span>
+            </Chip>
           ))}
         </div>
       )}

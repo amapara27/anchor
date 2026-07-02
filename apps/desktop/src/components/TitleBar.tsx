@@ -15,7 +15,7 @@ const PAGE_LABEL: Record<Tab, string> = {
  * (`pl-20`) and make the whole strip a drag region. Interactive children opt out
  * of dragging by simply not carrying the `data-tauri-drag-region` attribute.
  */
-export function TitleBar({ active }: { active: Tab }) {
+export function TitleBar({ active, onOpenPalette }: { active: Tab; onOpenPalette?: () => void }) {
   return (
     <header
       data-tauri-drag-region
@@ -32,15 +32,17 @@ export function TitleBar({ active }: { active: Tab }) {
         <span className="truncate text-[13px] font-medium text-fg-muted">{PAGE_LABEL[active]}</span>
       </div>
 
-      {/* Right: command-palette affordance (the shortcut UI lands with the palette). */}
-      <div
-        className="flex items-center gap-1.5 rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-fg-subtle"
-        title="Command palette — coming soon"
-        aria-hidden
+      {/* Right: command-palette trigger. */}
+      <button
+        type="button"
+        onClick={onOpenPalette}
+        title="Command palette"
+        aria-label="Open command palette"
+        className="flex cursor-pointer items-center gap-1.5 rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-fg-subtle transition-colors duration-150 ease-out hover:border-white/15 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
       >
         <SearchIcon className="size-3.5" />
         <kbd className="data text-[11px] leading-none tracking-tight">⌘K</kbd>
-      </div>
+      </button>
     </header>
   );
 }

@@ -122,6 +122,13 @@ export type CompareEvent =
 /** Quantisation level, kept loose since registries expose many variants. */
 export type Quant = string; // e.g. "Q4_K_M", "Q8_0", "F16"
 
+/**
+ * What a model can do. Drives the pre-ranking filter in semantic search (a
+ * "computer vision" query must never surface a text-only model) and the
+ * capability badges in the UI. Mirrors `anchor_search::Capability` (lowercase).
+ */
+export type Capability = "vision" | "code" | "embedding" | "reasoning" | "general";
+
 /** Static, catalog-level facts about a model (independent of install state). */
 export interface ModelSpec {
   /** Parameter count in billions, e.g. 8 for an 8B model. */
@@ -140,6 +147,8 @@ export interface ModelSpec {
   use_cases: string[];
   /** Publisher / org, e.g. "Meta", "Mistral AI". */
   publisher: string;
+  /** What the model can do — at least one entry. */
+  capabilities: Capability[];
 }
 
 /**
@@ -163,6 +172,8 @@ export interface ModelProfile {
   use_cases: string[];
   /** Authored description used for semantic search (not shown directly). */
   profile: string;
+  /** What the model can do — at least one entry. Mirrors the Rust `capabilities`. */
+  capabilities: Capability[];
 }
 
 /**
@@ -239,4 +250,68 @@ export interface WorkflowTemplate {
   /** Suggested model id (e.g. a catalog id like "llama3.1:8b"). */
   model: string;
   tools: Tool[];
+}
+
+// ---------------------------------------------------------------------------
+// Hardware-truth engine — fit, quant, and throughput. Consumed by the fit
+// breakdown panel, the model table, and Compare. All numbers are ESTIMATES
+// unless a run has been measured; the UI must label which is shown.
+// ---------------------------------------------------------------------------
+
+/** The quantisations the fit engine reasons about, smallest → largest. */
+export type QuantId = "Q3_K_S" | "Q4_K_M" | "Q5_K_M" | "Q8_0";
+
+/** Static facts about one quantisation, used to size weights and inform the UI. */
+export interface QuantMeta {
+  id: QuantId;
+  /** Bits per weight, e.g. Q4_K_M ≈ 4.8. Drives the weights-size estimate. */
+  bpw: number;
+  /** Short quality tier: "smallest" | "balanced" | "high" | "max". */
+  qualityLabel: string;
+  /** One-line size/quality tradeoff, shown in the UI. */
+  qualityNote: string;
+}
+
+/** The memory math behind a fit verdict, surfaced in the "why Tight?" panel. */
+export interface FitBreakdown {
+  /** Model weights at the chosen quant. */
+  weightsGB: number;
+  /** KV cache at the chosen context length (estimated). */
+  kvCacheGB: number;
+  /** Memory left for macOS and other apps. */
+  osReserveGB: number;
+  /** weights + kv + reserve — the baseline the machine must clear. */
+  totalNeededGB: number;
+  /** The host's unified/total memory. */
+  availableGB: number;
+}
+
+/** A full fit verdict for a (model, quant, context, hardware) tuple. */
+export interface FitResult {
+  tier: FitTier;
+  fits: boolean;
+  /** availableGB − weightsGB − kvCacheGB − osReserveGB. Negative ⇒ won't fit. */
+  headroomGB: number;
+  breakdown: FitBreakdown;
+}
+
+/** Fit tier, re-exported shape kept in sync with `lib/fit.ts`. */
+export type FitTier = "ok" | "tight" | "wont_fit" | "unknown";
+
+/** A throughput figure and whether it was measured on this machine or estimated. */
+export interface TokPerSec {
+  value: number;
+  source: "measured" | "estimated";
+}
+
+/** One measured comparison run, persisted locally so estimates can be replaced. */
+export interface MeasuredRun {
+  modelId: string;
+  /** Host chip name, e.g. "Apple M4". Null when unknown. */
+  chip: string | null;
+  quant: QuantId | string;
+  tokPerSec: number;
+  prompt: string;
+  /** Unix epoch milliseconds. */
+  ts: number;
 }

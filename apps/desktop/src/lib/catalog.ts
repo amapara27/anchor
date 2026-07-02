@@ -22,6 +22,7 @@ function profileToSpec(p: ModelProfile): ModelSpec {
     blurb: p.blurb,
     use_cases: p.use_cases,
     publisher: p.publisher,
+    capabilities: p.capabilities,
   };
 }
 
@@ -112,5 +113,6 @@ function placeholderSpec(m: Model): ModelSpec {
     publisher: m.publisher ?? "Local",
     blurb: "Installed locally via Ollama.",
     use_cases: [],
+    capabilities: ["general"],
   };
 }

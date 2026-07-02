@@ -233,3 +233,29 @@ export const ZapIcon = (p: IconProps) => (
     <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z" />
   </Svg>
 );
+
+/** Horizontal rows — the dense table view toggle. */
+export const RowsIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 9.5h18M3 14.5h18" />
+  </Svg>
+);
+
+/** 2×2 grid — the card view toggle. */
+export const GridIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" />
+    <rect x="14" y="14" width="7" height="7" rx="1.5" />
+  </Svg>
+);
+
+/** Arrow-return — the "enter to select" hint in the command palette. */
+export const CornerDownLeftIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 10 5 14l4 4" />
+    <path d="M5 14h10a4 4 0 0 0 4-4V6" />
+  </Svg>
+);

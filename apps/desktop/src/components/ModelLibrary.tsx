@@ -1,13 +1,22 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LibraryModel, SortKey, StatusFilter } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
-import { LibraryToolbar } from "./LibraryToolbar";
+import { LibraryToolbar, type LibraryView } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
+import { ModelTable } from "./ModelTable";
 import { ModelDetailDrawer } from "./ModelDetailDrawer";
 import { PageHeader } from "./PageHeader";
 import { RefreshIcon, SearchIcon, WarningIcon } from "./icons";
+
+const VIEW_KEY = "anchor.libraryView";
+
+interface ModelLibraryProps {
+  /** Open a model's detail drawer from outside (e.g. the command palette). The
+   *  nonce lets the same id be re-opened after the drawer is closed. */
+  openModel?: { id: string; nonce: number } | null;
+}
 
 function matchesQuery(m: LibraryModel, q: string): boolean {
   const hay = [m.name, m.family, m.spec.publisher, ...m.spec.use_cases, ...m.tags]
@@ -22,7 +31,7 @@ const SORTERS: Record<SortKey, (a: LibraryModel, b: LibraryModel) => number> = {
   size: (a, b) => (b.size_bytes ?? 0) - (a.size_bytes ?? 0),
 };
 
-export function ModelLibrary() {
+export function ModelLibrary({ openModel }: ModelLibraryProps = {}) {
   const { models, loading, error, downloads, reload, startDownload, cancelDownload, removeModel, setTags, setNote } =
     useModels();
   const { isFavorite, toggleFavorite } = useFavorites();
@@ -34,6 +43,26 @@ export function ModelLibrary() {
   const [family, setFamily] = useState("all");
   const [sort, setSort] = useState<SortKey>("name");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [view, setView] = useState<LibraryView>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === "cards" ? "cards" : "table";
+    } catch {
+      return "table";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      // storage unavailable — view stays in-memory
+    }
+  }, [view]);
+
+  // Open a model's drawer when the palette requests it (nonce forces re-open).
+  useEffect(() => {
+    if (openModel?.id) setSelectedId(openModel.id);
+  }, [openModel]);
 
   // Families come from the loaded library (backend catalog + installed extras),
   // so the filter always reflects what's actually shown.
@@ -87,6 +116,8 @@ export function ModelLibrary() {
         sort={sort}
         onSort={setSort}
         counts={counts}
+        view={view}
+        onView={setView}
       />
 
       {!loading && error && <ErrorBanner message={error} onRetry={reload} />}
@@ -95,7 +126,20 @@ export function ModelLibrary() {
 
       {!loading && visible.length === 0 && <EmptyState hasModels={models.length > 0} />}
 
-      {!loading && visible.length > 0 && (
+      {!loading && visible.length > 0 && view === "table" && (
+        <ModelTable
+          models={visible}
+          downloads={downloads}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onDownload={startDownload}
+          onCancel={cancelDownload}
+          chip={profile?.chip ?? null}
+          totalMemoryBytes={totalMemoryBytes}
+        />
+      )}
+
+      {!loading && visible.length > 0 && view === "cards" && (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {visible.map((m) => (
             <ModelCard

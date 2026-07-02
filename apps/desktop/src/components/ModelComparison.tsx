@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useModels } from "../lib/useModels";
 import { useComparison } from "../lib/useComparison";
-import { formatTokSec, tokensPerSecond } from "../lib/format";
+import { useHardwareProfile } from "../lib/useHardwareProfile";
+import { formatBytes, formatTokSec, tokensPerSecond } from "../lib/format";
+import { saveMeasuredRun } from "../lib/measured";
+import { exportComparison } from "../lib/exportImage";
 import { PageHeader } from "./PageHeader";
 import { ModelPicker } from "./ModelPicker";
 import { ComparisonPane } from "./ComparisonPane";
+import { Button } from "./ui/Button";
 import { PlayIcon } from "./icons";
 
 /** Duration of the simultaneous typewriter reveal, ms. */
@@ -12,6 +16,7 @@ const REVEAL_MS = 1400;
 
 export function ModelComparison() {
   const { models, loading } = useModels();
+  const { profile } = useHardwareProfile();
   const { a, b, running, revealed, run } = useComparison();
 
   const [modelA, setModelA] = useState("");
@@ -52,6 +57,39 @@ export function ModelComparison() {
   const bTok = tokensPerSecond(b.stats);
   const bothDone = a.phase === "done" && b.phase === "done" && aTok != null && bTok != null;
   const fastest: "a" | "b" | null = bothDone ? (aTok! >= bTok! ? "a" : "b") : null;
+
+  const chip = profile?.chip ?? null;
+  const hardware = [chip ?? profile?.model_name, profile?.memory_bytes ? formatBytes(profile.memory_bytes) : null]
+    .filter(Boolean)
+    .join(" · ");
+
+  // Persist each finished run once, feeding the fit engine's measured resolver
+  // (tokps.ts) so a real number replaces the estimate on this chip+quant.
+  const saved = useRef(false);
+  useEffect(() => {
+    if (!bothDone) {
+      saved.current = false;
+      return;
+    }
+    if (saved.current) return;
+    saved.current = true;
+    const ts = Date.now();
+    saveMeasuredRun({ modelId: modelA, chip, quant: aModel?.spec.quant ?? "unknown", tokPerSec: aTok!, prompt, ts });
+    saveMeasuredRun({ modelId: modelB, chip, quant: bModel?.spec.quant ?? "unknown", tokPerSec: bTok!, prompt, ts });
+  }, [bothDone, modelA, modelB, chip, aTok, bTok, prompt, aModel, bModel]);
+
+  const handleExport = () => {
+    if (!bothDone) return;
+    exportComparison({
+      aName: aModel?.name ?? "Model A",
+      bName: bModel?.name ?? "Model B",
+      aOutput: a.response ?? "",
+      bOutput: b.response ?? "",
+      aTok: aTok!,
+      bTok: bTok!,
+      hardware,
+    });
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -110,12 +148,7 @@ export function ModelComparison() {
             Models that aren’t installed will be downloaded first. They run one at a time to fit in
             memory.
           </p>
-          <button
-            type="button"
-            onClick={() => run(modelA, modelB, prompt)}
-            disabled={!canRun}
-            className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg transition-colors hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent"
-          >
+          <Button variant="primary" onClick={() => run(modelA, modelB, prompt)} disabled={!canRun}>
             {running ? (
               <>
                 <Spinner /> Comparing…
@@ -125,7 +158,7 @@ export function ModelComparison() {
                 <PlayIcon className="size-4" /> Run comparison
               </>
             )}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -152,12 +185,19 @@ export function ModelComparison() {
           </div>
 
           {bothDone && fraction >= 1 && (
-            <ThroughputBar
-              aName={aModel?.name ?? "Model A"}
-              bName={bModel?.name ?? "Model B"}
-              aTok={aTok!}
-              bTok={bTok!}
-            />
+            <>
+              <div className="flex justify-end">
+                <Button variant="ghost" onClick={handleExport}>
+                  Export result
+                </Button>
+              </div>
+              <ThroughputBar
+                aName={aModel?.name ?? "Model A"}
+                bName={bModel?.name ?? "Model B"}
+                aTok={aTok!}
+                bTok={bTok!}
+              />
+            </>
           )}
         </div>
       )}
@@ -190,7 +230,7 @@ function ThroughputBar({
         ].map((row) => (
           <div key={row.name}>
             <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="truncate font-medium text-fg">{row.name}</span>
+              <span className="data truncate font-medium text-fg">{row.name}</span>
               <span className="data text-fg-muted">{formatTokSec(row.tok)}</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-white/8">

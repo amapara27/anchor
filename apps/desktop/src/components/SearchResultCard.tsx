@@ -3,6 +3,7 @@ import { formatContext, formatParams } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 import { FitBadge } from "./FitBadge";
 import { SpecPill } from "./SpecPill";
+import { Chip } from "./ui/Chip";
 import { DownloadProgressBar } from "./DownloadProgressBar";
 import { CheckIcon, ChipIcon, DownloadIcon, LayersIcon, RulerIcon, XIcon } from "./icons";
 
@@ -10,10 +11,10 @@ const GB = 1024 ** 3;
 
 interface SearchResultCardProps {
   result: ScoredModel;
-  /** 1-based position in the ranked results, shown as "#1". */
+  /** 1-based position in the ranked results, drives the qualitative label. */
   rank: number;
-  /** Score ÷ top score (0–1), drives the relevance bar width. */
-  relative: number;
+  /** When false, results are shown as a "related models" browse, not matches. */
+  confident?: boolean;
   /** Live library row for this model, when found — gives real install state. */
   libraryModel?: LibraryModel;
   download?: DownloadState;
@@ -22,10 +23,21 @@ interface SearchResultCardProps {
   totalMemoryBytes?: number | null;
 }
 
+/**
+ * Qualitative rank instead of a raw cosine number. When we're not confident the
+ * whole set is "Related"; otherwise the top hit leads and the rest are strong.
+ */
+function rankLabel(rank: number, confident: boolean): string {
+  if (!confident) return "Related";
+  if (rank === 1) return "Top match";
+  if (rank === 2) return "Strong";
+  return "Related";
+}
+
 export function SearchResultCard({
   result,
   rank,
-  relative,
+  confident = true,
   libraryModel,
   download,
   onDownload,
@@ -46,8 +58,10 @@ export function SearchResultCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
-            <span className="data shrink-0 text-xs font-semibold text-accent-text">#{rank}</span>
-            <h3 className="truncate font-semibold text-fg">{profile.name}</h3>
+            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-accent-text">
+              {rankLabel(rank, confident)}
+            </span>
+            <h3 className="data truncate font-semibold text-fg">{profile.name}</h3>
             <StatusBadge status={libraryModel?.status ?? "available"} />
             <FitBadge minMemoryBytes={profile.min_memory_gb * GB} totalMemoryBytes={totalMemoryBytes} />
           </div>
@@ -86,21 +100,18 @@ export function SearchResultCard({
         </div>
       </div>
 
-      {/* Relevance: a slim bar + the raw cosine score (honest, not a fake %). */}
-      <div className="mt-3 flex items-center gap-2.5">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">Relevance</span>
-        <div
-          className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/8"
-          role="progressbar"
-          aria-label={`Relevance to your search: ${result.score.toFixed(2)}`}
-          aria-valuenow={Math.round(relative * 100)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className="h-full rounded-full bg-accent" style={{ width: `${Math.round(relative * 100)}%` }} />
+      {/* Capability badges: what the model can do (one per capability). */}
+      {/* ponytail: shows the model's own capabilities, not the query-matched
+          subset — for a filtered vision query these already are the match. */}
+      {profile.capabilities.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {profile.capabilities.map((cap) => (
+            <Chip key={cap} className="capitalize">
+              {cap}
+            </Chip>
+          ))}
         </div>
-        <span className="data text-xs text-fg-subtle">{result.score.toFixed(2)}</span>
-      </div>
+      )}
 
       {/* The "why" — what this model is good for. */}
       <p className="mt-3 text-sm text-fg-muted">{why}</p>
@@ -112,12 +123,7 @@ export function SearchResultCard({
           {profile.use_cases.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {profile.use_cases.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-fg-muted ring-1 ring-inset ring-white/10"
-                >
-                  {tag}
-                </span>
+                <Chip key={tag}>{tag}</Chip>
               ))}
             </div>
           )}
