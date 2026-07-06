@@ -4,7 +4,7 @@ import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useUpdates } from "../lib/useUpdates";
-import { LibraryToolbar, type LibraryView } from "./LibraryToolbar";
+import { LibraryFilters, LibraryToolbar, type LibraryView } from "./LibraryToolbar";
 import { ModelCard } from "./ModelCard";
 import { ModelTable } from "./ModelTable";
 import { ModelDetailDrawer } from "./ModelDetailDrawer";
@@ -107,60 +107,67 @@ export function ModelLibrary({ openModel }: ModelLibraryProps = {}) {
         subtitle="Browse, download, and manage your local models — without the terminal."
       />
 
-      <LibraryToolbar
-        query={query}
-        onQuery={setQuery}
-        status={status}
-        onStatus={setStatus}
-        family={family}
-        onFamily={setFamily}
-        families={families}
-        sort={sort}
-        onSort={setSort}
-        counts={counts}
-        view={view}
-        onView={setView}
-      />
-
-      {!loading && error && <ErrorBanner message={error} onRetry={reload} />}
-
-      {loading && <SkeletonGrid />}
-
-      {!loading && visible.length === 0 && <EmptyState hasModels={models.length > 0} />}
-
-      {!loading && visible.length > 0 && view === "table" && (
-        <ModelTable
-          models={visible}
-          downloads={downloads}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          onDownload={startDownload}
-          onCancel={cancelDownload}
-          chip={profile?.chip ?? null}
-          totalMemoryBytes={totalMemoryBytes}
-          updates={updates}
+      <div className="grid gap-6 lg:grid-cols-[240px_1fr]">
+        <LibraryFilters
+          status={status}
+          onStatus={setStatus}
+          family={family}
+          onFamily={setFamily}
+          families={families}
+          counts={counts}
         />
-      )}
 
-      {!loading && visible.length > 0 && view === "cards" && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {visible.map((m) => (
-            <ModelCard
-              key={m.id}
-              model={m}
-              download={downloads[m.id]}
-              selected={m.id === selectedId}
-              onSelect={() => setSelectedId(m.id)}
-              onDownload={() => startDownload(m)}
-              onCancel={() => cancelDownload(m.id)}
-              favorite={isFavorite(m.id)}
-              onToggleFavorite={() => toggleFavorite(m.id)}
+        <div className="min-w-0 space-y-5">
+          <LibraryToolbar
+            query={query}
+            onQuery={setQuery}
+            sort={sort}
+            onSort={setSort}
+            view={view}
+            onView={setView}
+          />
+
+          {!loading && error && <ErrorBanner message={error} onRetry={reload} />}
+
+          {loading && <SkeletonGrid />}
+
+          {!loading && visible.length === 0 && <EmptyState hasModels={models.length > 0} />}
+
+          {!loading && visible.length > 0 && view === "table" && (
+            <ModelTable
+              models={visible}
+              downloads={downloads}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onDownload={startDownload}
+              onCancel={cancelDownload}
+              chip={profile?.chip ?? null}
               totalMemoryBytes={totalMemoryBytes}
-              updateAvailable={updates[m.id]}
+              updates={updates}
             />
-          ))}
+          )}
+
+          {!loading && visible.length > 0 && view === "cards" && (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {visible.map((m) => (
+                <ModelCard
+                  key={m.id}
+                  model={m}
+                  download={downloads[m.id]}
+                  selected={m.id === selectedId}
+                  onSelect={() => setSelectedId(m.id)}
+                  onDownload={() => startDownload(m)}
+                  onCancel={() => cancelDownload(m.id)}
+                  favorite={isFavorite(m.id)}
+                  onToggleFavorite={() => toggleFavorite(m.id)}
+                  totalMemoryBytes={totalMemoryBytes}
+                  updateAvailable={updates[m.id]}
+                />
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       <ModelDetailDrawer
         model={selected}
@@ -201,7 +208,7 @@ function SkeletonGrid() {
 
 function EmptyState({ hasModels }: { hasModels: boolean }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-white/[0.015] px-6 py-14 text-center">
+    <div className="flex flex-col items-center justify-center rounded-[var(--radius-card)] border border-dashed border-white/10 bg-white/[0.015] px-6 py-14 text-center">
       <span className="flex size-12 items-center justify-center rounded-full bg-white/5 text-fg-subtle ring-1 ring-inset ring-white/10">
         <SearchIcon className="size-5" />
       </span>
@@ -224,7 +231,7 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
   return (
     <div
       role="status"
-      className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3"
+      className="flex items-start gap-3 rounded-[var(--radius-card)] border border-white/10 bg-white/[0.02] px-4 py-3"
     >
       <WarningIcon className="mt-0.5 size-4 shrink-0 text-warn" />
       <div className="min-w-0 flex-1">

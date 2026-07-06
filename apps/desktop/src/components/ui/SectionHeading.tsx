@@ -11,7 +11,7 @@ export function SectionHeading({
 }) {
   return (
     <div className={["flex items-baseline justify-between", className].join(" ")}>
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-fg-muted">{children}</h2>
+      <h2 className="label-caps text-fg-muted">{children}</h2>
       {action}
     </div>
   );

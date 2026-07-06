@@ -110,7 +110,7 @@ export function DiskPage() {
                 <Td>
                   <span className="data truncate font-medium text-fg">{model.name}</span>
                 </Td>
-                <Td className="text-right tabular">{formatBytes(model.size_bytes)}</Td>
+                <Td className="data text-right">{formatBytes(model.size_bytes)}</Td>
                 <Td className={isStale(lastUsed) ? "text-fg-subtle" : "text-fg-muted"}>
                   {formatLastUsed(lastUsed)}
                 </Td>

@@ -32,7 +32,7 @@ export function ModelPicker({
 
   return (
     <div className="min-w-0 flex-1">
-      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">
+      <label className="mb-1.5 block label-caps">
         {label}
       </label>
       <div className="relative">

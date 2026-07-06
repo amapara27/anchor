@@ -63,8 +63,13 @@ export function ModelCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2.5">
-            <h3 className="data truncate font-semibold text-fg">{model.name}</h3>
+          <p className="label-caps truncate">
+            <span className="capitalize">{model.family}</span>
+            <span className="mx-1.5 text-white/20">·</span>
+            {spec.publisher}
+          </p>
+          <div className="mt-1.5 flex items-center gap-2.5">
+            <h3 className="data truncate text-lg font-semibold text-fg">{model.name}</h3>
             <StatusBadge status={model.status} />
             <FitBadge minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
             {updateAvailable && (
@@ -77,63 +82,25 @@ export function ModelCard({
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-xs text-fg-subtle">
-            <span className="capitalize">{model.family}</span>
-            <span className="mx-1.5 text-white/20">·</span>
-            {spec.publisher}
-          </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          {onToggleFavorite && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleFavorite();
-              }}
-              aria-pressed={favorite}
-              aria-label={favorite ? `Unfavorite ${model.name}` : `Favorite ${model.name}`}
-              className={[
-                "cursor-pointer rounded-md p-1 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-90",
-                favorite ? "text-warn" : "text-fg-subtle hover:text-fg",
-              ].join(" ")}
-            >
-              <StarIcon className="size-4" filled={favorite} />
-            </button>
-          )}
-
-          {/* Action — ghost in the list; the drawer carries the one accent CTA */}
-          {installed ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ok">
-              <CheckIcon className="size-3.5" /> Ready
-            </span>
-          ) : isDownloading ? (
-            <Button
-              variant="ghost"
-              className="px-2 py-1 text-xs"
-              aria-label={`Cancel download of ${model.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onCancel();
-              }}
-            >
-              <XIcon className="size-3.5" /> Cancel
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              className="px-2 py-1 text-xs"
-              aria-label={`Download ${model.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                onDownload();
-              }}
-            >
-              <DownloadIcon className="size-3.5" /> Download
-            </Button>
-          )}
-        </div>
+        {onToggleFavorite && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite();
+            }}
+            aria-pressed={favorite}
+            aria-label={favorite ? `Unfavorite ${model.name}` : `Favorite ${model.name}`}
+            className={[
+              "shrink-0 cursor-pointer rounded-md p-1 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-90",
+              favorite ? "text-warn" : "text-fg-subtle hover:text-fg",
+            ].join(" ")}
+          >
+            <StarIcon className="size-4" filled={favorite} />
+          </button>
+        )}
       </div>
 
       <p className="mt-3 line-clamp-2 text-sm text-fg-muted">{spec.blurb}</p>
@@ -180,6 +147,45 @@ export function ModelCard({
       {lastUsedAt != null && (
         <p className="mt-3 text-[11px] text-fg-subtle">Last used {timeAgo(lastUsedAt)}</p>
       )}
+
+      {/* Footer: required memory + the row action, separated by a hairline. */}
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/8 pt-3">
+        <span className="flex items-baseline gap-1.5">
+          <span className="label-caps text-[10px]">Req RAM</span>
+          <span className="mono-metric text-xs text-fg">{formatBytes(spec.min_memory_bytes)}</span>
+        </span>
+
+        {/* Action — ghost in the list; the drawer carries the one accent CTA */}
+        {installed ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ok">
+            <CheckIcon className="size-3.5" /> Ready
+          </span>
+        ) : isDownloading ? (
+          <Button
+            variant="ghost"
+            className="px-2 py-1 text-xs"
+            aria-label={`Cancel download of ${model.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancel();
+            }}
+          >
+            <XIcon className="size-3.5" /> Cancel
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            className="px-2 py-1 text-xs"
+            aria-label={`Download ${model.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDownload();
+            }}
+          >
+            <DownloadIcon className="size-3.5" /> Download
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

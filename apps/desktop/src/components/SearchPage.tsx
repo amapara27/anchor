@@ -34,6 +34,24 @@ export function SearchPage() {
     search(q);
   };
 
+  const renderCard = (result: (typeof results)[number], rank: number, hero: boolean) => {
+    const lib: LibraryModel | undefined = byId.get(result.profile.id);
+    return (
+      <SearchResultCard
+        key={result.profile.id}
+        result={result}
+        rank={rank}
+        confident={confident}
+        hero={hero}
+        libraryModel={lib}
+        download={downloads[result.profile.id]}
+        onDownload={() => lib && startDownload(lib)}
+        onCancel={() => cancelDownload(result.profile.id)}
+        totalMemoryBytes={totalMemoryBytes}
+      />
+    );
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -58,7 +76,7 @@ export function SearchPage() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="e.g. a model for web scraping, or RAG over my notes…"
           aria-label="Describe your use case"
-          className="w-full rounded-xl border border-white/8 bg-white/5 py-3 pl-10 pr-32 text-sm text-fg placeholder:text-fg-subtle transition-colors focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
+          className="w-full rounded-[var(--radius-card)] border border-white/8 bg-white/5 py-3 pl-10 pr-32 text-sm text-fg placeholder:text-fg-subtle transition-colors focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
         {/* Right cluster: clear + Search grouped so they can't overlap. */}
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -100,34 +118,31 @@ export function SearchPage() {
       )}
 
       {status === "ready" && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-medium text-fg-muted">
-            {confident ? (
-              <>
-                Top {results.length} for <span className="text-fg">“{query}”</span>
-              </>
-            ) : (
-              <>
-                No strong match for <span className="text-fg">“{query}”</span> — showing related models
-              </>
-            )}
-          </h2>
-          {results.map((result, i) => {
-            const lib: LibraryModel | undefined = byId.get(result.profile.id);
-            return (
-              <SearchResultCard
-                key={result.profile.id}
-                result={result}
-                rank={i + 1}
-                confident={confident}
-                libraryModel={lib}
-                download={downloads[result.profile.id]}
-                onDownload={() => lib && startDownload(lib)}
-                onCancel={() => cancelDownload(result.profile.id)}
-                totalMemoryBytes={totalMemoryBytes}
-              />
-            );
-          })}
+        <div className="space-y-5">
+          {/* Results header: query up front, count as a mono figure. */}
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div className="min-w-0">
+              <span className="label-caps">Query results</span>
+              <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight text-fg">“{query}”</h2>
+              {!confident && (
+                <p className="mt-1 text-sm text-fg-muted">No strong match — showing related models.</p>
+              )}
+            </div>
+            <span className="mono-metric shrink-0 text-xs text-fg-muted">
+              Found: {results.length} {results.length === 1 ? "model" : "models"}
+            </span>
+          </div>
+
+          {/* Top match leads full-width; the rest sit in a two-up grid below. */}
+          {confident && results.length > 0 && renderCard(results[0], 1, true)}
+          {results.length > (confident ? 1 : 0) && (
+            <div className="space-y-3">
+              {confident && <h3 className="label-caps">Other relevant models</h3>}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {results.slice(confident ? 1 : 0).map((r, i) => renderCard(r, (confident ? 2 : 1) + i, false))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -186,7 +201,7 @@ function ResultSkeleton() {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3" role="status">
+    <div className="flex items-start gap-3 rounded-[var(--radius-card)] border border-white/10 bg-white/[0.02] px-4 py-3" role="status">
       <WarningIcon className="mt-0.5 size-4 shrink-0 text-warn" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-fg">Couldn’t run the search</p>

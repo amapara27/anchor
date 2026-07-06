@@ -131,7 +131,7 @@ export function ModelComparison() {
         <div className="mt-4">
           <label
             htmlFor="comparison-prompt"
-            className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-subtle"
+            className="mb-1.5 block label-caps"
           >
             Prompt
           </label>
@@ -168,6 +168,14 @@ export function ModelComparison() {
       {/* Results */}
       {hasRun && (
         <div className="flex flex-col gap-4">
+          <div className="flex min-h-8 items-center justify-between">
+            <h3 className="label-caps">Results</h3>
+            {bothDone && fraction >= 1 && (
+              <Button variant="ghost" onClick={handleExport}>
+                Export result
+              </Button>
+            )}
+          </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <ComparisonPane
               slotLabel="A"
@@ -188,19 +196,12 @@ export function ModelComparison() {
           </div>
 
           {bothDone && fraction >= 1 && (
-            <>
-              <div className="flex justify-end">
-                <Button variant="ghost" onClick={handleExport}>
-                  Export result
-                </Button>
-              </div>
-              <ThroughputBar
-                aName={aModel?.name ?? "Model A"}
-                bName={bModel?.name ?? "Model B"}
-                aTok={aTok!}
-                bTok={bTok!}
-              />
-            </>
+            <ThroughputBar
+              aName={aModel?.name ?? "Model A"}
+              bName={bModel?.name ?? "Model B"}
+              aTok={aTok!}
+              bTok={bTok!}
+            />
           )}
         </div>
       )}
@@ -223,7 +224,7 @@ function ThroughputBar({
   const max = Math.max(aTok, bTok) || 1;
   return (
     <div className="card p-5">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">
+      <div className="label-caps">
         Throughput comparison
       </div>
       <div className="mt-3 space-y-3">

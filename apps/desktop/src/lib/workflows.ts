@@ -54,6 +54,17 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   },
 ];
 
+/** Category tag per template (frontend-only, like the templates themselves —
+ *  kept out of `WorkflowTemplate`, which mirrors the Rust type). */
+export const WORKFLOW_CATEGORY: Record<string, string> = {
+  "research-assistant": "Research",
+  "pdf-qa": "Docs",
+  "local-memory-chat": "Chat",
+  "code-reviewer": "Code",
+  "web-researcher": "Research",
+  "knowledge-base": "RAG",
+};
+
 /** Display label + icon for each tool, used by workflow cards. */
 export const TOOL_META: Record<Tool, { label: string; Icon: typeof GlobeIcon }> = {
   web_search: { label: "Web Search", Icon: GlobeIcon },

@@ -13,7 +13,7 @@ export function Chip({
     <span
       title={title}
       className={[
-        "inline-flex items-center rounded-md bg-white/5 px-2 py-0.5",
+        "inline-flex items-center rounded-full bg-white/5 px-2 py-0.5",
         "text-[11px] font-medium text-fg-muted ring-1 ring-inset ring-white/10",
         className,
       ].join(" ")}

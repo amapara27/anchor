@@ -137,7 +137,7 @@ export function CommandPalette({ open, onClose, onNavigate, onJumpToModel }: Com
                   ].join(" ")}
                 >
                   <span className="data min-w-0 flex-1 truncate text-sm text-fg">{c.label}</span>
-                  {c.hint && <span className="shrink-0 text-[11px] text-fg-subtle">{c.hint}</span>}
+                  {c.hint && <span className="data shrink-0 text-[11px] text-fg-subtle">{c.hint}</span>}
                   {i === active && <CornerDownLeftIcon className="size-3.5 shrink-0 text-fg-subtle" />}
                 </button>
               </li>

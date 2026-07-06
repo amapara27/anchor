@@ -20,8 +20,7 @@ export function Th({
   return (
     <th
       className={[
-        "border-b border-[var(--hairline)] px-3 py-2 text-left",
-        "text-xs font-medium uppercase tracking-wide text-fg-subtle",
+        "label-caps border-b border-[var(--hairline)] px-3 py-2 text-left",
         className,
       ].join(" ")}
       {...props}

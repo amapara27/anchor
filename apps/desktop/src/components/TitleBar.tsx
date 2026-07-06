@@ -11,7 +11,7 @@ const PAGE_LABEL: Record<Tab, string> = {
 };
 
 /**
- * Custom frameless title bar. The window uses macOS `titleBarStyle: "Overlay"`,
+ * Custom frameless top bar. The window uses macOS `titleBarStyle: "Overlay"`,
  * so the native traffic-lights float at the top-left — we reserve space for them
  * (`pl-20`) and make the whole strip a drag region. Interactive children opt out
  * of dragging by simply not carrying the `data-tauri-drag-region` attribute.
@@ -20,7 +20,7 @@ export function TitleBar({ active, onOpenPalette }: { active: Tab; onOpenPalette
   return (
     <header
       data-tauri-drag-region
-      className="z-30 flex h-10 shrink-0 select-none items-center justify-between border-b border-white/8 bg-chrome pl-20 pr-3"
+      className="relative z-30 flex h-16 shrink-0 select-none items-center border-b border-white/8 bg-chrome pl-20 pr-4"
     >
       {/* Left: current location, sitting just past the traffic-lights inset. */}
       <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
@@ -33,16 +33,16 @@ export function TitleBar({ active, onOpenPalette }: { active: Tab; onOpenPalette
         <span className="truncate text-[13px] font-medium text-fg-muted">{PAGE_LABEL[active]}</span>
       </div>
 
-      {/* Right: command-palette trigger. */}
+      {/* Center: command-palette trigger styled as the global search field. */}
       <button
         type="button"
         onClick={onOpenPalette}
-        title="Command palette"
         aria-label="Open command palette"
-        className="flex cursor-pointer items-center gap-1.5 rounded-md border border-white/8 bg-white/[0.03] px-2 py-1 text-fg-subtle transition-colors duration-150 ease-out hover:border-white/15 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+        className="absolute left-1/2 top-1/2 flex w-96 max-w-[40vw] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] border border-white/8 bg-canvas px-3 py-2 text-left transition-colors duration-150 ease-out hover:border-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
       >
-        <SearchIcon className="size-3.5" />
-        <kbd className="data text-[11px] leading-none tracking-tight">⌘K</kbd>
+        <SearchIcon className="size-4 shrink-0 text-fg-subtle" />
+        <span className="flex-1 truncate text-sm text-fg-subtle">Search models, pages…</span>
+        <kbd className="data shrink-0 text-[11px] leading-none tracking-tight text-fg-subtle">⌘ K</kbd>
       </button>
     </header>
   );

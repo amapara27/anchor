@@ -1,6 +1,6 @@
-/* Geist (prose/UI) + JetBrains Mono (data/numerals) — the design-system typefaces.
+/* Inter (prose/UI) + Geist Mono (data/numerals) — the design-system typefaces.
    Must precede the Tailwind import so they stay ahead of all emitted rules. */
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 /*
@@ -11,9 +11,9 @@
  * Dark mode only.
  */
 @theme {
-  /* Prose/UI is Geist (a grotesque); model names, stats, and badges use mono. */
-  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+  /* Prose/UI is Inter; model names, stats, labels, and badges use Geist Mono. */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Menlo", monospace;
 
   /* Surfaces — flat and opaque; each step is a small lightness lift. */
   --color-canvas: #0b0c0e; /* app background */
@@ -44,7 +44,7 @@
 
   /* Radii — radius belongs on interactive elements (`--radius-control`);
      flat, non-interactive sections should stay square. */
-  --radius-card: 10px;
+  --radius-card: 8px;
   --radius-control: 8px;
 
   /* Elevation — borders do the work; one soft shadow reserved for overlays. */
@@ -95,6 +95,23 @@
 }
 
 @layer utilities {
+  /* Caps label — mono eyebrow for section headers and card kickers. */
+  .label-caps {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-fg-subtle);
+  }
+  /* Metric text — mono figures for stats, sizes, and throughput. */
+  .mono-metric {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Standard card: flat opaque surface, hairline border. No blur, no shadow. */
   .card {
     border: 1px solid var(--hairline);

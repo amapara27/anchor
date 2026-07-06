@@ -16,10 +16,8 @@ const NAV: { tab: Tab; label: string; Icon: typeof HomeIcon }[] = [
   { tab: "workflows", label: "Workflow Library", Icon: WorkflowIcon },
 ];
 
+const VERSION = "v0.1.0";
 const STORAGE_KEY = "anchor.sidebarCollapsed";
-// Geometry for the sliding active indicator: item height + gap between items.
-const ITEM_H = 38;
-const GAP = 4;
 
 /** Persistent, collapsible left navigation rail. */
 export function Sidebar({ active, onSelect }: SidebarProps) {
@@ -39,14 +37,12 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
     }
   }, [collapsed]);
 
-  const activeIndex = NAV.findIndex((n) => n.tab === active);
-
   return (
     <aside
       className={[
         "flex h-full shrink-0 flex-col border-r border-white/8 bg-chrome px-3 py-5 transition-[width] duration-300",
         "[transition-timing-function:var(--ease-out)]",
-        collapsed ? "w-16" : "w-56",
+        collapsed ? "w-16" : "w-[260px]",
       ].join(" ")}
     >
       <div className={["flex items-center gap-2.5 px-1", collapsed ? "justify-center" : ""].join(" ")}>
@@ -55,7 +51,10 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
           <AnchorMark className="size-5 text-accent-text" />
         </span>
         {!collapsed && (
-          <span className="flex-1 truncate text-lg font-semibold tracking-tight text-fg">Anchor</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-lg font-semibold leading-tight tracking-tight text-fg">Anchor</span>
+            <span className="label-caps block leading-tight">{VERSION}</span>
+          </span>
         )}
         {!collapsed && <ToggleButton collapsed={collapsed} onClick={() => setCollapsed((c) => !c)} />}
       </div>
@@ -66,15 +65,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         </div>
       )}
 
-      <nav className="relative mt-7 flex flex-col gap-1">
-        {/* Sliding active indicator: one pill that springs between items (a11y: bg + bar, not colour-only). */}
-        {activeIndex >= 0 && (
-          <span
-            className="pointer-events-none absolute inset-x-0 rounded-lg border-l-2 border-accent bg-accent/10 transition-transform duration-300 [transition-timing-function:var(--ease-out)]"
-            style={{ height: ITEM_H, transform: `translateY(${activeIndex * (ITEM_H + GAP)}px)` }}
-            aria-hidden
-          />
-        )}
+      <nav className="mt-7 flex flex-col gap-1">
         {NAV.map(({ tab, label, Icon }) => {
           const isActive = active === tab;
           return (
@@ -85,12 +76,13 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
               aria-current={isActive ? "page" : undefined}
               aria-label={collapsed ? label : undefined}
               title={collapsed ? label : undefined}
-              style={{ height: ITEM_H }}
               className={[
-                "relative z-10 flex w-full cursor-pointer items-center gap-2.5 rounded-lg text-sm font-medium transition-colors active:scale-[0.98]",
+                "flex h-[38px] w-full cursor-pointer items-center gap-2.5 rounded-r-lg border-l-2 text-sm font-medium transition-colors active:scale-[0.98]",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
                 collapsed ? "justify-center px-0" : "px-3",
-                isActive ? "text-fg" : "text-fg-muted hover:text-fg",
+                isActive
+                  ? "border-accent bg-white/5 text-fg"
+                  : "border-transparent text-fg-muted hover:bg-white/[0.03] hover:text-fg",
               ].join(" ")}
             >
               <Icon className={["size-4 shrink-0", isActive ? "text-accent-text" : ""].join(" ")} />
@@ -109,7 +101,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         title="Everything runs on this Mac"
       >
         <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
-        {!collapsed && <span className="data truncate">100% local · v0.1.0</span>}
+        {!collapsed && <span className="data truncate">100% local</span>}
       </div>
     </aside>
   );

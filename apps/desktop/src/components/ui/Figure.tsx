@@ -13,8 +13,8 @@ export function Figure({
 }) {
   return (
     <div className={["flex flex-col gap-1", className].join(" ")}>
-      <span className="text-xs uppercase tracking-wide text-fg-subtle">{label}</span>
-      <span className="data text-2xl leading-none text-fg">{value}</span>
+      <span className="label-caps">{label}</span>
+      <span className="data text-2xl font-medium leading-none text-fg">{value}</span>
       {sub ? <span className="text-xs text-fg-muted">{sub}</span> : null}
     </div>
   );

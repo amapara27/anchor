@@ -4,41 +4,125 @@ import { ChevronDownIcon, GridIcon, RowsIcon, SearchIcon, XIcon } from "./icons"
 /** Library layout: the dense table is the default; cards are the alternative. */
 export type LibraryView = "table" | "cards";
 
-interface ToolbarProps {
-  query: string;
-  onQuery: (v: string) => void;
-  status: StatusFilter;
-  onStatus: (v: StatusFilter) => void;
-  family: string;
-  onFamily: (v: string) => void;
-  families: string[];
-  sort: SortKey;
-  onSort: (v: SortKey) => void;
-  counts: Record<StatusFilter, number>;
-  view: LibraryView;
-  onView: (v: LibraryView) => void;
-}
-
 const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "installed", label: "Installed" },
   { key: "available", label: "Available" },
 ];
 
-export function LibraryToolbar({
-  query,
-  onQuery,
+/** Left filter column: status + family as radio-behavior row lists. */
+export function LibraryFilters({
   status,
   onStatus,
   family,
   onFamily,
   families,
+  counts,
+}: {
+  status: StatusFilter;
+  onStatus: (v: StatusFilter) => void;
+  family: string;
+  onFamily: (v: string) => void;
+  families: string[];
+  counts: Record<StatusFilter, number>;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <FilterCard label="Status" role="radiogroup">
+        {STATUS_TABS.map((tab) => (
+          <FilterRow
+            key={tab.key}
+            active={status === tab.key}
+            onClick={() => onStatus(tab.key)}
+            count={counts[tab.key]}
+          >
+            {tab.label}
+          </FilterRow>
+        ))}
+      </FilterCard>
+
+      <FilterCard label="Families" role="radiogroup">
+        <FilterRow active={family === "all"} onClick={() => onFamily("all")}>
+          All families
+        </FilterRow>
+        {families.map((f) => (
+          <FilterRow key={f} active={family === f} onClick={() => onFamily(f)}>
+            {f}
+          </FilterRow>
+        ))}
+      </FilterCard>
+    </div>
+  );
+}
+
+function FilterCard({
+  label,
+  role,
+  children,
+}: {
+  label: string;
+  role?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="card p-4">
+      <h3 className="label-caps">{label}</h3>
+      <div role={role} aria-label={`Filter by ${label.toLowerCase()}`} className="mt-2.5 flex flex-col gap-0.5">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function FilterRow({
+  active,
+  onClick,
+  count,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  count?: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      className={[
+        "flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
+        active ? "bg-white/5 font-medium text-fg" : "text-fg-muted hover:bg-white/[0.03] hover:text-fg",
+      ].join(" ")}
+    >
+      <span className="truncate">{children}</span>
+      {count != null && (
+        <span className={["data shrink-0 text-xs", active ? "text-accent-text" : "text-fg-subtle"].join(" ")}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** Slim bar above the grid: search, sort, and the table/cards view toggle. */
+export function LibraryToolbar({
+  query,
+  onQuery,
   sort,
   onSort,
-  counts,
   view,
   onView,
-}: ToolbarProps) {
+}: {
+  query: string;
+  onQuery: (v: string) => void;
+  sort: SortKey;
+  onSort: (v: SortKey) => void;
+  view: LibraryView;
+  onView: (v: LibraryView) => void;
+}) {
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
       {/* Search */}
@@ -66,46 +150,6 @@ export function LibraryToolbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {/* Status segmented control */}
-        <div
-          role="tablist"
-          aria-label="Filter by install status"
-          className="inline-flex rounded-lg border border-white/8 bg-white/5 p-0.5"
-        >
-          {STATUS_TABS.map((tab) => {
-            const active = status === tab.key;
-            return (
-              <button
-                key={tab.key}
-                role="tab"
-                aria-selected={active}
-                onClick={() => onStatus(tab.key)}
-                className={[
-                  "cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-                  active
-                    ? "bg-accent/15 text-accent-text ring-1 ring-inset ring-accent/20"
-                    : "text-fg-muted hover:text-fg",
-                ].join(" ")}
-              >
-                {tab.label}
-                <span className={["data ml-1.5", active ? "text-accent-text/70" : "text-fg-subtle"].join(" ")}>
-                  {counts[tab.key]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Family filter */}
-        <SelectChip value={family} onChange={onFamily} ariaLabel="Filter by family">
-          <option value="all">All families</option>
-          {families.map((f) => (
-            <option key={f} value={f}>
-              {f}
-            </option>
-          ))}
-        </SelectChip>
-
         {/* Sort */}
         <SelectChip value={sort} onChange={(v) => onSort(v as SortKey)} ariaLabel="Sort models">
           <option value="name">Name</option>

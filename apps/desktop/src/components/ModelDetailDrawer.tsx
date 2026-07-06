@@ -124,7 +124,7 @@ function DrawerBody({
       <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/8 bg-surface px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h2 className="truncate text-lg font-semibold text-fg">{model.name}</h2>
+            <h2 className="data truncate text-lg font-semibold text-fg">{model.name}</h2>
             <StatusBadge status={model.status} />
           </div>
           <p className="data mt-0.5 text-xs text-fg-subtle">{model.id}</p>
@@ -235,7 +235,7 @@ function DrawerBody({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg-subtle">{children}</h3>
+    <h3 className="label-caps mb-2">{children}</h3>
   );
 }
 

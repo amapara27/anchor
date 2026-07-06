@@ -3,6 +3,7 @@ import type { SlotState } from "../lib/useComparison";
 import { formatBytes, formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
 import { SparkleIcon, WarningIcon, ZapIcon } from "./icons";
 import { ProgressTrack } from "./DownloadProgressBar";
+import { StatTile } from "./ui/StatTile";
 
 interface ComparisonPaneProps {
   /** "A" / "B" — shown as an eyebrow so the panes are distinguishable. */
@@ -30,10 +31,10 @@ export function ComparisonPane({
       {/* Header: name + phase chip */}
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-fg-subtle">
+          <div className="label-caps text-[10px]">
             Model {slotLabel}
           </div>
-          <h3 className="data truncate font-semibold text-fg">{model?.name ?? "—"}</h3>
+          <h3 className="data truncate text-lg font-semibold text-fg">{model?.name ?? "—"}</h3>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {fastest && revealed && fraction >= 1 && (
@@ -55,7 +56,7 @@ export function ComparisonPane({
 
       {/* Stats appear once this pane's text has fully revealed. */}
       {revealed && fraction >= 1 && state.phase === "done" && state.stats && (
-        <StatRow stats={state.stats} />
+        <StatRow stats={state.stats} sizeBytes={model?.size_bytes} />
       )}
     </div>
   );
@@ -140,38 +141,49 @@ function DownloadProgress({ pull }: { pull?: SlotState["pull"] }) {
   );
 }
 
-function StatRow({ stats }: { stats: NonNullable<SlotState["stats"]> }) {
+function StatRow({
+  stats,
+  sizeBytes,
+}: {
+  stats: NonNullable<SlotState["stats"]>;
+  sizeBytes?: number | null;
+}) {
   const tokSec = tokensPerSecond(stats);
+  // Time to first token ≈ model load + prompt evaluation.
+  const ttftNs =
+    stats.load_duration_ns != null || stats.prompt_eval_duration_ns != null
+      ? (stats.load_duration_ns ?? 0) + (stats.prompt_eval_duration_ns ?? 0)
+      : null;
   return (
-    <div className="mt-4 border-t border-white/8 pt-3">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">
-            Throughput
-          </div>
-          <div className="data flex items-center gap-1.5 text-xl font-semibold text-accent-text">
-            <ZapIcon className="size-4" />
-            {formatTokSec(tokSec)}
-          </div>
-        </div>
-        <dl className="grid grid-cols-3 gap-x-4 gap-y-1 text-right text-xs">
-          <Stat label="Total" value={formatDuration(stats.total_duration_ns)} />
-          <Stat label="Load" value={formatDuration(stats.load_duration_ns)} />
-          <Stat
-            label="Tokens"
-            value={`${stats.prompt_eval_count ?? "—"}→${stats.eval_count ?? "—"}`}
-          />
-        </dl>
+    <div className="mt-4 border-t border-white/8 pt-4">
+      <div className="grid grid-cols-2 gap-2">
+        <StatTile
+          recessed
+          compact
+          label="Throughput"
+          value={
+            <span className="flex items-center gap-1.5 text-accent-text">
+              <ZapIcon className="size-4" />
+              {formatTokSec(tokSec)}
+            </span>
+          }
+        />
+        <StatTile recessed compact label="TTFT" value={formatDuration(ttftNs)} sub="load + prompt eval" />
+        <StatTile recessed compact label="Total" value={formatDuration(stats.total_duration_ns)} />
+        <StatTile
+          recessed
+          compact
+          label="Tokens"
+          value={`${stats.prompt_eval_count ?? "—"}→${stats.eval_count ?? "—"}`}
+          sub="prompt→response"
+        />
       </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</dt>
-      <dd className="data text-fg">{value}</dd>
+      {sizeBytes != null && (
+        <div className="mt-2 flex items-baseline justify-between px-1">
+          <span className="label-caps text-[10px]">Memory footprint</span>
+          <span className="mono-metric text-xs text-fg">{formatBytes(sizeBytes)}</span>
+        </div>
+      )}
     </div>
   );
 }

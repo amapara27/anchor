@@ -93,10 +93,10 @@ export function ModelTable({
                     )}
                   </div>
                 </Td>
-                <Td className="text-right">{formatParams(spec.params_b)}</Td>
-                <Td className="text-fg-muted">{spec.quant}</Td>
-                <Td className="text-right">{formatContext(spec.context_tokens)}</Td>
-                <Td className="text-right">{formatBytes(m.status === "installed" ? m.size_bytes : spec.download_bytes)}</Td>
+                <Td className="data text-right">{formatParams(spec.params_b)}</Td>
+                <Td className="data text-fg-muted">{spec.quant}</Td>
+                <Td className="data text-right">{formatContext(spec.context_tokens)}</Td>
+                <Td className="data text-right">{formatBytes(m.status === "installed" ? m.size_bytes : spec.download_bytes)}</Td>
                 <Td>
                   <button
                     type="button"
