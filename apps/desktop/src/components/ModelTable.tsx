@@ -26,9 +26,6 @@ interface ModelTableProps {
   /** Host chip name, for throughput estimates. */
   chip?: string | null;
   totalMemoryBytes?: number | null;
-  /** Contract slots (Phase 2): per-model update / last-used annotations. */
-  updates?: Record<string, boolean>;
-  lastUsed?: Record<string, number>;
 }
 
 /** Dense, default view of the model library — one hairline per row, tabular figures. */
@@ -41,8 +38,6 @@ export function ModelTable({
   onCancel,
   chip,
   totalMemoryBytes,
-  updates,
-  lastUsed,
 }: ModelTableProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -77,21 +72,7 @@ export function ModelTable({
                 className={["cursor-pointer", m.id === selectedId ? "bg-surface-raised" : ""].join(" ")}
               >
                 <Td>
-                  <div className="flex items-center gap-2">
-                    <span className="data truncate font-medium text-fg">{m.name}</span>
-                    {updates?.[m.id] && (
-                      <span
-                        title="Update available"
-                        className="inline-flex items-center gap-1 rounded-md bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent-text ring-1 ring-inset ring-accent/20"
-                      >
-                        <span className="size-1.5 rounded-full bg-accent-text" aria-hidden />
-                        Update
-                      </span>
-                    )}
-                    {lastUsed?.[m.id] && (
-                      <span className="text-[11px] text-fg-subtle">{timeAgo(lastUsed[m.id])}</span>
-                    )}
-                  </div>
+                  <span className="data truncate font-medium text-fg">{m.name}</span>
                 </Td>
                 <Td className="data text-right">{formatParams(spec.params_b)}</Td>
                 <Td className="data text-fg-muted">{spec.quant}</Td>
@@ -177,13 +158,4 @@ export function ModelTable({
 /** Fragment wrapper so a row can carry an expansion row as a sibling. */
 function Row({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
-}
-
-/** Compact relative time, e.g. "3d ago". ponytail: coarse buckets, good enough for a hint. */
-function timeAgo(ms: number): string {
-  const s = (Date.now() - ms) / 1000;
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
 }

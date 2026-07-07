@@ -113,10 +113,9 @@ export type CompareEvent =
 // ---------------------------------------------------------------------------
 // Frontend-only enrichment.
 //
-// The Model Hub backend (`anchor-hub`) is still a stub, so the rich per-model
-// metadata that powers Model Cards isn't on the wire yet. These types describe
-// what the UI renders today; when the registry lands, `ModelSpec` should move
-// into `anchor-core` and be mirrored back here.
+// `ModelSpec` is the UI-side spec shape that `lib/catalog.ts` derives from the
+// backend catalog (`ModelProfile`) and overlays with live Ollama facts once a
+// model is installed.
 // ---------------------------------------------------------------------------
 
 /** Quantisation level, kept loose since registries expose many variants. */

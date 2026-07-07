@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { DownloadState, LibraryModel, Model, ModelProfile, PullProgress } from "../types";
 import { buildLibrary } from "./catalog";
@@ -17,7 +17,7 @@ interface Annotation {
  * Tags and notes remain session-local overlays — the registry doesn't persist
  * them yet — kept out of `base` so a refetch never clobbers them.
  */
-export function useModels() {
+function useModelsState() {
   const [base, setBase] = useState<LibraryModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +65,14 @@ export function useModels() {
       note: anno?.note ?? m.note,
     };
   });
+
+  const clearDownload = useCallback((modelId: string) => {
+    setDownloads((d) => {
+      const next = { ...d };
+      delete next[modelId];
+      return next;
+    });
+  }, []);
 
   const startDownload = useCallback(
     (model: LibraryModel) => {
@@ -114,16 +122,8 @@ export function useModels() {
           });
         });
     },
-    [downloads, load],
+    [downloads, load, clearDownload],
   );
-
-  const clearDownload = useCallback((modelId: string) => {
-    setDownloads((d) => {
-      const next = { ...d };
-      delete next[modelId];
-      return next;
-    });
-  }, []);
 
   const cancelDownload = useCallback(
     (modelId: string) => {
@@ -169,6 +169,27 @@ export function useModels() {
     setTags,
     setNote,
   };
+}
+
+type ModelsValue = ReturnType<typeof useModelsState>;
+
+const ModelsContext = createContext<ModelsValue | null>(null);
+
+/**
+ * Single owner of the model-library state, mounted once in `App`. Every page
+ * shares one sync, one download map, and one error state — a download started
+ * in the library stays visible from any tab, and tab switches don't re-sync.
+ */
+export function ModelsProvider({ children }: { children: React.ReactNode }) {
+  const value = useModelsState();
+  return <ModelsContext.Provider value={value}>{children}</ModelsContext.Provider>;
+}
+
+/** The shared model-library state from the app-level [`ModelsProvider`]. */
+export function useModels(): ModelsValue {
+  const ctx = useContext(ModelsContext);
+  if (!ctx) throw new Error("useModels must be used within a ModelsProvider");
+  return ctx;
 }
 
 /**

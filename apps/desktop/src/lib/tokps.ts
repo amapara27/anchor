@@ -3,8 +3,9 @@
 // seed a small per-chip bandwidth table (published Apple Silicon figures) and a
 // single efficiency constant, then prefer any real measured run over the guess.
 import type { QuantId, TokPerSec } from "../types";
-import { quantMeta } from "./quant";
-import { getMeasuredRuns } from "./measured";
+// Explicit .ts extensions so the Node-run selfcheck can resolve them too.
+import { quantMeta } from "./quant.ts";
+import { getMeasuredRuns } from "./measured.ts";
 
 /** Unified-memory bandwidth (GB/s) by Apple Silicon generation + tier.
  *  ponytail: seed table, overwrite with measured. Conservative where unsure. */

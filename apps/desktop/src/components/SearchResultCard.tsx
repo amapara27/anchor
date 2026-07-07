@@ -70,7 +70,12 @@ export function SearchResultCard({
             <div className="mt-1.5 flex items-center gap-2.5">
               <h3 className="data truncate text-2xl font-semibold tracking-tight text-fg">{profile.name}</h3>
               <StatusBadge status={libraryModel?.status ?? "available"} />
-              <FitBadge minMemoryBytes={profile.min_memory_gb * GB} totalMemoryBytes={totalMemoryBytes} />
+              <FitBadge
+                params_b={profile.params_b}
+                quant={profile.quant}
+                contextTokens={profile.context_tokens}
+                totalMemoryBytes={totalMemoryBytes}
+              />
             </div>
           </div>
           {/* Relevance badge — raw cosine in mono, no fake percentages. */}
@@ -125,7 +130,12 @@ export function SearchResultCard({
           <div className="flex items-center gap-2.5">
             <h3 className="data truncate font-semibold text-fg">{profile.name}</h3>
             <StatusBadge status={libraryModel?.status ?? "available"} />
-            <FitBadge minMemoryBytes={profile.min_memory_gb * GB} totalMemoryBytes={totalMemoryBytes} />
+            <FitBadge
+              params_b={profile.params_b}
+              quant={profile.quant}
+              contextTokens={profile.context_tokens}
+              totalMemoryBytes={totalMemoryBytes}
+            />
           </div>
           <p className="label-caps mt-1 truncate text-[10px]">
             <span className="capitalize">{profile.family}</span>

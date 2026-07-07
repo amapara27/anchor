@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { DownloadState, LibraryModel } from "../types";
 import { formatBytes, formatContext, formatParams } from "../lib/format";
-import { memoryFit } from "../lib/fit";
 import { StatusBadge } from "./StatusBadge";
 import { FitBreakdown } from "./FitBreakdown";
 import { Chip } from "./ui/Chip";
 import { Button } from "./ui/Button";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
 import {
   ChipIcon,
   CloseIcon,
@@ -46,17 +46,22 @@ export function ModelDetailDrawer({
 }: DrawerProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const open = model != null;
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   // Escape to close + focus the panel when it opens (a11y: escape-routes).
+  // While the remove confirm is up, Escape belongs to the dialog, not the drawer.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !confirmRemove) onClose();
     };
     document.addEventListener("keydown", onKey);
     panelRef.current?.focus();
     return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, confirmRemove]);
+
+  // A different model (or a closed drawer) discards any pending confirm.
+  useEffect(() => setConfirmRemove(false), [model?.id]);
 
   return (
     <div
@@ -92,13 +97,27 @@ export function ModelDetailDrawer({
             onClose={onClose}
             onDownload={onDownload}
             onCancel={onCancel}
-            onRemove={onRemove}
+            onRemove={() => setConfirmRemove(true)}
             onTagsChange={onTagsChange}
             onNoteChange={onNoteChange}
             totalMemoryBytes={totalMemoryBytes}
           />
         )}
       </div>
+
+      {model && (
+        <ConfirmDialog
+          open={confirmRemove}
+          title="Remove from disk?"
+          body={`${model.name} will be deleted from Ollama, freeing ${formatBytes(model.size_bytes)}. This cannot be undone.`}
+          confirmLabel="Remove"
+          onConfirm={() => {
+            setConfirmRemove(false);
+            onRemove();
+          }}
+          onCancel={() => setConfirmRemove(false)}
+        />
+      )}
     </div>
   );
 }
@@ -167,7 +186,6 @@ function DrawerBody({
               <p className="text-xs text-fg-subtle">Unified memory on Apple Silicon, or RAM + VRAM elsewhere.</p>
             </div>
           </div>
-          <Compatibility minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
           {spec.params_b > 0 && (
             <FitBreakdown
               className="mt-3"
@@ -237,27 +255,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <h3 className="label-caps mb-2">{children}</h3>
   );
-}
-
-/** A line stating whether this model fits the host's memory. */
-function Compatibility({
-  minMemoryBytes,
-  totalMemoryBytes,
-}: {
-  minMemoryBytes: number;
-  totalMemoryBytes?: number | null;
-}) {
-  const tier = memoryFit(minMemoryBytes, totalMemoryBytes);
-  if (tier === "unknown") return null;
-  const host = formatBytes(totalMemoryBytes);
-  const need = formatBytes(minMemoryBytes);
-  const { className, label } =
-    tier === "wont_fit"
-      ? { className: "text-danger", label: `Too large for your ${host} Mac` }
-      : tier === "tight"
-        ? { className: "text-warn", label: `Tight fit — needs ${need} of your ${host}` }
-        : { className: "text-ok", label: `Fits your ${host} Mac` };
-  return <p className={`mt-1.5 text-xs ${className}`}>{label}</p>;
 }
 
 function SpecRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {

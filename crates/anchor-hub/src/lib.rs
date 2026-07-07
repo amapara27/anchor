@@ -173,7 +173,11 @@ impl Registry {
 
     /// Opens a fresh connection to the cache database.
     fn connect(&self) -> Result<Connection> {
-        Ok(Connection::open(&self.db_path)?)
+        let conn = Connection::open(&self.db_path)?;
+        // Waits out a concurrent writer (e.g. a sync racing the tray poll)
+        // instead of failing immediately with SQLITE_BUSY.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(conn)
     }
 
     /// Syncs from the live Ollama server: lists installed models, enriches each
@@ -181,12 +185,16 @@ impl Registry {
     /// replaces the cache. Returns the freshly synced models.
     pub async fn sync(&self) -> Result<Vec<Model>> {
         let mut models = ollama::list_local_models(&self.host).await?;
-        for model in &mut models {
-            // Enrichment is best-effort: a failing `/api/show` for one model must
-            // not sink the whole sync.
-            if let Ok(details) = ollama::show_details(&self.host, &model.id).await {
-                model.context_tokens = details.context_tokens;
-                model.publisher = details.publisher;
+        // Enrichment is best-effort and concurrent: a failing `/api/show` for one
+        // model must neither sink nor serialize the whole sync.
+        let details = futures_util::future::join_all(
+            models.iter().map(|m| ollama::show_details(&self.host, &m.id)),
+        )
+        .await;
+        for (model, detail) in models.iter_mut().zip(details) {
+            if let Ok(d) = detail {
+                model.context_tokens = d.context_tokens;
+                model.publisher = d.publisher;
             }
         }
         // No `.await` is held across this connection, so it stays `Send`-safe.

@@ -20,10 +20,6 @@ interface ModelCardProps {
   onToggleFavorite?: () => void;
   /** Host total memory in bytes, for the hardware-fit flag. */
   totalMemoryBytes?: number | null;
-  /** Contract slot (Phase 2): show an update indicator when true. */
-  updateAvailable?: boolean;
-  /** Contract slot (Phase 2): epoch ms this model was last used. */
-  lastUsedAt?: number;
 }
 
 export function ModelCard({
@@ -36,8 +32,6 @@ export function ModelCard({
   favorite = false,
   onToggleFavorite,
   totalMemoryBytes,
-  updateAvailable = false,
-  lastUsedAt,
 }: ModelCardProps) {
   const { spec } = model;
   const installed = model.status === "installed";
@@ -71,16 +65,12 @@ export function ModelCard({
           <div className="mt-1.5 flex items-center gap-2.5">
             <h3 className="data truncate text-lg font-semibold text-fg">{model.name}</h3>
             <StatusBadge status={model.status} />
-            <FitBadge minMemoryBytes={spec.min_memory_bytes} totalMemoryBytes={totalMemoryBytes} />
-            {updateAvailable && (
-              <span
-                title="Update available"
-                className="inline-flex items-center gap-1 text-xs font-medium text-accent-text"
-              >
-                <span className="size-1.5 rounded-full bg-accent-text" aria-hidden />
-                Update
-              </span>
-            )}
+            <FitBadge
+              params_b={spec.params_b}
+              quant={spec.quant}
+              contextTokens={spec.context_tokens}
+              totalMemoryBytes={totalMemoryBytes}
+            />
           </div>
         </div>
 
@@ -144,10 +134,6 @@ export function ModelCard({
         </div>
       )}
 
-      {lastUsedAt != null && (
-        <p className="mt-3 text-[11px] text-fg-subtle">Last used {timeAgo(lastUsedAt)}</p>
-      )}
-
       {/* Footer: required memory + the row action, separated by a hairline. */}
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-white/8 pt-3">
         <span className="flex items-baseline gap-1.5">
@@ -188,13 +174,4 @@ export function ModelCard({
       </div>
     </div>
   );
-}
-
-/** Compact relative time, e.g. "3d ago". ponytail: coarse buckets, good enough for a hint. */
-function timeAgo(ms: number): string {
-  const s = (Date.now() - ms) / 1000;
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
 }

@@ -37,15 +37,8 @@ pub struct RunningModel {
     pub size_vram: Option<u64>,
 }
 
-/// Returns the ids of models Ollama currently has resident in memory.
-///
-/// Kept to `Vec<String>` because that's the shape the Tauri command boundary
-/// (frozen `lib.rs`) expects; use [`running`] when the VRAM size is wanted too.
-pub async fn running_models(registry: &Registry) -> Result<Vec<String>> {
-    Ok(running(registry).await?.into_iter().map(|m| m.name).collect())
-}
-
-/// Like [`running_models`] but keeps each model's resident size (for the tray).
+/// Returns the models Ollama currently has resident in memory, with each one's
+/// resident size when reported (the tray shows both).
 pub async fn running(registry: &Registry) -> Result<Vec<RunningModel>> {
     let url = format!("{}/api/ps", registry.host);
     let resp: PsResponse = reqwest::Client::builder()

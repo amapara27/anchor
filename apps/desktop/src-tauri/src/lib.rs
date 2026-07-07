@@ -252,44 +252,15 @@ async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
     registry(&app)?.remove(&id).await.map_err(|e| e.to_string())
 }
 
-/// Lists the models Ollama currently has resident in memory (for the menu-bar).
-/// Delegates to [`anchor_hub::status`]; empty until Phase 2b fills it in.
-#[tauri::command]
-async fn running_models(app: AppHandle) -> Result<Vec<String>, String> {
-    ensure_server(&app).await?;
-    let registry = registry(&app)?;
-    anchor_hub::status::running_models(&registry)
-        .await
-        .map_err(|e| e.to_string())
-}
-
 /// Reports which installed models have a newer version upstream as
-/// `(model_id, update_available)` pairs. Delegates to [`anchor_hub::updates`];
-/// empty until Phase 2b fills it in.
+/// `(model_id, update_available)` pairs, by diffing manifest digests against
+/// the Ollama registry (heavily cached, best-effort — see [`anchor_hub::updates`]).
+/// Currently uninvoked: the update badge UI was pulled pending an "apply" flow.
 #[tauri::command]
 async fn check_updates(app: AppHandle) -> Result<Vec<(String, bool)>, String> {
     ensure_server(&app).await?;
     let registry = registry(&app)?;
     anchor_hub::updates::check_updates(&registry)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Applies an update by re-pulling the model — the same Ollama pull path as
-/// [`download_model`], streaming progress back over `on_event`.
-#[tauri::command]
-async fn apply_update(
-    app: AppHandle,
-    model_id: String,
-    on_event: Channel<PullProgress>,
-) -> Result<(), String> {
-    ensure_server(&app).await?;
-    let registry = registry(&app)?;
-    registry
-        .pull(&model_id, |progress| {
-            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
-            let _ = on_event.send(progress);
-        })
         .await
         .map_err(|e| e.to_string())
 }
@@ -375,9 +346,7 @@ pub fn run() {
             remove_model,
             get_hardware_profile,
             refresh_hardware_profile,
-            running_models,
-            check_updates,
-            apply_update
+            check_updates
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -404,11 +373,11 @@ pub fn run() {
 fn unload_all_resident(app: &AppHandle) {
     let Ok(registry) = registry(app) else { return };
     tauri::async_runtime::block_on(async {
-        let Ok(models) = anchor_hub::status::running_models(&registry).await else {
+        let Ok(models) = anchor_hub::status::running(&registry).await else {
             return;
         };
         for model in models {
-            let _ = registry.unload(&model).await;
+            let _ = registry.unload(&model.name).await;
         }
     });
 }

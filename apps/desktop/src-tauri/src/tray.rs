@@ -67,8 +67,8 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Builds a [`Registry`] the same way the Tauri commands do, without reaching
-/// into the frozen `lib.rs` (its `registry` helper is private).
+/// Builds a [`Registry`] the same way the Tauri commands do (`lib.rs`'s
+/// `registry` helper is private to the command layer).
 fn registry(app: &AppHandle) -> Option<Registry> {
     let dir = app.path().app_data_dir().ok()?;
     Registry::open(dir.join("registry.db")).ok()

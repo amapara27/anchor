@@ -324,11 +324,47 @@ pub async fn show_details(host: &str, id: &str) -> Result<ShowDetails> {
     })
 }
 
-/// Pulls a model, invoking `on_progress` for each streamed NDJSON event.
+/// Drains an NDJSON response body, invoking `on_line` for each complete
+/// non-blank line (including a trailing line with no terminating newline).
 ///
-/// The HTTP body is a stream of newline-delimited JSON objects; we buffer bytes
-/// and parse each complete line. Malformed lines are skipped so one odd frame
-/// can't abort an otherwise-healthy download.
+/// Bounds the per-line buffer at `max_line_bytes`: a single line past the cap
+/// means a malformed/hostile stream — bail rather than buffer unboundedly.
+/// Callers skip lines that don't parse, so one odd frame can't abort an
+/// otherwise-healthy stream.
+async fn for_each_ndjson_line<F>(
+    resp: reqwest::Response,
+    max_line_bytes: usize,
+    mut on_line: F,
+) -> Result<()>
+where
+    F: FnMut(&[u8]) -> Result<()> + Send,
+{
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        buf.extend_from_slice(&chunk?);
+        // Drain every complete line from the buffer, leaving any partial tail.
+        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=nl).collect();
+            let line = &line[..line.len() - 1];
+            if !line.iter().all(u8::is_ascii_whitespace) {
+                on_line(line)?;
+            }
+        }
+        if buf.len() > max_line_bytes {
+            return Err(Error::Ollama(format!(
+                "stream line exceeded {max_line_bytes} bytes"
+            )));
+        }
+    }
+    // Flush a trailing line with no terminating newline.
+    if !buf.iter().all(u8::is_ascii_whitespace) {
+        on_line(&buf)?;
+    }
+    Ok(())
+}
+
+/// Pulls a model, invoking `on_progress` for each streamed NDJSON event.
 pub async fn pull<F>(host: &str, id: &str, mut on_progress: F) -> Result<()>
 where
     F: FnMut(PullProgress) + Send,
@@ -347,53 +383,26 @@ where
         .await?
         .error_for_status()?;
 
-    let mut stream = resp.bytes_stream();
-    let mut buf: Vec<u8> = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk?);
-        // Drain every complete line from the buffer, leaving any partial tail.
-        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = buf.drain(..=nl).collect();
-            let line = &line[..line.len() - 1];
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
-            }
-            if let Ok(event) = serde_json::from_slice::<PullProgress>(line) {
-                // Ollama reports failures as a `{"error": ...}` frame on an
-                // HTTP-200 stream, so surface it rather than report success.
-                if let Some(err) = &event.error {
-                    return Err(Error::Ollama(err.clone()));
-                }
-                on_progress(event);
-            }
-        }
-        // A single line past the cap means a malformed/hostile stream — bail
-        // rather than buffer unboundedly.
-        if buf.len() > MAX_PULL_LINE_BYTES {
-            return Err(Error::Ollama(format!(
-                "pull stream line exceeded {MAX_PULL_LINE_BYTES} bytes"
-            )));
-        }
-    }
-    // Flush a trailing line with no terminating newline.
-    if !buf.iter().all(u8::is_ascii_whitespace) {
-        if let Ok(event) = serde_json::from_slice::<PullProgress>(&buf) {
+    for_each_ndjson_line(resp, MAX_PULL_LINE_BYTES, |line| {
+        if let Ok(event) = serde_json::from_slice::<PullProgress>(line) {
+            // Ollama reports failures as a `{"error": ...}` frame on an
+            // HTTP-200 stream, so surface it rather than report success.
             if let Some(err) = &event.error {
                 return Err(Error::Ollama(err.clone()));
             }
             on_progress(event);
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
 }
 
 /// Runs a streaming generation, invoking `on_token` for each non-empty response
 /// delta and returning the full text plus the final [`GenerationStats`].
 ///
-/// Mirrors [`pull`]'s NDJSON handling: buffer bytes, drain complete lines, skip
-/// malformed ones, surface a mid-stream `{"error": ...}` frame (HTTP 200) as an
-/// error, and bound the per-line buffer. `keep_alive: 0` (set via
-/// [`GenerateRequest`]) makes Ollama evict the weights as soon as this returns.
+/// A mid-stream `{"error": ...}` frame (HTTP 200) surfaces as an error.
+/// `keep_alive: 0` (set via [`GenerateRequest`]) makes Ollama evict the weights
+/// as soon as this returns.
 pub async fn generate<F>(
     host: &str,
     req: &GenerateRequest,
@@ -433,61 +442,31 @@ where
         .await?
         .error_for_status()?;
 
-    let mut stream = resp.bytes_stream();
-    let mut buf: Vec<u8> = Vec::new();
     let mut text = String::new();
     // Reasoning text, kept only as a fallback for a model that thinks anyway.
     let mut thinking = String::new();
     let mut stats = GenerationStats::default();
 
-    // Folds one parsed frame into text/thinking/stats; returns the Ollama error
-    // from an error frame, if any, so the caller can bail.
-    let mut handle = |frame: GenerateChunk| -> Option<Error> {
-        if let Some(err) = frame.error {
-            return Some(Error::Ollama(err));
-        }
-        if !frame.response.is_empty() {
-            on_token(&frame.response);
-            text.push_str(&frame.response);
-        }
-        if !frame.thinking.is_empty() {
-            thinking.push_str(&frame.thinking);
-        }
-        if frame.done {
-            stats = frame.into_stats();
-        }
-        None
-    };
-
-    while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk?);
-        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = buf.drain(..=nl).collect();
-            let line = &line[..line.len() - 1];
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
+    for_each_ndjson_line(resp, MAX_GENERATE_LINE_BYTES, |line| {
+        // Fold one parsed frame into text/thinking/stats; an error frame bails.
+        if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(line) {
+            if let Some(err) = frame.error {
+                return Err(Error::Ollama(err));
             }
-            if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(line) {
-                if let Some(err) = handle(frame) {
-                    return Err(err);
-                }
+            if !frame.response.is_empty() {
+                on_token(&frame.response);
+                text.push_str(&frame.response);
+            }
+            if !frame.thinking.is_empty() {
+                thinking.push_str(&frame.thinking);
+            }
+            if frame.done {
+                stats = frame.into_stats();
             }
         }
-        if buf.len() > MAX_GENERATE_LINE_BYTES {
-            return Err(Error::Ollama(format!(
-                "generate stream line exceeded {MAX_GENERATE_LINE_BYTES} bytes"
-            )));
-        }
-    }
-    // Flush a trailing line with no terminating newline.
-    if !buf.iter().all(u8::is_ascii_whitespace) {
-        if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(&buf) {
-            if let Some(err) = handle(frame) {
-                return Err(err);
-            }
-        }
-    }
-    drop(handle); // release the borrows on text/thinking before reading them
+        Ok(())
+    })
+    .await?;
 
     // A thinking model can ignore `think: false` and spend its whole budget on
     // reasoning, leaving `response` empty — fall back to the reasoning so the

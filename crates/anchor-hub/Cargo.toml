@@ -1,6 +1,6 @@
 [package]
 name = "anchor-hub"
-description = "Unified local-model registry for Anchor (Ollama + Hugging Face cache)."
+description = "Unified local-model registry for Anchor (Ollama REST + SQLite cache)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

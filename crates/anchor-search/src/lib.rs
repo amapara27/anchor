@@ -3,9 +3,8 @@
 //! Owns the curated model catalog (`profiles/models.json`), turns each model's
 //! authored profile into a vector embedding via a local sentence-transformer
 //! (`fastembed`, in-process ONNX — no Ollama needed for search), and holds the
-//! result in an in-memory [`SemanticIndex`]. The cosine-similarity query itself
-//! lands in a later phase; this module establishes the catalog, the embedder,
-//! and the in-RAM index that ranking will read from.
+//! result in an in-memory [`SemanticIndex`] that answers natural-language
+//! queries by cosine similarity (after [`ranking`]'s capability filter).
 
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -206,11 +205,6 @@ impl SemanticIndex {
     /// Number of indexed models.
     pub fn len(&self) -> usize {
         self.entries.len()
-    }
-
-    /// Whether the index holds no models.
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 
     /// All indexed entries (read access for ranking).

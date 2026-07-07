@@ -2,9 +2,10 @@
 // No test runner is configured, so run it directly:
 //   node --experimental-strip-types apps/desktop/src/lib/engine.selfcheck.ts
 // Not imported anywhere, so it never ships in the bundle.
-import { estimateFit, fitContext } from "./fit";
-import { QUANTS, quantMeta } from "./quant";
-import { estimateTokPerSec, resolveTokPerSec } from "./tokps";
+// Explicit .ts extensions: Node's type-stripping does no extension guessing.
+import { estimateFit, fitContext } from "./fit.ts";
+import { QUANTS, quantMeta } from "./quant.ts";
+import { estimateTokPerSec, resolveTokPerSec } from "./tokps.ts";
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error("selfcheck failed: " + msg);

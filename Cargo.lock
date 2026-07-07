@@ -113,7 +113,6 @@ dependencies = [
 name = "anchor-search"
 version = "0.1.0"
 dependencies = [
- "anchor-core",
  "fastembed",
  "serde",
  "serde_json",
@@ -134,7 +133,6 @@ dependencies = [
 name = "anchor-workflows"
 version = "0.1.0"
 dependencies = [
- "anchor-core",
  "anchor-hub",
  "reqwest 0.13.4",
  "serde",

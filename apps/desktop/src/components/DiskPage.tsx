@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { Model } from "../types";
+import { useMemo, useState } from "react";
+import type { LibraryModel } from "../types";
+import { useModels } from "../lib/useModels";
 import { formatBytes } from "../lib/format";
 import { getLastUsed } from "../lib/lastUsed";
 import { PageHeader } from "./PageHeader";
 import { DataTable, Td, Th, Tr } from "./ui/DataTable";
 import { Button } from "./ui/Button";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { Figure } from "./ui/Figure";
 import { TrashIcon } from "./icons";
 
@@ -25,29 +26,18 @@ function formatLastUsed(ms: number | null): string {
 
 /** Disk view: installed models by size, with a one-click reclaim of stale ones. */
 export function DiskPage() {
-  const [models, setModels] = useState<Model[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const { models, error, removeModel } = useModels();
+  const [pendingRemove, setPendingRemove] = useState<LibraryModel | null>(null);
 
-  const load = useCallback(() => {
-    invoke<Model[]>("list_models")
-      .then((installed) => {
-        setModels(installed);
-        setError(null);
-      })
-      .catch((e) => setError(String(e)));
-  }, []);
+  const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Newest-first by size so the biggest offenders are on top.
+  // Biggest offenders on top.
   const rows = useMemo(
     () =>
-      models
+      installed
         .map((m) => ({ model: m, lastUsed: getLastUsed(m.id) }))
         .sort((a, b) => (b.model.size_bytes ?? 0) - (a.model.size_bytes ?? 0)),
-    [models],
+    [installed],
   );
 
   const now = Date.now();
@@ -55,22 +45,6 @@ export function DiskPage() {
   const reclaimBytes = rows
     .filter((r) => isStale(r.lastUsed))
     .reduce((sum, r) => sum + (r.model.size_bytes ?? 0), 0);
-
-  const remove = useCallback(
-    async (m: Model) => {
-      if (!confirm(`Remove ${m.name}? This frees ${formatBytes(m.size_bytes)} and cannot be undone.`)) {
-        return;
-      }
-      try {
-        await invoke("remove_model", { id: m.id });
-      } catch (e) {
-        setError(String(e));
-      } finally {
-        load();
-      }
-    },
-    [load],
-  );
 
   return (
     <div className="space-y-6">
@@ -118,7 +92,7 @@ export function DiskPage() {
                   <Button
                     variant={isStale(lastUsed) ? "primary" : "text"}
                     className="px-2 py-1 text-xs"
-                    onClick={() => remove(model)}
+                    onClick={() => setPendingRemove(model)}
                   >
                     <TrashIcon className="size-3.5" /> Remove
                   </Button>
@@ -128,6 +102,22 @@ export function DiskPage() {
           </tbody>
         </DataTable>
       )}
+
+      <ConfirmDialog
+        open={pendingRemove != null}
+        title="Remove model?"
+        body={
+          pendingRemove
+            ? `${pendingRemove.name} will be deleted from Ollama, freeing ${formatBytes(pendingRemove.size_bytes)}. This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Remove"
+        onConfirm={() => {
+          if (pendingRemove) removeModel(pendingRemove.id);
+          setPendingRemove(null);
+        }}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   );
 }
