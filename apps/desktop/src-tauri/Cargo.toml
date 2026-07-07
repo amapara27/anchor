@@ -21,6 +21,7 @@ anchor-core = { workspace = true }
 anchor-hub = { workspace = true }
 anchor-search = { workspace = true }
 anchor-system = { workspace = true }
+anchor-workflows = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tauri = { version = "2", features = ["tray-icon"] }

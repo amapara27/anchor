@@ -231,6 +231,21 @@ impl Registry {
         ollama::generate(&self.host, req, on_token).await
     }
 
+    /// Evicts a model's weights from Ollama with a zero-length, `keep_alive: 0`
+    /// generate. Used to guarantee nothing stays resident after a run, on cancel,
+    /// or on app exit. Best-effort at the call site (a down server just errors).
+    pub async fn unload(&self, model: &str) -> Result<()> {
+        let req = GenerateRequest {
+            model: model.to_string(),
+            prompt: String::new(),
+            system: None,
+            num_predict: Some(0),
+            keep_alive_secs: 0,
+            think: None,
+        };
+        self.generate(&req, |_| {}).await.map(|_| ())
+    }
+
     /// Whether a model is currently installed in Ollama. Queries the live server
     /// (`/api/tags`) rather than the cache, so a model pulled this session — but
     /// not yet re-synced — is still detected.

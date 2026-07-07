@@ -1,10 +1,19 @@
+import { useState } from "react";
 import type { WorkflowTemplate } from "../types";
 import { TOOL_META, WORKFLOW_CATEGORY, WORKFLOW_TEMPLATES } from "../lib/workflows";
 import { PageHeader } from "./PageHeader";
+import { ResearchAssistant } from "./ResearchAssistant";
 import { PlayIcon, WorkflowIcon } from "./icons";
 
-/** Library of agentic workflow templates. Mock data until `anchor-workflows` lands. */
+/** Library of agentic workflow templates. Research Assistant is live; the rest
+ *  are mock cards until `anchor-workflows` grows their executors. */
 export function WorkflowLibrary() {
+  const [active, setActive] = useState<string | null>(null);
+
+  if (active === "research-assistant") {
+    return <ResearchAssistant onBack={() => setActive(null)} />;
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader
@@ -15,14 +24,25 @@ export function WorkflowLibrary() {
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {WORKFLOW_TEMPLATES.map((wf) => (
-          <WorkflowCard key={wf.id} workflow={wf} />
+          <WorkflowCard
+            key={wf.id}
+            workflow={wf}
+            onLaunch={wf.id === "research-assistant" ? () => setActive(wf.id) : undefined}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function WorkflowCard({ workflow }: { workflow: WorkflowTemplate }) {
+function WorkflowCard({
+  workflow,
+  onLaunch,
+}: {
+  workflow: WorkflowTemplate;
+  /** When set, the card is live and this launches it; otherwise "Coming soon". */
+  onLaunch?: () => void;
+}) {
   const category = WORKFLOW_CATEGORY[workflow.id];
   return (
     <div className="card card-interactive group flex flex-col p-5">
@@ -64,21 +84,39 @@ function WorkflowCard({ workflow }: { workflow: WorkflowTemplate }) {
         })}
       </div>
 
-      {/* Footer: full-width ghost action, still honest about being a stub. */}
+      {/* Footer: live workflows get a real launch button; the rest stay honest. */}
       <div className="mt-auto flex flex-col gap-2 border-t border-white/8 pt-4">
-        <button
-          type="button"
-          disabled
-          aria-disabled
-          title="Workflows are coming soon"
-          className="inline-flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-fg-muted opacity-50"
-        >
-          <PlayIcon className="size-3.5" /> Spin up
-        </button>
-        <span className="inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-fg-subtle">
-          <span className="size-1.5 rounded-full bg-warn" aria-hidden />
-          Coming soon
-        </span>
+        {onLaunch ? (
+          <>
+            <button
+              type="button"
+              onClick={onLaunch}
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/90"
+            >
+              <PlayIcon className="size-3.5" /> Spin up
+            </button>
+            <span className="inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-fg-subtle">
+              <span className="size-1.5 rounded-full bg-ok" aria-hidden />
+              Ready
+            </span>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              disabled
+              aria-disabled
+              title="Workflows are coming soon"
+              className="inline-flex w-full cursor-not-allowed items-center justify-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-fg-muted opacity-50"
+            >
+              <PlayIcon className="size-3.5" /> Spin up
+            </button>
+            <span className="inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-fg-subtle">
+              <span className="size-1.5 rounded-full bg-warn" aria-hidden />
+              Coming soon
+            </span>
+          </>
+        )}
       </div>
     </div>
   );

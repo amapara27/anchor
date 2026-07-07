@@ -9,8 +9,7 @@ repository.workspace = true
 
 [dependencies]
 anchor-core = { workspace = true }
+anchor-hub = { workspace = true }
 serde = { workspace = true }
-# TODO: tokio + reqwest for tool execution (web search, HTTP), PDF crate for the file reader.
-
-[dev-dependencies]
 serde_json = { workspace = true }
+reqwest = { workspace = true }

@@ -106,21 +106,12 @@ async fn refresh(
     }
 }
 
-/// Unloads the currently-resident model by generating with `keep_alive: 0`.
+/// Unloads the currently-resident model via the shared [`Registry::unload`].
 fn unload_model(app: AppHandle, current: CurrentModel) {
     let Some(model) = current.lock().unwrap().clone() else { return };
     tauri::async_runtime::spawn(async move {
         let Some(registry) = registry(&app) else { return };
-        // ponytail: unload = keep_alive:0 generate with an empty prompt; Ollama evicts the weights.
-        let req = GenerateRequest {
-            model,
-            prompt: String::new(),
-            system: None,
-            num_predict: Some(0),
-            keep_alive_secs: 0,
-            think: None,
-        };
-        let _ = registry.generate(&req, |_| {}).await;
+        let _ = registry.unload(&model).await;
     });
 }
 

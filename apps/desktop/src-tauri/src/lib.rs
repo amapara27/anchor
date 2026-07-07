@@ -13,6 +13,7 @@ use anchor_core::{HardwareProfile, Model};
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{CompareEvent, PullProgress, Registry};
 use anchor_search::{QueryHistory, SemanticIndex};
+use anchor_workflows::{ResearchConfig, ResearchEvent};
 use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
@@ -213,6 +214,37 @@ async fn compare_models(
     Ok(())
 }
 
+/// Runs the Research Assistant workflow: plans web searches, gathers sources via
+/// Tavily, and streams a cited brief synthesized by the chosen model back over
+/// `on_event`. Serialized behind `compare_lock` (shared with `compare_models`)
+/// so only one RAM-heavy generation runs at a time.
+#[tauri::command]
+async fn run_research(
+    app: AppHandle,
+    config: ResearchConfig,
+    on_event: Channel<ResearchEvent>,
+) -> Result<(), String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+    let state = app.state::<ServerState>();
+    let _run = state.compare_lock.lock().await;
+    anchor_workflows::run_research(&registry, &config, |event| {
+        // Best-effort: a dropped channel (UI navigated away) shouldn't error.
+        let _ = on_event.send(event);
+    })
+    .await;
+    Ok(())
+}
+
+/// Evicts a model's weights from Ollama. The frontend calls this when a run is
+/// cancelled or its view unmounts, so a dropped generation stream never leaves a
+/// model resident. Best-effort — a down server (nothing to unload) is ignored.
+#[tauri::command]
+async fn unload_model(app: AppHandle, model: String) -> Result<(), String> {
+    let _ = registry(&app)?.unload(&model).await;
+    Ok(())
+}
+
 /// Removes a model from Ollama and the cache.
 #[tauri::command]
 async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
@@ -338,6 +370,8 @@ pub fn run() {
             recent_searches,
             download_model,
             compare_models,
+            run_research,
+            unload_model,
             remove_model,
             get_hardware_profile,
             refresh_hardware_profile,
@@ -348,12 +382,33 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // On exit, stop the Ollama server *we* started (if any). A server
-            // that was already running isn't ours to kill, so its handle is None.
+            // On exit, make sure nothing is left resident. If we started the
+            // server, killing it unloads everything. If it was already running
+            // (not ours to kill), best-effort evict any models we may have loaded
+            // so quitting Anchor never leaves weights in someone else's Ollama.
             if let RunEvent::Exit = event {
-                if let Some(mut child) = app.state::<ServerState>().child.lock().unwrap().take() {
-                    let _ = child.kill();
+                let child = app.state::<ServerState>().child.lock().unwrap().take();
+                match child {
+                    Some(mut child) => {
+                        let _ = child.kill();
+                    }
+                    None => unload_all_resident(app),
                 }
             }
         });
+}
+
+/// Best-effort teardown for a server Anchor didn't start: evict every resident
+/// model so quitting leaves nothing loaded. Exit is synchronous, so this blocks
+/// briefly on a quick `/api/ps` + unload of each model.
+fn unload_all_resident(app: &AppHandle) {
+    let Ok(registry) = registry(app) else { return };
+    tauri::async_runtime::block_on(async {
+        let Ok(models) = anchor_hub::status::running_models(&registry).await else {
+            return;
+        };
+        for model in models {
+            let _ = registry.unload(&model).await;
+        }
+    });
 }

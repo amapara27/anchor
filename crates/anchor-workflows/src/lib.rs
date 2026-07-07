@@ -6,6 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod research;
+pub mod search;
+
+pub use research::{run_research, Depth, Format, Phase, ResearchConfig, ResearchEvent};
+pub use search::Source;
+
 /// A tool a workflow may be allowed to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

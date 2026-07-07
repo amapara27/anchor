@@ -253,6 +253,59 @@ export interface WorkflowTemplate {
 }
 
 // ---------------------------------------------------------------------------
+// Research Assistant workflow. Mirrors the `anchor_workflows::research` types;
+// driven by the `run_research` command over a Tauri Channel.
+// ---------------------------------------------------------------------------
+
+/** How thorough a brief to produce. Mirrors `anchor_workflows::Depth`. */
+export type ResearchDepth = "brief" | "standard" | "deep";
+
+/** Output shape for the brief. Mirrors `anchor_workflows::Format`. */
+export type ResearchFormat = "report" | "outline" | "qa";
+
+/** Setup for a Research Assistant run. Mirrors `anchor_workflows::ResearchConfig`. */
+export interface ResearchConfig {
+  model: string;
+  focus: string;
+  depth: ResearchDepth;
+  format: ResearchFormat;
+  /** Audience/tone hint, e.g. "explain for a beginner". Empty = default. */
+  audience?: string;
+  /** Extra instructions appended to the system prompt. Empty = none. */
+  system_override?: string;
+  /** Tavily API key; falls back to the backend's TAVILY_API_KEY env var. */
+  api_key?: string;
+}
+
+/** A web source cited in the brief. Mirrors `anchor_workflows::Source`. */
+export interface ResearchSource {
+  title: string;
+  url: string;
+  content: string;
+}
+
+/** Lifecycle phase of a research run. Mirrors `anchor_workflows::Phase`. */
+export type ResearchPhase = "planning" | "searching" | "synthesizing" | "done";
+
+/**
+ * One streamed event from the `run_research` command, mirrored from
+ * `anchor_workflows::ResearchEvent` (serde-tagged on `kind`).
+ */
+export type ResearchEvent =
+  /** A lifecycle transition. */
+  | { kind: "status"; phase: ResearchPhase }
+  /** A planned search query (emitted before it's run). */
+  | { kind: "query"; text: string }
+  /** A source found and kept for synthesis. */
+  | { kind: "source"; title: string; url: string }
+  /** One streamed synthesis delta. */
+  | { kind: "token"; text: string }
+  /** The finished brief, its stats, and the sources it drew on. */
+  | { kind: "result"; response: string; stats: GenerationStats; sources: ResearchSource[] }
+  /** The run failed. */
+  | { kind: "failed"; message: string };
+
+// ---------------------------------------------------------------------------
 // Hardware-truth engine — fit, quant, and throughput. Consumed by the fit
 // breakdown panel, the model table, and Compare. All numbers are ESTIMATES
 // unless a run has been measured; the UI must label which is shown.
