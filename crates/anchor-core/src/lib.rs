@@ -35,6 +35,75 @@ pub struct Model {
     /// metadata exposes it (`general.organization` / `general.author`).
     #[serde(default)]
     pub publisher: Option<String>,
+    /// GGUF architecture metadata, when Ollama exposes it. Drives exact KV-cache
+    /// math; `None` makes the caller fall back to a size-bucketed estimate.
+    #[serde(default)]
+    pub arch: Option<ArchMeta>,
+}
+
+/// The GGUF architecture fields that determine KV-cache size, as reported by
+/// Ollama's `/api/show` `model_info` map.
+///
+/// Exists because KV cost per token is
+/// `block_count × head_count_kv × (key_length + value_length) × bytes_per_elem`
+/// — and *none* of those terms is the parameter count, so sizing a model's KV
+/// cache from its parameter count is wrong by up to 5x (worst on MHA models,
+/// where `head_count_kv == head_count`).
+///
+/// Every field is optional: older and unusual GGUFs omit some, and a missing
+/// field must degrade to an estimate rather than fail the model's enrichment.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchMeta {
+    /// `general.architecture`, e.g. `"llama"`, `"qwen3"`, `"gemma3"`.
+    #[serde(default)]
+    pub architecture: Option<String>,
+    /// Transformer layer count (`{arch}.block_count`).
+    #[serde(default)]
+    pub block_count: Option<u64>,
+    /// Attention query heads (`{arch}.attention.head_count`). Only needed to
+    /// derive head dimension when `key_length`/`value_length` are absent.
+    #[serde(default)]
+    pub head_count: Option<u64>,
+    /// Attention key/value heads (`{arch}.attention.head_count_kv`). Equal to
+    /// `head_count` on MHA models; smaller under GQA.
+    #[serde(default)]
+    pub head_count_kv: Option<u64>,
+    /// Hidden size (`{arch}.embedding_length`).
+    #[serde(default)]
+    pub embedding_length: Option<u64>,
+    /// Per-head key dimension (`{arch}.attention.key_length`).
+    #[serde(default)]
+    pub key_length: Option<u64>,
+    /// Per-head value dimension (`{arch}.attention.value_length`). Can differ
+    /// from `key_length`, which is why the two are summed rather than doubled.
+    #[serde(default)]
+    pub value_length: Option<u64>,
+    /// Sliding-window span (`{arch}.attention.sliding_window`). Present on
+    /// Gemma 2/3/4 and similar, where most layers cap their KV at this width
+    /// instead of holding the full context.
+    #[serde(default)]
+    pub sliding_window: Option<u64>,
+    /// Per-head key dimension on sliding-window layers
+    /// (`{arch}.attention.key_length_swa`), when it differs from the global
+    /// layers'. Gemma 4 uses 512 globally and 256 on windowed layers.
+    #[serde(default)]
+    pub key_length_swa: Option<u64>,
+    /// Per-head value dimension on sliding-window layers
+    /// (`{arch}.attention.value_length_swa`).
+    #[serde(default)]
+    pub value_length_swa: Option<u64>,
+    /// Latent-attention rank (`{arch}.attention.kv_lora_rank`). Present on MLA
+    /// models (DeepSeek), whose KV cache the standard formula does not describe
+    /// — its presence marks the result as an estimate rather than exact.
+    #[serde(default)]
+    pub kv_lora_rank: Option<u64>,
+}
+
+impl ArchMeta {
+    /// True when no field was populated, i.e. nothing worth storing.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Installation state of a [`Model`].
@@ -68,6 +137,14 @@ pub struct HardwareProfile {
     pub performance_cores: Option<u32>,
     /// Efficiency cores, when the platform reports the split.
     pub efficiency_cores: Option<u32>,
+    /// GPU cores, on Apple Silicon. Load-bearing for benchmark matching: an
+    /// M3 Pro ships with either 14 or 18 GPU cores and they differ ~25% in
+    /// throughput, so results from the two are not comparable.
+    ///
+    /// Deliberately *not* `#[serde(default)]`: a cache file written before this
+    /// field existed must fail to parse so the profiler re-runs, rather than
+    /// silently loading `None` and poisoning every hardware key derived from it.
+    pub gpu_cores: Option<u32>,
     /// macOS product version, e.g. `"15.5"`.
     pub os_version: Option<String>,
     /// True on Apple Silicon (unified memory), i.e. `arch == "aarch64"`.
@@ -76,13 +153,254 @@ pub struct HardwareProfile {
     pub model_name: Option<String>,
 }
 
+/// The hardware facts a benchmark result is matched on.
+///
+/// Denormalised onto every benchmark row rather than joined, because the whole
+/// point is comparing against *other people's* machines: the row has to carry
+/// enough identity to be judged on its own, including after it has travelled
+/// from another install.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HwIdentity {
+    /// Exact-match key, e.g. `"apple-m4-10c-10g-16gb"`. Unknown segments are
+    /// omitted so the key stays stable for a given machine.
+    pub hw_key: String,
+    /// Chip-family key, e.g. `"apple-m4"`. The loosest matching tier.
+    pub chip_key: String,
+    /// Display chip name, e.g. `"Apple M4"`.
+    pub chip: String,
+    pub cpu_cores: Option<u32>,
+    pub gpu_cores: Option<u32>,
+    /// Unified memory rounded to whole GiB — the granularity machines are sold
+    /// and compared at.
+    pub memory_gb: Option<u32>,
+    pub os_version: Option<String>,
+}
+
+impl HwIdentity {
+    /// Derives the match identity from a profiled machine.
+    pub fn from_profile(hw: &HardwareProfile) -> Self {
+        let chip = hw.chip.clone().unwrap_or_else(|| "Unknown".to_string());
+        let chip_key = {
+            let s = slug(&chip);
+            if s.is_empty() { slug(&hw.arch) } else { s }
+        };
+        let memory_gb = hw.memory_bytes.map(|b| (b as f64 / 1024_f64.powi(3)).round() as u32);
+
+        let mut hw_key = chip_key.clone();
+        if let Some(c) = hw.total_cores {
+            hw_key.push_str(&format!("-{c}c"));
+        }
+        if let Some(g) = hw.gpu_cores {
+            hw_key.push_str(&format!("-{g}g"));
+        }
+        if let Some(m) = memory_gb {
+            hw_key.push_str(&format!("-{m}gb"));
+        }
+
+        Self {
+            hw_key,
+            chip_key,
+            chip,
+            cpu_cores: hw.total_cores,
+            gpu_cores: hw.gpu_cores,
+            memory_gb,
+            os_version: hw.os_version.clone(),
+        }
+    }
+}
+
+/// Lowercases and collapses every run of non-alphanumerics to a single dash.
+fn slug(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
+/// How closely a benchmark result's machine matches the one asking.
+///
+/// Ordered most- to least-specific; the numeric order is the sort key, so
+/// relabelling a tier in the UI can never reorder results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchQuality {
+    /// Same chip, same core counts, same memory.
+    Exact = 1,
+    /// Same chip and memory, different core configuration.
+    SameChipMemory = 2,
+    /// Same chip family only.
+    SameFamily = 3,
+}
+
+impl MatchQuality {
+    pub fn from_tier(tier: i64) -> Self {
+        match tier {
+            1 => Self::Exact,
+            2 => Self::SameChipMemory,
+            _ => Self::SameFamily,
+        }
+    }
+}
+
+/// Where a benchmark row came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BenchSource {
+    /// Measured on this machine.
+    Local,
+    /// Pulled from the shared community database.
+    Community,
+}
+
+/// One benchmark result: a model, a configuration, a machine, and what it did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BenchRun {
+    /// Deterministic composite (see [`BenchRun::derive_id`]) so re-running a
+    /// benchmark updates the existing row instead of adding another.
+    pub id: String,
+    pub hw: HwIdentity,
+
+    /// Ollama model reference, e.g. `"llama3.2:1b"`.
+    pub model_name: String,
+    /// Content digest — the real model identity, since a tag can be re-pointed.
+    pub model_digest: String,
+    pub quant: Option<String>,
+    pub num_ctx: u32,
+    /// KV cache element type, e.g. `"f16"`. Changes memory and speed.
+    pub kv_cache_type: String,
+    pub flash_attn: bool,
+    pub ollama_version: Option<String>,
+    /// Which standard suite produced this, so results stay comparable.
+    pub suite_id: String,
+    pub suite_version: u32,
+
+    /// Prompt-processing throughput, median over `repeats`.
+    pub prefill_tps_median: Option<f64>,
+    /// Generation throughput, median over `repeats`.
+    pub decode_tps_median: Option<f64>,
+    /// Cold-load time in milliseconds.
+    pub load_ms: Option<u64>,
+    /// Peak resident bytes while loaded, from `/api/ps`.
+    pub peak_rss_bytes: Option<u64>,
+    /// Measured runs behind the medians, excluding the discarded warmup.
+    pub repeats: u32,
+
+    /// Anonymous per-install id — lets someone update their own submission
+    /// without any account.
+    pub install_id: String,
+    pub rating: Option<u8>,
+    pub review: Option<String>,
+    pub visible: bool,
+    /// Unix epoch milliseconds.
+    pub created_at: i64,
+    pub updated_at: i64,
+
+    pub source: BenchSource,
+    pub synced_at: Option<i64>,
+
+    /// Set by a match query, not stored. `None` on a row read back directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_quality: Option<MatchQuality>,
+}
+
+impl BenchRun {
+    /// The row's deterministic primary key.
+    ///
+    /// One machine + one model build + one configuration + one suite version =
+    /// one row, so a re-run overwrites its own previous number rather than
+    /// stuffing the ballot box. Left unhashed so it stays greppable in a
+    /// `sqlite3` shell.
+    pub fn derive_id(
+        install_id: &str,
+        hw_key: &str,
+        model_digest: &str,
+        suite_id: &str,
+        suite_version: u32,
+        num_ctx: u32,
+        kv_cache_type: &str,
+        flash_attn: bool,
+    ) -> String {
+        format!(
+            "{install_id}|{hw_key}|{model_digest}|{suite_id}@{suite_version}|{num_ctx}|{kv_cache_type}|{flash_attn}"
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn profile() -> HardwareProfile {
+        HardwareProfile {
+            chip: Some("Apple M4 Pro".to_string()),
+            arch: "aarch64".to_string(),
+            memory_bytes: Some(24 * 1024_u64.pow(3)),
+            total_cores: Some(12),
+            performance_cores: Some(8),
+            efficiency_cores: Some(4),
+            gpu_cores: Some(16),
+            os_version: Some("15.5".to_string()),
+            apple_silicon: true,
+            model_name: Some("MacBook Pro".to_string()),
+        }
+    }
 
     #[test]
     fn model_status_serializes_lowercase() {
         let json = serde_json::to_string(&ModelStatus::Installed).unwrap();
         assert_eq!(json, "\"installed\"");
+    }
+
+    #[test]
+    fn hw_key_encodes_chip_cores_and_memory() {
+        let id = HwIdentity::from_profile(&profile());
+        assert_eq!(id.hw_key, "apple-m4-pro-12c-16g-24gb");
+        assert_eq!(id.chip_key, "apple-m4-pro");
+        assert_eq!(id.memory_gb, Some(24));
+    }
+
+    #[test]
+    fn hw_key_omits_unknown_segments_and_falls_back_to_arch() {
+        let bare = HardwareProfile {
+            chip: None,
+            memory_bytes: None,
+            total_cores: None,
+            gpu_cores: None,
+            ..profile()
+        };
+        let id = HwIdentity::from_profile(&bare);
+        // "Unknown" chip still slugs, so the key is stable rather than empty.
+        assert_eq!(id.hw_key, "unknown");
+        assert_eq!(id.chip_key, "unknown");
+    }
+
+    #[test]
+    fn gpu_cores_change_the_exact_key() {
+        // The reason gpu_cores had to exist before the first row was written:
+        // an M4 Pro ships with 16 or 20 GPU cores and they are not comparable.
+        let a = HwIdentity::from_profile(&profile());
+        let b = HwIdentity::from_profile(&HardwareProfile {
+            gpu_cores: Some(20),
+            ..profile()
+        });
+        assert_ne!(a.hw_key, b.hw_key);
+        assert_eq!(a.chip_key, b.chip_key, "still the same family");
+    }
+
+    #[test]
+    fn match_quality_orders_most_specific_first() {
+        let mut tiers = vec![
+            MatchQuality::SameFamily,
+            MatchQuality::Exact,
+            MatchQuality::SameChipMemory,
+        ];
+        tiers.sort();
+        assert_eq!(tiers[0], MatchQuality::Exact);
+        assert_eq!(tiers[2], MatchQuality::SameFamily);
     }
 }

@@ -33,25 +33,76 @@ fn tags_response_maps_to_models() {
     assert_eq!(m.publisher, None);
 }
 
-/// Mirrors the `model_info` scanning in `show_details` without a live server.
+/// Runs the real `show_details` extraction against a wire payload, minus the HTTP.
 fn parse_show(json: &str) -> ShowDetails {
     let resp: ShowResponse = serde_json::from_str(json).unwrap();
-    let context_tokens = resp
-        .model_info
-        .iter()
-        .find(|(k, _)| k.ends_with(".context_length"))
-        .and_then(|(_, v)| v.as_u64());
-    let publisher = resp
-        .model_info
-        .get("general.organization")
-        .or_else(|| resp.model_info.get("general.author"))
-        .and_then(|v| v.as_str())
-        .map(str::to_owned)
-        .filter(|s| !s.is_empty());
-    ShowDetails {
-        context_tokens,
-        publisher,
-    }
+    details_from_info(&resp.model_info)
+}
+
+#[test]
+fn show_response_extracts_architecture_fields() {
+    // Trimmed real `/api/show` model_info for a Llama-3-family GGUF.
+    let details = parse_show(
+        r#"{
+            "model_info": {
+                "general.architecture": "llama",
+                "llama.block_count": 32,
+                "llama.context_length": 131072,
+                "llama.embedding_length": 4096,
+                "llama.attention.head_count": 32,
+                "llama.attention.head_count_kv": 8,
+                "llama.attention.key_length": 128,
+                "llama.attention.value_length": 128
+            }
+        }"#,
+    );
+    let arch = details.arch;
+    assert_eq!(arch.architecture.as_deref(), Some("llama"));
+    assert_eq!(arch.block_count, Some(32));
+    assert_eq!(arch.head_count, Some(32));
+    assert_eq!(arch.head_count_kv, Some(8));
+    assert_eq!(arch.key_length, Some(128));
+    assert_eq!(arch.value_length, Some(128));
+    assert_eq!(arch.sliding_window, None);
+    // 32 layers x 8 kv heads x (128+128) x 2 bytes = 128 KiB/token.
+    let per_token = arch.block_count.unwrap()
+        * arch.head_count_kv.unwrap()
+        * (arch.key_length.unwrap() + arch.value_length.unwrap())
+        * 2;
+    assert_eq!(per_token, 128 * 1024);
+}
+
+#[test]
+fn architecture_keys_prefer_the_text_tower_over_a_vision_tower() {
+    // Multimodal GGUFs carry a second set of keys under a different prefix. A
+    // bare suffix scan takes whichever sorts first — here `clip.*` — so the
+    // extraction must key off `general.architecture` instead.
+    let details = parse_show(
+        r#"{
+            "model_info": {
+                "general.architecture": "gemma3",
+                "clip.block_count": 27,
+                "clip.vision.attention.head_count": 16,
+                "gemma3.block_count": 34,
+                "gemma3.attention.head_count": 8,
+                "gemma3.attention.head_count_kv": 4,
+                "gemma3.attention.key_length": 256,
+                "gemma3.attention.value_length": 256,
+                "gemma3.attention.sliding_window": 1024,
+                "gemma3.context_length": 131072
+            }
+        }"#,
+    );
+    assert_eq!(details.arch.block_count, Some(34));
+    assert_eq!(details.arch.head_count, Some(8));
+    assert_eq!(details.arch.sliding_window, Some(1024));
+    assert_eq!(details.context_tokens, Some(131072));
+}
+
+#[test]
+fn missing_architecture_metadata_yields_an_empty_arch() {
+    let details = parse_show(r#"{"model_info": {"general.organization": "Meta"}}"#);
+    assert!(details.arch.is_empty());
 }
 
 #[test]

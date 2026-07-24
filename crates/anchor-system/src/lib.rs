@@ -1,14 +1,16 @@
 //! Static hardware profiling for Anchor.
 //!
 //! On macOS this shells out to `system_profiler` once, parses the chip, memory,
-//! core counts and OS version, and caches the result to a JSON file so it never
-//! re-runs on subsequent launches. The profile drives the home-screen "Your Mac"
-//! panel and the model-library "too large for your hardware" flags.
+//! CPU/GPU core counts and OS version, and caches the result to a JSON file so
+//! it never re-runs on subsequent launches. The profile drives the home-screen
+//! "Your Mac" panel, the model-library "too large for your hardware" flags, and
+//! the hardware identity that benchmark results are matched on.
 //!
 //! Like `anchor-hub`'s `Registry`, this crate is free of any Tauri/UI dependency
 //! and takes its cache path from the caller, so it stays testable and reusable.
-//! It's named generically (not `anchor-hardware`) so the future live monitor and
-//! tok/sec benchmark can land here without a new crate.
+//! It's named generically (not `anchor-hardware`) so a future live monitor can
+//! land here without a new crate. The benchmark *runner* lives in `anchor-hub`,
+//! which owns both the SQLite connection and the Ollama client it needs.
 
 use std::path::PathBuf;
 
@@ -98,10 +100,15 @@ impl Profiler {
     }
 }
 
-/// Runs `system_profiler -json SPHardwareDataType SPSoftwareDataType`.
+/// Runs `system_profiler -json SPHardwareDataType SPSoftwareDataType SPDisplaysDataType`.
 fn run_system_profiler() -> Result<String> {
     let output = std::process::Command::new("system_profiler")
-        .args(["-json", "SPHardwareDataType", "SPSoftwareDataType"])
+        .args([
+            "-json",
+            "SPHardwareDataType",
+            "SPSoftwareDataType",
+            "SPDisplaysDataType",
+        ])
         .output()
         .map_err(|e| Error::Profiler(e.to_string()))?;
     if !output.status.success() {
@@ -122,6 +129,7 @@ fn minimal_profile() -> HardwareProfile {
         total_cores,
         performance_cores: None,
         efficiency_cores: None,
+        gpu_cores: None,
         os_version: None,
         apple_silicon,
         model_name: None,
@@ -155,10 +163,24 @@ pub fn parse_profile(json: &str) -> Result<HardwareProfile> {
         total_cores,
         performance_cores,
         efficiency_cores,
+        gpu_cores: parse_gpu_cores(&raw.displays),
         os_version: sw.os_version.as_deref().and_then(strip_os_version),
         apple_silicon,
         model_name: hw.machine_name,
     })
+}
+
+/// GPU core count from the `SPDisplaysDataType` entries.
+///
+/// Prefers the built-in GPU: an attached eGPU or a second entry would otherwise
+/// win on ordering alone, and it's the integrated one that runs inference.
+fn parse_gpu_cores(displays: &[RawDisplay]) -> Option<u32> {
+    let cores = |d: &RawDisplay| d.sppci_cores.as_deref()?.trim().parse::<u32>().ok();
+    displays
+        .iter()
+        .find(|d| d.sppci_bus.as_deref() == Some("spdisplays_builtin"))
+        .and_then(cores)
+        .or_else(|| displays.iter().find_map(cores))
 }
 
 /// `"18 GB"` → bytes. Returns `None` for missing/unknown units or non-numbers.
@@ -206,6 +228,8 @@ struct RawReport {
     hardware: Vec<RawHardware>,
     #[serde(rename = "SPSoftwareDataType", default)]
     software: Vec<RawSoftware>,
+    #[serde(rename = "SPDisplaysDataType", default)]
+    displays: Vec<RawDisplay>,
 }
 
 #[derive(Deserialize, Default)]
@@ -223,6 +247,15 @@ struct RawHardware {
 #[derive(Deserialize, Default)]
 struct RawSoftware {
     os_version: Option<String>,
+}
+
+/// One GPU from `SPDisplaysDataType`.
+#[derive(Deserialize, Default)]
+struct RawDisplay {
+    /// Core count, reported as a *string* (e.g. `"10"`), not a number.
+    sppci_cores: Option<String>,
+    /// `"spdisplays_builtin"` for the integrated Apple Silicon GPU.
+    sppci_bus: Option<String>,
 }
 
 #[cfg(test)]

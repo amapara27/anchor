@@ -10,12 +10,14 @@ use std::path::PathBuf;
 use anchor_core::Model;
 use rusqlite::Connection;
 
+pub mod bench;
 pub mod db;
 pub mod ollama;
 pub mod server;
 pub mod status;
 pub mod updates;
 
+pub use bench::BenchProgress;
 pub use ollama::{GenerateRequest, GenerationStats, PullProgress};
 
 use serde::Serialize;
@@ -167,7 +169,7 @@ impl Registry {
             db_path,
             host: host.into(),
         };
-        db::init_schema(&registry.connect()?)?;
+        db::migrate(&mut registry.connect()?)?;
         Ok(registry)
     }
 
@@ -181,8 +183,9 @@ impl Registry {
     }
 
     /// Syncs from the live Ollama server: lists installed models, enriches each
-    /// with `/api/show` metadata (context window + publisher, best-effort), and
-    /// replaces the cache. Returns the freshly synced models.
+    /// with `/api/show` metadata (context window, publisher, and the
+    /// architecture fields behind KV sizing — all best-effort), and replaces the
+    /// cache. Returns the freshly synced models.
     pub async fn sync(&self) -> Result<Vec<Model>> {
         let mut models = ollama::list_local_models(&self.host).await?;
         // Enrichment is best-effort and concurrent: a failing `/api/show` for one
@@ -195,6 +198,7 @@ impl Registry {
             if let Ok(d) = detail {
                 model.context_tokens = d.context_tokens;
                 model.publisher = d.publisher;
+                model.arch = (!d.arch.is_empty()).then_some(d.arch);
             }
         }
         // No `.await` is held across this connection, so it stays `Send`-safe.
@@ -250,6 +254,8 @@ impl Registry {
             num_predict: Some(0),
             keep_alive_secs: 0,
             think: None,
+            num_ctx: None,
+            temperature: None,
         };
         self.generate(&req, |_| {}).await.map(|_| ())
     }

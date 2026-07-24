@@ -28,6 +28,14 @@ struct PsEntry {
     /// Bytes of the model currently held in VRAM/RAM, when reported.
     #[serde(default)]
     size_vram: Option<u64>,
+    /// Total resident bytes: weights + KV cache + compute buffers.
+    #[serde(default)]
+    size: Option<u64>,
+    /// The `num_ctx` Ollama actually loaded this model with — which is not the
+    /// model's advertised maximum, and not necessarily what was requested
+    /// (Ollama clamps). The only trustworthy context figure for a loaded model.
+    #[serde(default)]
+    context_length: Option<u64>,
 }
 
 /// A model Ollama currently has loaded, with its resident size if reported.
@@ -35,6 +43,10 @@ struct PsEntry {
 pub struct RunningModel {
     pub name: String,
     pub size_vram: Option<u64>,
+    /// Total resident bytes (weights + KV + compute buffers), when reported.
+    pub size: Option<u64>,
+    /// The context length this model is actually loaded with, when reported.
+    pub context_length: Option<u64>,
 }
 
 /// Returns the models Ollama currently has resident in memory, with each one's
@@ -57,6 +69,8 @@ pub async fn running(registry: &Registry) -> Result<Vec<RunningModel>> {
         .map(|e| RunningModel {
             name: e.name,
             size_vram: e.size_vram,
+            size: e.size,
+            context_length: e.context_length,
         })
         .collect())
 }
@@ -67,16 +81,20 @@ mod tests {
 
     #[test]
     fn parses_ps_wire_shape() {
-        // Trimmed real `GET /api/ps` body; a missing `size_vram` must stay None.
+        // Trimmed real `GET /api/ps` body; a missing field must stay None.
         let body = r#"{"models":[
-            {"name":"llama3:latest","size_vram":5368709120},
+            {"name":"llama3:latest","size":6979321856,"size_vram":5368709120,"context_length":8192},
             {"name":"qwen3:8b"}
         ]}"#;
         let resp: PsResponse = serde_json::from_str(body).unwrap();
         assert_eq!(resp.models.len(), 2);
         assert_eq!(resp.models[0].name, "llama3:latest");
         assert_eq!(resp.models[0].size_vram, Some(5368709120));
+        assert_eq!(resp.models[0].size, Some(6979321856));
+        assert_eq!(resp.models[0].context_length, Some(8192));
         assert_eq!(resp.models[1].size_vram, None);
+        assert_eq!(resp.models[1].size, None);
+        assert_eq!(resp.models[1].context_length, None);
     }
 
     #[test]

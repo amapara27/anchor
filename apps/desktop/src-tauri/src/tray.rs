@@ -136,6 +136,8 @@ fn warm_up(app: AppHandle, current: CurrentModel) {
             num_predict: Some(1),
             keep_alive_secs: 300,
             think: Some(false),
+            num_ctx: None,
+            temperature: None,
         };
         let _ = registry.generate(&req, |_| {}).await;
     });

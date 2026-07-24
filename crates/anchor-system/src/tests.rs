@@ -7,7 +7,13 @@ const APPLE_SILICON: &str = r#"{
     "physical_memory": "18 GB",
     "number_processors": "proc 11:5:6"
   }],
-  "SPSoftwareDataType": [{ "os_version": "macOS 15.5 (24F74)" }]
+  "SPSoftwareDataType": [{ "os_version": "macOS 15.5 (24F74)" }],
+  "SPDisplaysDataType": [{
+    "_name": "Apple M3 Pro",
+    "sppci_bus": "spdisplays_builtin",
+    "sppci_cores": "14",
+    "sppci_device_type": "spdisplays_gpu"
+  }]
 }"#;
 
 #[test]
@@ -19,9 +25,47 @@ fn parses_apple_silicon_profile() {
     assert_eq!(p.total_cores, Some(11));
     assert_eq!(p.performance_cores, Some(5));
     assert_eq!(p.efficiency_cores, Some(6));
+    assert_eq!(p.gpu_cores, Some(14));
     assert_eq!(p.os_version.as_deref(), Some("15.5"));
     // arch / apple_silicon reflect the host running the test, not the fixture.
     assert_eq!(p.apple_silicon, std::env::consts::ARCH == "aarch64");
+}
+
+#[test]
+fn gpu_cores_prefer_the_builtin_gpu() {
+    // An attached eGPU sorts first; the integrated GPU is the one that matters,
+    // since it's what runs inference.
+    let displays = vec![
+        RawDisplay {
+            sppci_cores: Some("64".to_string()),
+            sppci_bus: Some("spdisplays_pcie_device".to_string()),
+        },
+        RawDisplay {
+            sppci_cores: Some("10".to_string()),
+            sppci_bus: Some("spdisplays_builtin".to_string()),
+        },
+    ];
+    assert_eq!(parse_gpu_cores(&displays), Some(10));
+}
+
+#[test]
+fn gpu_cores_degrade_to_none_when_absent_or_unparseable() {
+    assert_eq!(parse_gpu_cores(&[]), None);
+    assert_eq!(
+        parse_gpu_cores(&[RawDisplay {
+            sppci_cores: Some("unknown".to_string()),
+            sppci_bus: None,
+        }]),
+        None
+    );
+    // No bus field at all: fall back to the first entry that parses.
+    assert_eq!(
+        parse_gpu_cores(&[RawDisplay {
+            sppci_cores: Some("8".to_string()),
+            sppci_bus: None,
+        }]),
+        Some(8)
+    );
 }
 
 #[test]

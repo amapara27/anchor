@@ -6,7 +6,7 @@
 
 use std::time::Duration;
 
-use anchor_core::{Model, ModelStatus};
+use anchor_core::{ArchMeta, Model, ModelStatus};
 use futures_util::StreamExt;
 use serde::Deserialize;
 
@@ -47,6 +47,43 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = "Answer concisely and directly.";
 /// Default hard cap on generated tokens for comparison runs.
 pub const DEFAULT_NUM_PREDICT: u64 = 256;
 
+/// The running server's version string, from `GET /api/version`.
+///
+/// Recorded on benchmark results: throughput changes between Ollama releases, so
+/// a number without its version isn't comparable.
+pub async fn version(host: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct VersionResponse {
+        #[serde(default)]
+        version: String,
+    }
+    let resp: VersionResponse = request_client()?
+        .get(format!("{host}/api/version"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(resp.version)
+}
+
+/// Content digest for an installed model, or `None` if it isn't installed.
+pub async fn digest_of(host: &str, id: &str) -> Result<Option<String>> {
+    let url = format!("{host}/api/tags");
+    let resp: TagsResponse = request_client()?
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(resp
+        .models
+        .into_iter()
+        .find(|m| m.name == id)
+        .and_then(|m| m.digest))
+}
+
 /// A reqwest client with a total timeout, for the non-streaming endpoints.
 fn request_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -69,6 +106,10 @@ struct TagEntry {
     size: Option<u64>,
     #[serde(default)]
     modified_at: Option<String>,
+    /// Content digest. The model's true identity — a tag can be re-pointed at a
+    /// different build, so benchmark results are keyed on this, not the name.
+    #[serde(default)]
+    digest: Option<String>,
     #[serde(default)]
     details: TagDetails,
 }
@@ -153,6 +194,12 @@ pub struct GenerateRequest {
     /// separate `thinking` field, leaving `response` empty — see [`generate`]).
     /// Ignored by models that don't support thinking. `None` omits the field.
     pub think: Option<bool>,
+    /// Context window to load with (`options.num_ctx`). `None` leaves Ollama's
+    /// default. A benchmark must pin this — throughput and memory both depend
+    /// on it, so an unpinned run isn't comparable to anyone else's.
+    pub num_ctx: Option<u32>,
+    /// Sampling temperature (`options.temperature`). `None` leaves the default.
+    pub temperature: Option<f32>,
 }
 
 impl GenerateRequest {
@@ -171,6 +218,34 @@ impl GenerateRequest {
             num_predict: Some(DEFAULT_NUM_PREDICT),
             keep_alive_secs: 0,
             think: Some(false),
+            num_ctx: None,
+            temperature: None,
+        }
+    }
+
+    /// A measurement-tuned request.
+    ///
+    /// Differs from [`for_comparison`](Self::for_comparison) on every axis that
+    /// affects a number: no brevity preprompt (it shortens the answer, and we
+    /// want a fixed token count), `temperature: 0` so the same prompt does the
+    /// same work every time, and an explicit `num_ctx` because throughput
+    /// depends on it. `keep_alive` is held open so the caller can read the
+    /// resident size out of `/api/ps` before the weights are evicted.
+    pub fn for_benchmark(
+        model: impl Into<String>,
+        prompt: impl Into<String>,
+        num_predict: u64,
+        num_ctx: u32,
+    ) -> Self {
+        Self {
+            model: model.into(),
+            prompt: prompt.into(),
+            system: None,
+            num_predict: Some(num_predict),
+            keep_alive_secs: 60,
+            think: Some(false),
+            num_ctx: Some(num_ctx),
+            temperature: Some(0.0),
         }
     }
 }
@@ -259,6 +334,7 @@ fn tag_to_model(entry: TagEntry) -> Model {
         context_tokens: None,
         modified_at: entry.modified_at,
         publisher: None,
+        arch: None,
     }
 }
 
@@ -269,6 +345,31 @@ pub struct ShowDetails {
     pub context_tokens: Option<u64>,
     /// Producing lab / organisation, if exposed in the GGUF metadata.
     pub publisher: Option<String>,
+    /// Architecture fields driving exact KV-cache math. Empty when the GGUF
+    /// exposes none of them.
+    pub arch: ArchMeta,
+}
+
+/// Reads a `u64` out of the GGUF `model_info` map by key suffix.
+///
+/// Keys are architecture-prefixed (`llama.block_count`, `qwen3.attention.
+/// head_count_kv`). When the architecture is known, the exact `{arch}.{suffix}`
+/// key is tried first: multimodal GGUFs carry a second tower whose keys share
+/// these suffixes (`clip.vision.block_count`), and a bare suffix scan would take
+/// whichever happened to sort first in the map rather than the text tower.
+fn info_u64(
+    info: &serde_json::Map<String, serde_json::Value>,
+    arch: Option<&str>,
+    suffix: &str,
+) -> Option<u64> {
+    let dotted = format!(".{suffix}");
+    arch.and_then(|a| info.get(&format!("{a}.{suffix}")))
+        .or_else(|| {
+            info.iter()
+                .find(|(k, _)| k.ends_with(&dotted))
+                .map(|(_, v)| v)
+        })
+        .and_then(serde_json::Value::as_u64)
 }
 
 /// Lists every model installed in the local Ollama server.
@@ -287,9 +388,11 @@ pub async fn list_local_models(host: &str) -> Result<Vec<Model>> {
 /// Fetches best-effort extra metadata for a model via `POST /api/show`.
 ///
 /// - Context window: Ollama keys this as `"<arch>.context_length"`
-///   (e.g. `"llama.context_length"`), so we scan `model_info` for that suffix.
+///   (e.g. `"llama.context_length"`), so we look it up by suffix.
 /// - Publisher: pulled from `general.organization`, falling back to
 ///   `general.author`. Many models omit these, so both stay `None` then.
+/// - Architecture: the layer/head/head-dim fields that make exact KV-cache
+///   sizing possible (see [`ArchMeta`]).
 ///
 /// Missing fields are returned as `None` rather than erroring — all of this is
 /// enrichment, never required.
@@ -304,24 +407,48 @@ pub async fn show_details(host: &str, id: &str) -> Result<ShowDetails> {
         .json()
         .await?;
 
-    let context_tokens = resp
-        .model_info
-        .iter()
-        .find(|(k, _)| k.ends_with(".context_length"))
-        .and_then(|(_, v)| v.as_u64());
+    Ok(details_from_info(&resp.model_info))
+}
 
-    let publisher = resp
-        .model_info
+/// The pure half of [`show_details`]: `model_info` map in, [`ShowDetails`] out.
+///
+/// Split out so it can be tested against real wire payloads without a live
+/// server, and so the tests exercise the shipped extraction rather than a copy.
+fn details_from_info(info: &serde_json::Map<String, serde_json::Value>) -> ShowDetails {
+    let architecture = info
+        .get("general.architecture")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let a = architecture.as_deref();
+
+    let publisher = info
         .get("general.organization")
-        .or_else(|| resp.model_info.get("general.author"))
+        .or_else(|| info.get("general.author"))
         .and_then(|v| v.as_str())
         .map(str::to_owned)
         .filter(|s| !s.is_empty());
 
-    Ok(ShowDetails {
+    let context_tokens = info_u64(info, a, "context_length");
+    let arch = ArchMeta {
+        block_count: info_u64(info, a, "block_count"),
+        head_count: info_u64(info, a, "attention.head_count"),
+        head_count_kv: info_u64(info, a, "attention.head_count_kv"),
+        embedding_length: info_u64(info, a, "embedding_length"),
+        key_length: info_u64(info, a, "attention.key_length"),
+        value_length: info_u64(info, a, "attention.value_length"),
+        sliding_window: info_u64(info, a, "attention.sliding_window"),
+        key_length_swa: info_u64(info, a, "attention.key_length_swa"),
+        value_length_swa: info_u64(info, a, "attention.value_length_swa"),
+        kv_lora_rank: info_u64(info, a, "attention.kv_lora_rank"),
+        architecture,
+    };
+
+    ShowDetails {
         context_tokens,
         publisher,
-    })
+        arch,
+    }
 }
 
 /// Drains an NDJSON response body, invoking `on_line` for each complete
@@ -428,8 +555,18 @@ where
     if let Some(system) = &req.system {
         body["system"] = serde_json::Value::String(system.clone());
     }
+    let mut options = serde_json::Map::new();
     if let Some(num_predict) = req.num_predict {
-        body["options"] = serde_json::json!({ "num_predict": num_predict });
+        options.insert("num_predict".into(), num_predict.into());
+    }
+    if let Some(num_ctx) = req.num_ctx {
+        options.insert("num_ctx".into(), num_ctx.into());
+    }
+    if let Some(temperature) = req.temperature {
+        options.insert("temperature".into(), temperature.into());
+    }
+    if !options.is_empty() {
+        body["options"] = serde_json::Value::Object(options);
     }
     if let Some(think) = req.think {
         body["think"] = serde_json::Value::Bool(think);

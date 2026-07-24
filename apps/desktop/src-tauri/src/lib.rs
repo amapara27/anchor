@@ -9,9 +9,10 @@
 use std::process::Child;
 use std::sync::Mutex;
 
-use anchor_core::{HardwareProfile, Model};
+use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model};
+use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
-use anchor_hub::{CompareEvent, PullProgress, Registry};
+use anchor_hub::{BenchProgress, CompareEvent, PullProgress, Registry};
 use anchor_search::{QueryHistory, SemanticIndex};
 use anchor_workflows::{ResearchConfig, ResearchEvent};
 use anchor_system::Profiler;
@@ -296,6 +297,124 @@ async fn refresh_hardware_profile(app: AppHandle) -> Result<HardwareProfile, Str
         .map_err(|e| e.to_string())
 }
 
+/// How many written community reviews a free install may open per week.
+const REVIEW_ALLOWANCE: u32 = 3;
+
+/// This install's anonymous id, created on first use.
+///
+/// A random value in a file, deliberately *not* derived from the hardware: it
+/// exists so someone can update or withdraw their own submissions, and must not
+/// double as a machine fingerprint. Reads 16 bytes from the system CSPRNG rather
+/// than pulling in a uuid crate for one call site.
+fn install_id(app: &AppHandle) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve app data dir: {e}"))?;
+    let path = dir.join("install_id");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let mut bytes = [0u8; 16];
+    std::io::Read::read_exact(
+        &mut std::fs::File::open("/dev/urandom").map_err(|e| e.to_string())?,
+        &mut bytes,
+    )
+    .map_err(|e| e.to_string())?;
+    let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(&path, &id).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// The host's benchmark match identity, derived from the cached hardware profile.
+fn hw_identity(app: &AppHandle) -> Result<HwIdentity, String> {
+    let profile = profiler(app)?.get().map_err(|e| e.to_string())?;
+    Ok(HwIdentity::from_profile(&profile))
+}
+
+/// Runs the standard benchmark suite against a model and stores the result.
+///
+/// Takes `compare_lock` (shared with `compare_models` and `run_research`) so a
+/// benchmark can never run alongside another RAM-heavy generation — a contended
+/// run would measure the contention, not the model.
+#[tauri::command]
+async fn run_benchmark(
+    app: AppHandle,
+    model: String,
+    on_event: Channel<BenchProgress>,
+) -> Result<(), String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+    let hw = hw_identity(&app)?;
+    let id = install_id(&app)?;
+    let state = app.state::<ServerState>();
+    let _run = state.compare_lock.lock().await;
+
+    let result = registry
+        .run_benchmark(&model, &hw, &id, |event| {
+            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
+            let _ = on_event.send(event);
+        })
+        .await;
+    if let Err(e) = result {
+        let _ = on_event.send(BenchProgress::Failed {
+            message: e.to_string(),
+        });
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// Benchmark results for a model from machines resembling this one, best match
+/// first. Each row carries the tier it matched at so the UI can group them.
+#[tauri::command]
+async fn bench_runs_for_model(app: AppHandle, model: String) -> Result<Vec<BenchRun>, String> {
+    let registry = registry(&app)?;
+    let hw = hw_identity(&app)?;
+    let digest = anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), &model)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{model} is not installed"))?;
+    registry
+        .bench_runs_for(&hw, &digest)
+        .map_err(|e| e.to_string())
+}
+
+/// Opens one written review, spending a slot from the weekly allowance.
+///
+/// Re-opening a review already unlocked is free. Returns the allowance state so
+/// the UI can show what's left without a second call.
+#[tauri::command]
+async fn unlock_review(app: AppHandle, run_id: String) -> Result<ReviewAllowance, String> {
+    registry(&app)?
+        .unlock_review(&run_id, now_ms(), REVIEW_ALLOWANCE)
+        .map_err(|e| e.to_string())
+}
+
+/// The current state of the weekly review allowance.
+#[tauri::command]
+async fn review_allowance(app: AppHandle) -> Result<ReviewAllowance, String> {
+    let used = registry(&app)?
+        .reviews_used(now_ms())
+        .map_err(|e| e.to_string())?;
+    Ok(ReviewAllowance {
+        unlocked: false,
+        used,
+        allowance: REVIEW_ALLOWANCE,
+    })
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
+}
+
 /// Kicks off the semantic-search index build in the background at launch.
 ///
 /// Embedding model files cache under `app_data_dir()/embeddings` so they
@@ -346,7 +465,11 @@ pub fn run() {
             remove_model,
             get_hardware_profile,
             refresh_hardware_profile,
-            check_updates
+            check_updates,
+            run_benchmark,
+            bench_runs_for_model,
+            unlock_review,
+            review_allowance
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

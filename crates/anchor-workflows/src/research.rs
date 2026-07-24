@@ -229,6 +229,8 @@ where
         num_predict: Some(128),
         keep_alive_secs: 0,
         think: Some(false),
+        num_ctx: None,
+        temperature: None,
     };
     let queries = match registry.generate(&plan_req, |_| {}).await {
         Ok((text, _)) => parse_queries(&text, &cfg.focus),
@@ -291,6 +293,8 @@ where
         num_predict: Some(num_predict),
         keep_alive_secs: 0,
         think: Some(false),
+        num_ctx: None,
+        temperature: None,
     };
     let result = registry
         .generate(&synth_req, |tok| {
