@@ -54,6 +54,8 @@ export function buildLibrary(installed: Model[], catalog: ModelProfile[]): Libra
       context_tokens: live?.context_tokens ?? null,
       modified_at: live?.modified_at ?? null,
       publisher: live?.publisher ?? null,
+      // Only installed models have GGUF metadata; the catalog can't supply it.
+      arch: live?.arch ?? null,
       // Prefer real specs from Ollama over the catalog estimates when installed.
       spec: live ? enrichSpec(spec, live) : spec,
       tags: [],

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Tab } from "../types";
-import { ColumnsIcon, HardDriveIcon, HomeIcon, LibraryIcon, PanelLeftIcon, SparkleIcon, WorkflowIcon } from "./icons";
+import { ColumnsIcon, HardDriveIcon, HomeIcon, LibraryIcon, PanelLeftIcon, SparkleIcon, WorkflowIcon, ZapIcon } from "./icons";
 
 interface SidebarProps {
   active: Tab;
@@ -12,6 +12,7 @@ const NAV: { tab: Tab; label: string; Icon: typeof HomeIcon }[] = [
   { tab: "search", label: "Discover", Icon: SparkleIcon },
   { tab: "models", label: "Model Library", Icon: LibraryIcon },
   { tab: "comparison", label: "Model Comparison", Icon: ColumnsIcon },
+  { tab: "benchmarks", label: "Benchmarks", Icon: ZapIcon },
   { tab: "disk", label: "Disk Usage", Icon: HardDriveIcon },
   { tab: "workflows", label: "Workflow Library", Icon: WorkflowIcon },
 ];

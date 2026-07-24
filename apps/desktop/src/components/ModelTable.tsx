@@ -59,7 +59,13 @@ export function ModelTable({
         {models.map((m) => {
           const { spec } = m;
           const q = spec.quant as QuantId;
-          const fit = estimateFit(spec.params_b, q, fitContext(spec.context_tokens), { memory_bytes: totalMemoryBytes });
+          const fit = estimateFit(
+            spec.params_b,
+            q,
+            fitContext(spec.context_tokens),
+            { memory_bytes: totalMemoryBytes },
+            { arch: m.arch, size_bytes: m.size_bytes },
+          );
           const tps = resolveTokPerSec(chip ?? null, m.id, spec.params_b, q);
           const download = downloads[m.id];
           const isDownloading = download != null;
@@ -142,6 +148,8 @@ export function ModelTable({
                       quant={spec.quant}
                       contextTokens={spec.context_tokens}
                       memoryBytes={totalMemoryBytes}
+                      arch={m.arch}
+                      sizeBytes={m.size_bytes}
                       className="max-w-md"
                     />
                   </td>

@@ -3,7 +3,9 @@
 //   node --experimental-strip-types apps/desktop/src/lib/engine.selfcheck.ts
 // Not imported anywhere, so it never ships in the bundle.
 // Explicit .ts extensions: Node's type-stripping does no extension guessing.
+import type { ArchMeta } from "../types.ts";
 import { estimateFit, fitContext } from "./fit.ts";
+import { computeBufferBytes, kvCacheBytes, metadataKvBytesPerToken } from "./kv.ts";
 import { QUANTS, quantMeta } from "./quant.ts";
 import { estimateTokPerSec, resolveTokPerSec } from "./tokps.ts";
 
@@ -12,6 +14,101 @@ function assert(cond: boolean, msg: string): void {
 }
 
 const GB16 = { memory_bytes: 16 * 1e9 };
+
+/** Builds an ArchMeta with everything null but the named fields. */
+function arch(fields: Partial<ArchMeta>): ArchMeta {
+  return {
+    architecture: null,
+    block_count: null,
+    head_count: null,
+    head_count_kv: null,
+    embedding_length: null,
+    key_length: null,
+    value_length: null,
+    sliding_window: null,
+    key_length_swa: null,
+    value_length_swa: null,
+    kv_lora_rank: null,
+    ...fields,
+  };
+}
+
+const KIB = 1024;
+
+// --- KV math ---------------------------------------------------------------
+// The reference cases behind the rewrite. Each per-token figure is
+// n_layers × n_kv_heads × (key_len + value_len) × 2 bytes, and each differs from
+// what a parameter-count bucket would have said — that mismatch is the bug this
+// replaced. llama3.2:1b is additionally verified byte-exact against a live
+// server by kv.verify.ts.
+const LLAMA31_8B = arch({ block_count: 32, head_count_kv: 8, key_length: 128, value_length: 128 });
+assert(metadataKvBytesPerToken(LLAMA31_8B) === 128 * KIB, "Llama-3.1 8B = 128 KiB/token");
+
+// MHA: head_count_kv equals the full head count. A params bucket says 80 KiB.
+const PHI3_MINI = arch({ block_count: 32, head_count_kv: 32, key_length: 96, value_length: 96 });
+assert(metadataKvBytesPerToken(PHI3_MINI) === 384 * KIB, "Phi-3 mini (MHA) = 384 KiB/token");
+
+// Small GQA model: KV barely shrinks with parameter count. A bucket says 48 KiB.
+const QWEN3_1_7B = arch({ block_count: 28, head_count_kv: 8, key_length: 128, value_length: 128 });
+assert(metadataKvBytesPerToken(QWEN3_1_7B) === 112 * KIB, "Qwen3 1.7B = 112 KiB/token");
+
+// Measured against Ollama: 16 layers × 8 kv heads × 128 × 2 = 32 KiB/token.
+const LLAMA32_1B = arch({
+  architecture: "llama",
+  block_count: 16,
+  head_count: 32,
+  head_count_kv: 8,
+  key_length: 64,
+  value_length: 64,
+});
+assert(metadataKvBytesPerToken(LLAMA32_1B) === 32 * KIB, "llama3.2:1b = 32 KiB/token");
+// Compute buffer: n_batch(512) × 4 bytes × (n_head + 1) per context token. On
+// this model it is more than twice the KV cache — omitting it, as the old fit
+// math did, understates long-context memory by over half.
+assert(computeBufferBytes(LLAMA32_1B, 1) === 67584, "llama3.2:1b compute buffer = 66 KiB/token");
+assert(
+  computeBufferBytes(LLAMA32_1B, 32768) > kvCacheBytes(LLAMA32_1B, 32768, 1).bytes * 2,
+  "compute buffer dominates KV on a small model",
+);
+
+// Windowed layers stop growing past the window, so KV is sublinear in context.
+const GEMMA4 = arch({
+  architecture: "gemma4",
+  block_count: 42,
+  head_count: 8,
+  head_count_kv: 2,
+  key_length: 512,
+  value_length: 512,
+  key_length_swa: 256,
+  value_length_swa: 256,
+  sliding_window: 512,
+});
+const g8k = kvCacheBytes(GEMMA4, 8192, 4).bytes;
+const g32k = kvCacheBytes(GEMMA4, 32768, 4).bytes;
+assert(g32k === g8k, "gemma4 KV is flat past the window (measured: zero growth)");
+assert(kvCacheBytes(GEMMA4, 8192, 4).source === "metadata", "gemma4 uses metadata");
+
+// Degradation: no metadata, an unknown windowed arch, and MLA all fall back to
+// the bucket and say so, rather than returning a confident wrong number.
+assert(kvCacheBytes(null, 4096, 8).source === "estimated", "no metadata ⇒ estimated");
+assert(metadataKvBytesPerToken(arch({ block_count: 32 })) === null, "missing kv heads ⇒ null");
+assert(
+  kvCacheBytes(arch({ architecture: "mystery", block_count: 32, head_count_kv: 8, key_length: 64, value_length: 64, sliding_window: 4096 }), 8192, 8).source ===
+    "estimated",
+  "unknown windowed arch ⇒ estimated",
+);
+assert(
+  metadataKvBytesPerToken(arch({ block_count: 61, head_count_kv: 128, key_length: 192, value_length: 128, kv_lora_rank: 512 })) === null,
+  "MLA model ⇒ null rather than a wrong number",
+);
+// Ollama serialises array-valued metadata as JSON null, so a present-but-null
+// head_count_kv (qwen3.5) must degrade, not throw.
+assert(
+  metadataKvBytesPerToken(arch({ block_count: 32, head_count_kv: null, key_length: 256, value_length: 256 })) === null,
+  "null head_count_kv ⇒ estimated",
+);
+
+// --- Fit -------------------------------------------------------------------
 
 // A 8B Q4 model fits comfortably at a short context...
 const small = estimateFit(8, "Q4_K_M", 4096, GB16);
@@ -38,6 +135,16 @@ assert(qwen.fits && qwen.tier !== "wont_fit", "7B Q4 @128k-max should fit on 16G
 
 // Missing hardware → unknown.
 assert(estimateFit(8, "Q4_K_M", 4096, { memory_bytes: null }).tier === "unknown", "no memory ⇒ unknown");
+
+// Real on-disk size wins over params × bpw. This matters most for a quant the
+// table doesn't know: `quantMeta` silently coerces those to Q4_K_M, which would
+// size an F16 model at ~40% of its true weight.
+const realSize = estimateFit(8, "Q4_K_M", 4096, GB16, { size_bytes: 16 * 1024 ** 3 });
+assert(realSize.breakdown.weightsGB === 16, "size_bytes overrides the bpw estimate");
+
+// The fit verdict reports which way its numbers were derived.
+assert(estimateFit(1.2, "Q4_K_M", 8192, GB16, { arch: LLAMA32_1B }).kvSource === "metadata", "arch ⇒ metadata");
+assert(estimateFit(8, "Q4_K_M", 8192, GB16).kvSource === "estimated", "no arch ⇒ estimated");
 
 // Quant table is ordered smallest → largest and looks up correctly.
 assert(QUANTS[0].bpw < QUANTS[QUANTS.length - 1].bpw, "quants ordered by bpw");

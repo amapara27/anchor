@@ -194,6 +194,8 @@ function DrawerBody({
               quant={spec.quant}
               contextTokens={spec.context_tokens}
               memoryBytes={totalMemoryBytes}
+              arch={model.arch}
+              sizeBytes={model.size_bytes}
             />
           )}
         </section>

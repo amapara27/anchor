@@ -21,6 +21,41 @@ export interface Model {
   modified_at: string | null;
   /** Producing lab/org from GGUF metadata, e.g. "Meta". Null when unknown. */
   publisher: string | null;
+  /** GGUF architecture metadata driving exact KV sizing. Null when unavailable. */
+  arch: ArchMeta | null;
+}
+
+/**
+ * GGUF architecture fields from Ollama's `/api/show`, mirrored from
+ * `anchor_core::ArchMeta`. Drives exact KV-cache sizing — see `lib/kv.ts`.
+ *
+ * Every field is nullable, and not only because older GGUFs omit them: Ollama
+ * serialises *array-valued* metadata as JSON `null`, so genuinely present keys
+ * arrive empty on models whose value varies per layer (qwen3.5's
+ * `head_count_kv`, gemma4's `sliding_window_pattern`).
+ */
+export interface ArchMeta {
+  architecture: string | null;
+  /** Transformer layer count. */
+  block_count: number | null;
+  /** Attention query heads. */
+  head_count: number | null;
+  /** Attention key/value heads. Equals head_count under MHA, smaller under GQA. */
+  head_count_kv: number | null;
+  /** Hidden size. */
+  embedding_length: number | null;
+  /** Per-head key dimension. */
+  key_length: number | null;
+  /** Per-head value dimension; can differ from key_length. */
+  value_length: number | null;
+  /** Sliding-window span, on architectures that window most layers. */
+  sliding_window: number | null;
+  /** Per-head key dimension on windowed layers, when it differs. */
+  key_length_swa: number | null;
+  /** Per-head value dimension on windowed layers, when it differs. */
+  value_length_swa: number | null;
+  /** Latent-attention rank; its presence marks an MLA model. */
+  kv_lora_rank: number | null;
 }
 
 /**
@@ -41,6 +76,8 @@ export interface HardwareProfile {
   performance_cores: number | null;
   /** Efficiency cores, when the platform reports the split. */
   efficiency_cores: number | null;
+  /** GPU cores on Apple Silicon. Null when unknown. */
+  gpu_cores: number | null;
   /** macOS product version, e.g. "15.5". Null when unknown. */
   os_version: string | null;
   /** True on Apple Silicon (unified memory). */
@@ -228,7 +265,7 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "home" | "search" | "models" | "workflows" | "comparison" | "disk";
+export type Tab = "home" | "search" | "models" | "workflows" | "comparison" | "benchmarks" | "disk";
 
 /**
  * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`
@@ -328,11 +365,16 @@ export interface QuantMeta {
 export interface FitBreakdown {
   /** Model weights at the chosen quant. */
   weightsGB: number;
-  /** KV cache at the chosen context length (estimated). */
+  /** KV cache at the chosen context length. */
   kvCacheGB: number;
+  /**
+   * Attention scores and mask the inference graph holds for a batch. Scales
+   * with context like the KV cache, and on small models exceeds it.
+   */
+  computeBufferGB: number;
   /** Memory left for macOS and other apps. */
   osReserveGB: number;
-  /** weights + kv + reserve — the baseline the machine must clear. */
+  /** weights + kv + compute + reserve — the baseline the machine must clear. */
   totalNeededGB: number;
   /** The host's unified/total memory. */
   availableGB: number;
@@ -342,9 +384,88 @@ export interface FitBreakdown {
 export interface FitResult {
   tier: FitTier;
   fits: boolean;
-  /** availableGB − weightsGB − kvCacheGB − osReserveGB. Negative ⇒ won't fit. */
+  /** availableGB − totalNeededGB. Negative ⇒ won't fit. */
   headroomGB: number;
   breakdown: FitBreakdown;
+  /** Whether the memory terms came from real metadata or a size bucket. */
+  kvSource: KvSource;
+}
+
+/** Mirrors `lib/kv.ts` — how a memory figure was derived. */
+export type KvSource = "metadata" | "estimated";
+
+// ---------------------------------------------------------------------------
+// Community benchmarks. Mirrors `anchor_core::{BenchRun, HwIdentity, ...}` and
+// `anchor_hub::bench`. Results are matched to the viewer's machine, so every
+// row carries the hardware identity it was measured on.
+// ---------------------------------------------------------------------------
+
+/** The hardware facts a benchmark result is matched on. */
+export interface HwIdentity {
+  /** Exact-match key, e.g. "apple-m4-10c-10g-16gb". */
+  hw_key: string;
+  /** Chip-family key, e.g. "apple-m4". The loosest matching tier. */
+  chip_key: string;
+  chip: string;
+  cpu_cores: number | null;
+  gpu_cores: number | null;
+  memory_gb: number | null;
+  os_version: string | null;
+}
+
+/** How closely a result's machine matches the viewer's, most specific first. */
+export type MatchQuality = "exact" | "same_chip_memory" | "same_family";
+
+/** Where a benchmark row came from. */
+export type BenchSource = "local" | "community";
+
+/** One benchmark result: a model, a configuration, a machine, and what it did. */
+export interface BenchRun {
+  id: string;
+  hw: HwIdentity;
+  model_name: string;
+  /** Content digest — the real model identity, since a tag can be re-pointed. */
+  model_digest: string;
+  quant: string | null;
+  num_ctx: number;
+  kv_cache_type: string;
+  flash_attn: boolean;
+  ollama_version: string | null;
+  suite_id: string;
+  suite_version: number;
+  /** Prompt-processing throughput, median over `repeats`. */
+  prefill_tps_median: number | null;
+  /** Generation throughput, median over `repeats`. */
+  decode_tps_median: number | null;
+  load_ms: number | null;
+  peak_rss_bytes: number | null;
+  repeats: number;
+  install_id: string;
+  rating: number | null;
+  review: string | null;
+  visible: boolean;
+  /** Unix epoch milliseconds. */
+  created_at: number;
+  updated_at: number;
+  source: BenchSource;
+  synced_at: number | null;
+  /** Set by a match query; absent on a row read back directly. */
+  match_quality?: MatchQuality;
+}
+
+/** Streamed progress from a running benchmark (`anchor_hub::BenchProgress`). */
+export type BenchProgress =
+  | { kind: "status"; message: string }
+  | { kind: "run"; index: number; total: number; decode_tps: number }
+  | { kind: "done"; run: BenchRun }
+  | { kind: "failed"; message: string };
+
+/** State of the rolling weekly written-review allowance. */
+export interface ReviewAllowance {
+  /** False when a request was refused for being over the allowance. */
+  unlocked: boolean;
+  used: number;
+  allowance: number;
 }
 
 /** Fit tier, re-exported shape kept in sync with `lib/fit.ts`. */

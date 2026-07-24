@@ -24,6 +24,7 @@ const PAGES: { tab: Tab; label: string }[] = [
   { tab: "search", label: "Discover" },
   { tab: "models", label: "Model Library" },
   { tab: "comparison", label: "Model Comparison" },
+  { tab: "benchmarks", label: "Benchmarks" },
   { tab: "disk", label: "Disk Usage" },
   { tab: "workflows", label: "Workflow Library" },
 ];

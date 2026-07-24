@@ -1,9 +1,10 @@
 // Hardware-fit logic: compares a model's memory needs against the host's RAM.
 // Pure and dependency-free (like format.ts) so it's trivially testable and
 // reusable by both the model cards and the detail drawer.
-import type { FitResult, QuantId } from "../types";
+import type { ArchMeta, FitResult, QuantId } from "../types";
 // Explicit .ts extension so the Node-run selfcheck can resolve it too.
 import { quantMeta } from "./quant.ts";
+import { computeBufferBytes, kvCacheBytes } from "./kv.ts";
 
 /**
  * How well a model fits the host's memory:
@@ -36,45 +37,59 @@ export function fitContext(maxContext: number): number {
 }
 
 /**
- * Estimated fp16 KV-cache bytes per token, bucketed by model size. Real KV cost
- * depends on layers/kv-heads/head-dim/GQA, which the catalog doesn't carry, so
- * these are seeded from typical GQA architectures (e.g. Llama-3 8B ≈ 128 KB/tok,
- * 70B ≈ 320 KB/tok).
- * ponytail: estimated, calibrate against measured once we track memory.
+ * Weights size in GiB.
+ *
+ * Prefers the model's real on-disk size: `size_bytes` from `/api/tags` is the
+ * actual GGUF byte count, whereas `params_b × bpw / 8` is a guess that goes
+ * badly wrong for anything outside the four quants in `quant.ts` — an unknown
+ * quant silently falls back to Q4_K_M, sizing an F16 model at ~40% of its true
+ * weight. Only catalog models that aren't installed yet need the estimate.
  */
-function kvBytesPerToken(params_b: number): number {
-  if (params_b <= 2) return 48 * 1024;
-  if (params_b <= 4) return 80 * 1024;
-  if (params_b <= 9) return 128 * 1024;
-  if (params_b <= 16) return 192 * 1024;
-  if (params_b <= 34) return 256 * 1024;
-  return 320 * 1024;
+function weightsGiB(params_b: number, quant: QuantId, size_bytes?: number | null): number {
+  if (size_bytes) return size_bytes / GIB;
+  return (params_b * 1e9 * (quantMeta(quant).bpw / 8)) / GIB;
 }
 
 /**
- * Estimate whether a model fits, and expose the math behind it. Everything is an
- * ESTIMATE — the caller must label it as such in the UI. Recompute live as the
- * context slider / quant selector change (this is pure and cheap).
+ * Estimate whether a model fits, and expose the math behind it. Recompute live
+ * as the context slider / quant selector change (this is pure and cheap).
+ *
+ * Pass `model` whenever it's known: with the architecture metadata the KV and
+ * compute-buffer terms are exact (verified byte-for-byte by `kv.verify.ts`),
+ * and without it they fall back to a parameter-count bucket. `FitResult.kvSource`
+ * says which happened, and the UI must label an estimate as one.
  */
 export function estimateFit(
   params_b: number,
   quant: QuantId,
   contextLength: number,
   hardware: { memory_bytes: number | null | undefined },
+  model?: { arch?: ArchMeta | null; size_bytes?: number | null },
 ): FitResult {
   const availableGB = (hardware.memory_bytes ?? 0) / GIB;
-  const weightsGB = (params_b * 1e9 * (quantMeta(quant).bpw / 8)) / GIB;
-  const kvCacheGB = (contextLength * kvBytesPerToken(params_b)) / GIB;
+  const weightsGB = weightsGiB(params_b, quant, model?.size_bytes);
+  const kv = kvCacheBytes(model?.arch, contextLength, params_b);
+  const kvCacheGB = kv.bytes / GIB;
+  // Grows with context just like the KV cache, and on small models it is the
+  // larger of the two — it can't be folded into a fixed reserve.
+  const computeBufferGB = computeBufferBytes(model?.arch, contextLength) / GIB;
   const osReserveGB = Math.max(2, 0.15 * availableGB);
-  const totalNeededGB = weightsGB + kvCacheGB + osReserveGB;
-  const headroomGB = availableGB - weightsGB - kvCacheGB - osReserveGB;
+  const totalNeededGB = weightsGB + kvCacheGB + computeBufferGB + osReserveGB;
+  const headroomGB = availableGB - totalNeededGB;
 
-  const breakdown = { weightsGB, kvCacheGB, osReserveGB, totalNeededGB, availableGB };
+  const breakdown = {
+    weightsGB,
+    kvCacheGB,
+    computeBufferGB,
+    osReserveGB,
+    totalNeededGB,
+    availableGB,
+  };
 
   if (!hardware.memory_bytes || !params_b) {
-    return { tier: "unknown", fits: false, headroomGB, breakdown };
+    return { tier: "unknown", fits: false, headroomGB, breakdown, kvSource: kv.source };
   }
   const tier: FitTier =
     headroomGB < 0 ? "wont_fit" : headroomGB < availableGB * TIGHT_HEADROOM_RATIO ? "tight" : "ok";
-  return { tier, fits: headroomGB >= 0, headroomGB, breakdown };
+  return { tier, fits: headroomGB >= 0, headroomGB, breakdown, kvSource: kv.source };
 }

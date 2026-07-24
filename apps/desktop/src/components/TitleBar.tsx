@@ -7,6 +7,7 @@ const PAGE_LABEL: Record<Tab, string> = {
   models: "Model Library",
   workflows: "Workflows",
   comparison: "Model Comparison",
+  benchmarks: "Benchmarks",
   disk: "Disk Usage",
 };
 

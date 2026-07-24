@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { QuantId } from "../types";
+import type { ArchMeta, QuantId } from "../types";
 import { estimateFit, fitContext } from "../lib/fit";
 import { QUANTS } from "../lib/quant";
 import { formatContext } from "../lib/format";
@@ -24,6 +24,10 @@ interface Props {
   quant: QuantId | string;
   contextTokens: number;
   memoryBytes?: number | null;
+  /** GGUF architecture metadata; makes the memory math exact instead of bucketed. */
+  arch?: ArchMeta | null;
+  /** Real on-disk size, preferred over estimating weights from params × bpw. */
+  sizeBytes?: number | null;
   defaultOpen?: boolean;
   /** Render just the panel (always open, no toggle) — for host-controlled rows. */
   headless?: boolean;
@@ -31,14 +35,20 @@ interface Props {
 }
 
 /**
- * Expandable "why <tier>?" panel: the estimated memory math behind a fit verdict,
- * with live context-length + quant controls. Every figure here is an ESTIMATE.
+ * Expandable "why <tier>?" panel: the memory math behind a fit verdict, with
+ * live context-length + quant controls.
+ *
+ * Given `arch`, the KV and compute-buffer figures come from the model's own
+ * architecture metadata and are exact; without it they're bucketed from
+ * parameter count. The header labels which, so a guess never reads as a fact.
  */
 export function FitBreakdown({
   params_b,
   quant,
   contextTokens,
   memoryBytes,
+  arch,
+  sizeBytes,
   defaultOpen = false,
   headless = false,
   className = "",
@@ -50,8 +60,9 @@ export function FitBreakdown({
   // advertised max — the slider still explores up to maxCtx.
   const [ctx, setCtx] = useState(fitContext(contextTokens));
 
-  const fit = estimateFit(params_b, q, ctx, { memory_bytes: memoryBytes });
-  const { weightsGB, kvCacheGB, osReserveGB, totalNeededGB, availableGB } = fit.breakdown;
+  const fit = estimateFit(params_b, q, ctx, { memory_bytes: memoryBytes }, { arch, size_bytes: sizeBytes });
+  const { weightsGB, kvCacheGB, computeBufferGB, osReserveGB, totalNeededGB, availableGB } =
+    fit.breakdown;
   const denom = Math.max(availableGB, totalNeededGB, 0.001);
   const seg = (v: number) => `${Math.min(100, (v / denom) * 100)}%`;
 
@@ -65,7 +76,9 @@ export function FitBreakdown({
           className="inline-flex items-center gap-1 text-xs font-medium text-fg-muted transition-colors duration-150 ease-out hover:text-fg"
         >
           <span className={TIER_CLASS[fit.tier]}>{TIER_LABEL[fit.tier]}</span>
-          <span className="text-fg-subtle">· estimated</span>
+          <span className="text-fg-subtle">
+            {fit.kvSource === "metadata" ? "· from model metadata" : "· estimated"}
+          </span>
           <ChevronDownIcon className={["size-3.5 transition-transform duration-150", open ? "rotate-180" : ""].join(" ")} />
         </button>
       )}
@@ -77,6 +90,7 @@ export function FitBreakdown({
             <div className="flex h-full">
               <span className="bg-accent" style={{ width: seg(weightsGB) }} title="Weights" />
               <span className="bg-warn" style={{ width: seg(kvCacheGB) }} title="KV cache" />
+              <span className="bg-warn/50" style={{ width: seg(computeBufferGB) }} title="Compute buffer" />
               <span className="bg-white/20" style={{ width: seg(osReserveGB) }} title="OS reserve" />
             </div>
             {availableGB > 0 && (
@@ -92,6 +106,7 @@ export function FitBreakdown({
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
             <Row swatch="bg-accent" label="Weights" gb={weightsGB} />
             <Row swatch="bg-warn" label="KV cache" gb={kvCacheGB} />
+            <Row swatch="bg-warn/50" label="Compute buffer" gb={computeBufferGB} />
             <Row swatch="bg-white/20" label="OS reserve" gb={osReserveGB} />
             <Row label="Needed" gb={totalNeededGB} strong />
             <Row label="Available" gb={availableGB} />

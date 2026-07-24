@@ -226,6 +226,14 @@ export const ZapIcon = (p: IconProps) => (
   </Svg>
 );
 
+/** Padlock — marks a community review still behind the weekly allowance. */
+export const LockIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4" y="10" width="16" height="11" rx="2" />
+    <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+  </Svg>
+);
+
 /** Horizontal rows — the dense table view toggle. */
 export const RowsIcon = (p: IconProps) => (
   <Svg {...p}>

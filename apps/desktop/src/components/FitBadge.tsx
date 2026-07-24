@@ -1,4 +1,4 @@
-import type { QuantId } from "../types";
+import type { ArchMeta, QuantId } from "../types";
 import { estimateFit, fitContext } from "../lib/fit";
 import { WarningIcon } from "./icons";
 
@@ -13,6 +13,8 @@ export function FitBadge({
   quant,
   contextTokens,
   totalMemoryBytes,
+  arch,
+  sizeBytes,
   className = "",
 }: {
   params_b: number;
@@ -20,11 +22,19 @@ export function FitBadge({
   quant: QuantId | string;
   contextTokens: number;
   totalMemoryBytes: number | null | undefined;
+  /** GGUF architecture metadata, when installed — makes the verdict exact. */
+  arch?: ArchMeta | null;
+  /** Real on-disk size, preferred over estimating weights from params × bpw. */
+  sizeBytes?: number | null;
   className?: string;
 }) {
-  const fit = estimateFit(params_b, quant as QuantId, fitContext(contextTokens), {
-    memory_bytes: totalMemoryBytes,
-  });
+  const fit = estimateFit(
+    params_b,
+    quant as QuantId,
+    fitContext(contextTokens),
+    { memory_bytes: totalMemoryBytes },
+    { arch, size_bytes: sizeBytes },
+  );
   if (fit.tier !== "tight" && fit.tier !== "wont_fit") return null;
   const wontFit = fit.tier === "wont_fit";
   return (

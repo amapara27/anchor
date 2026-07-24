@@ -70,6 +70,8 @@ export function ModelCard({
               quant={spec.quant}
               contextTokens={spec.context_tokens}
               totalMemoryBytes={totalMemoryBytes}
+              arch={model.arch}
+              sizeBytes={model.size_bytes}
             />
           </div>
         </div>
@@ -122,6 +124,8 @@ export function ModelCard({
             quant={spec.quant}
             contextTokens={spec.context_tokens}
             memoryBytes={totalMemoryBytes}
+            arch={model.arch}
+            sizeBytes={model.size_bytes}
           />
         </div>
       )}

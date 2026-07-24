@@ -75,6 +75,8 @@ export function SearchResultCard({
                 quant={profile.quant}
                 contextTokens={profile.context_tokens}
                 totalMemoryBytes={totalMemoryBytes}
+                arch={libraryModel?.arch}
+                sizeBytes={libraryModel?.size_bytes}
               />
             </div>
           </div>
@@ -135,6 +137,8 @@ export function SearchResultCard({
               quant={profile.quant}
               contextTokens={profile.context_tokens}
               totalMemoryBytes={totalMemoryBytes}
+              arch={libraryModel?.arch}
+              sizeBytes={libraryModel?.size_bytes}
             />
           </div>
           <p className="label-caps mt-1 truncate text-[10px]">
