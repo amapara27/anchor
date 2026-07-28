@@ -17,9 +17,9 @@ export function WorkflowLibrary() {
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="Automation"
-        title="Workflow Library"
-        subtitle="Tool-enabled templates that pin a model and wire up local capabilities."
+        eyebrow="Workspace"
+        title="Agents"
+        subtitle="Tool-enabled agents that pin a model and wire up local capabilities."
       />
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">

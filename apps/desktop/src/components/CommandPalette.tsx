@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Tab } from "../types";
+import type { ModelsTab, Tab } from "../types";
 import { useModels } from "../lib/useModels";
 import { formatParams } from "../lib/format";
 import { CornerDownLeftIcon, SearchIcon } from "./icons";
@@ -7,7 +7,7 @@ import { CornerDownLeftIcon, SearchIcon } from "./icons";
 interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
-  onNavigate: (tab: Tab) => void;
+  onNavigate: (tab: Tab, modelsTab?: ModelsTab) => void;
   /** Jump to a model: switch to the library and open its detail drawer. */
   onJumpToModel: (id: string) => void;
 }
@@ -19,14 +19,16 @@ interface Command {
   run: () => void;
 }
 
-const PAGES: { tab: Tab; label: string }[] = [
-  { tab: "home", label: "Home" },
-  { tab: "search", label: "Discover" },
-  { tab: "models", label: "Model Library" },
-  { tab: "comparison", label: "Model Comparison" },
-  { tab: "benchmarks", label: "Benchmarks" },
-  { tab: "disk", label: "Disk Usage" },
-  { tab: "workflows", label: "Workflow Library" },
+// Top-level pages plus the Models hub's sub-views (deep-linked via `sub`).
+const PAGES: { tab: Tab; label: string; sub?: ModelsTab }[] = [
+  { tab: "chat", label: "Chat" },
+  { tab: "agents", label: "Agents" },
+  { tab: "models", label: "Explore models", sub: "explore" },
+  { tab: "models", label: "Installed models", sub: "installed" },
+  { tab: "models", label: "Model Comparison", sub: "compare" },
+  { tab: "models", label: "Benchmarks", sub: "benchmark" },
+  { tab: "models", label: "Disk Usage", sub: "disk" },
+  { tab: "settings", label: "Settings" },
 ];
 
 /** ⌘K fuzzy launcher: jump to a model, run a comparison, or open any page. */
@@ -38,16 +40,16 @@ export function CommandPalette({ open, onClose, onNavigate, onJumpToModel }: Com
 
   const commands = useMemo<Command[]>(() => {
     const pages: Command[] = PAGES.map((p) => ({
-      id: `page:${p.tab}`,
+      id: `page:${p.tab}:${p.sub ?? ""}`,
       label: `Go to ${p.label}`,
       hint: "Page",
-      run: () => onNavigate(p.tab),
+      run: () => onNavigate(p.tab, p.sub),
     }));
     const compare: Command = {
       id: "action:compare",
       label: "Run a comparison",
       hint: "Action",
-      run: () => onNavigate("comparison"),
+      run: () => onNavigate("models", "compare"),
     };
     const modelCmds: Command[] = models.map((m) => ({
       id: `model:${m.id}`,

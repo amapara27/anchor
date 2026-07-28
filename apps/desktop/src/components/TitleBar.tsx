@@ -2,13 +2,10 @@ import type { Tab } from "../types";
 import { SearchIcon } from "./icons";
 
 const PAGE_LABEL: Record<Tab, string> = {
-  home: "Home",
-  search: "Discover",
-  models: "Model Library",
-  workflows: "Workflows",
-  comparison: "Model Comparison",
-  benchmarks: "Benchmarks",
-  disk: "Disk Usage",
+  chat: "Chat",
+  agents: "Agents",
+  models: "Models",
+  settings: "Settings",
 };
 
 /**

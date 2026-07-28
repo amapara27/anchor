@@ -1,20 +1,30 @@
 import { useEffect, useState } from "react";
 import type { Tab } from "../types";
-import { ColumnsIcon, HardDriveIcon, HomeIcon, LibraryIcon, PanelLeftIcon, SparkleIcon, WorkflowIcon, ZapIcon } from "./icons";
+import { ChatIcon, LibraryIcon, PanelLeftIcon, SettingsIcon, WorkflowIcon } from "./icons";
 
 interface SidebarProps {
   active: Tab;
   onSelect: (tab: Tab) => void;
 }
 
-const NAV: { tab: Tab; label: string; Icon: typeof HomeIcon }[] = [
-  { tab: "home", label: "Home", Icon: HomeIcon },
-  { tab: "search", label: "Discover", Icon: SparkleIcon },
-  { tab: "models", label: "Model Library", Icon: LibraryIcon },
-  { tab: "comparison", label: "Model Comparison", Icon: ColumnsIcon },
-  { tab: "benchmarks", label: "Benchmarks", Icon: ZapIcon },
-  { tab: "disk", label: "Disk Usage", Icon: HardDriveIcon },
-  { tab: "workflows", label: "Workflow Library", Icon: WorkflowIcon },
+type NavItem = { tab: Tab; label: string; Icon: typeof ChatIcon };
+
+// Two groups: Workspace leads with use (chat/agents); Manage is the tooling.
+const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
+  {
+    heading: "Workspace",
+    items: [
+      { tab: "chat", label: "Chat", Icon: ChatIcon },
+      { tab: "agents", label: "Agents", Icon: WorkflowIcon },
+    ],
+  },
+  {
+    heading: "Manage",
+    items: [
+      { tab: "models", label: "Models", Icon: LibraryIcon },
+      { tab: "settings", label: "Settings", Icon: SettingsIcon },
+    ],
+  },
 ];
 
 const VERSION = "v0.1.0";
@@ -66,31 +76,36 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         </div>
       )}
 
-      <nav className="mt-7 flex flex-col gap-1">
-        {NAV.map(({ tab, label, Icon }) => {
-          const isActive = active === tab;
-          return (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => onSelect(tab)}
-              aria-current={isActive ? "page" : undefined}
-              aria-label={collapsed ? label : undefined}
-              title={collapsed ? label : undefined}
-              className={[
-                "flex h-[38px] w-full cursor-pointer items-center gap-2.5 rounded-r-lg border-l-2 text-sm font-medium transition-colors active:scale-[0.98]",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-                collapsed ? "justify-center px-0" : "px-3",
-                isActive
-                  ? "border-accent bg-white/5 text-fg"
-                  : "border-transparent text-fg-muted hover:bg-white/[0.03] hover:text-fg",
-              ].join(" ")}
-            >
-              <Icon className={["size-4 shrink-0", isActive ? "text-accent-text" : ""].join(" ")} />
-              {!collapsed && label}
-            </button>
-          );
-        })}
+      <nav className="mt-7 flex flex-col gap-5">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.heading} className="flex flex-col gap-1">
+            {!collapsed && <span className="label-caps px-3 pb-1">{group.heading}</span>}
+            {group.items.map(({ tab, label, Icon }) => {
+              const isActive = active === tab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => onSelect(tab)}
+                  aria-current={isActive ? "page" : undefined}
+                  aria-label={collapsed ? label : undefined}
+                  title={collapsed ? label : undefined}
+                  className={[
+                    "flex h-[38px] w-full cursor-pointer items-center gap-2.5 rounded-r-lg border-l-2 text-sm font-medium transition-colors active:scale-[0.98]",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
+                    collapsed ? "justify-center px-0" : "px-3",
+                    isActive
+                      ? "border-accent bg-white/5 text-fg"
+                      : "border-transparent text-fg-muted hover:bg-white/[0.03] hover:text-fg",
+                  ].join(" ")}
+                >
+                  <Icon className={["size-4 shrink-0", isActive ? "text-accent-text" : ""].join(" ")} />
+                  {!collapsed && label}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Footer: version + the local-first promise. Green dot = running locally. */}

@@ -265,7 +265,17 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "home" | "search" | "models" | "workflows" | "comparison" | "benchmarks" | "disk";
+export type Tab = "chat" | "agents" | "models" | "settings";
+
+/** Sub-views inside the Models hub. */
+export type ModelsTab = "explore" | "installed" | "compare" | "benchmark" | "disk";
+
+/** Live Ollama server status. Mirrors the `get_server_status` command. */
+export interface ServerStatus {
+  reachable: boolean;
+  version: string | null;
+  managed: boolean;
+}
 
 /**
  * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`
