@@ -297,6 +297,34 @@ async fn refresh_hardware_profile(app: AppHandle) -> Result<HardwareProfile, Str
         .map_err(|e| e.to_string())
 }
 
+/// Live status of the Ollama server for the Settings panel.
+#[derive(serde::Serialize)]
+struct ServerStatus {
+    /// The server answers at the configured host.
+    reachable: bool,
+    /// Its version string, when reachable.
+    version: Option<String>,
+    /// Anchor started (and owns) this server, vs one that was already running.
+    managed: bool,
+}
+
+/// Reports whether Ollama is reachable, its version, and whether Anchor owns it.
+///
+/// Thin status read — never starts the server (unlike [`ensure_server`]); the
+/// Settings panel shows the real state, including "stopped".
+#[tauri::command]
+async fn get_server_status(app: AppHandle) -> Result<ServerStatus, String> {
+    let host = anchor_hub::ollama_host();
+    let reachable = server::is_running(&host).await;
+    let version = if reachable {
+        anchor_hub::ollama::version(&host).await.ok()
+    } else {
+        None
+    };
+    let managed = app.state::<ServerState>().child.lock().unwrap().is_some();
+    Ok(ServerStatus { reachable, version, managed })
+}
+
 /// How many written community reviews a free install may open per week.
 const REVIEW_ALLOWANCE: u32 = 3;
 
@@ -465,6 +493,7 @@ pub fn run() {
             remove_model,
             get_hardware_profile,
             refresh_hardware_profile,
+            get_server_status,
             check_updates,
             run_benchmark,
             bench_runs_for_model,
