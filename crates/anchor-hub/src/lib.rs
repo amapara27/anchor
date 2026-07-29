@@ -18,7 +18,8 @@ pub mod status;
 pub mod updates;
 
 pub use bench::BenchProgress;
-pub use ollama::{GenerateRequest, GenerationStats, PullProgress};
+pub use db::{Conversation, StoredMessage};
+pub use ollama::{ChatMessage, ChatRequest, GenerateRequest, GenerationStats, PullProgress};
 
 use serde::Serialize;
 
@@ -241,6 +242,69 @@ impl Registry {
         F: FnMut(&str) + Send,
     {
         ollama::generate(&self.host, req, on_token).await
+    }
+
+    /// Runs a streaming multi-turn chat, forwarding each token delta to
+    /// `on_token` and returning the full assistant text plus final stats.
+    pub async fn chat<F>(
+        &self,
+        req: &ChatRequest,
+        on_token: F,
+    ) -> Result<(String, GenerationStats)>
+    where
+        F: FnMut(&str) + Send,
+    {
+        ollama::chat(&self.host, req, on_token).await
+    }
+
+    // --- Chat persistence: thin wrappers over `db`, one connection each. ---
+
+    /// Lists conversations, most-recently-updated first.
+    pub fn list_conversations(&self) -> Result<Vec<Conversation>> {
+        db::list_conversations(&self.connect()?)
+    }
+
+    /// Creates a conversation with the given id/title/model at `now_ms`.
+    pub fn create_conversation(&self, id: &str, title: &str, model: &str, now_ms: i64) -> Result<Conversation> {
+        let conv = Conversation {
+            id: id.to_string(),
+            title: title.to_string(),
+            model: model.to_string(),
+            created_ms: now_ms,
+            updated_ms: now_ms,
+        };
+        db::insert_conversation(&self.connect()?, &conv)?;
+        Ok(conv)
+    }
+
+    /// Reads a conversation's messages in chronological order.
+    pub fn messages_for(&self, conversation_id: &str) -> Result<Vec<StoredMessage>> {
+        db::messages_for(&self.connect()?, conversation_id)
+    }
+
+    /// The model a conversation currently uses (`None` if it doesn't exist).
+    pub fn conversation_model(&self, id: &str) -> Result<Option<String>> {
+        db::conversation_model(&self.connect()?, id)
+    }
+
+    /// Appends one message and bumps the conversation's `updated_ms`.
+    pub fn append_message(&self, conversation_id: &str, m: &StoredMessage) -> Result<()> {
+        db::append_message(&self.connect()?, conversation_id, m)
+    }
+
+    /// Renames a conversation.
+    pub fn rename_conversation(&self, id: &str, title: &str) -> Result<()> {
+        db::rename_conversation(&self.connect()?, id, title)
+    }
+
+    /// Points a conversation at a different model.
+    pub fn set_conversation_model(&self, id: &str, model: &str) -> Result<()> {
+        db::set_conversation_model(&self.connect()?, id, model)
+    }
+
+    /// Deletes a conversation and all of its messages.
+    pub fn delete_conversation(&self, id: &str) -> Result<()> {
+        db::delete_conversation(&self.connect()?, id)
     }
 
     /// Evicts a model's weights from Ollama with a zero-length, `keep_alive: 0`

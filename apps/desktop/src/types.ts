@@ -277,6 +277,46 @@ export interface ServerStatus {
   managed: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Chat. Mirrors `anchor_hub::{Conversation, StoredMessage}` and the Tauri
+// `ChatEvent`; driven by the `run_chat` command over a Tauri Channel, with
+// conversations/messages persisted in SQLite.
+// ---------------------------------------------------------------------------
+
+export type ChatRole = "user" | "assistant" | "system";
+
+/** A persisted chat conversation. Mirrors `anchor_hub::Conversation`. */
+export interface Conversation {
+  id: string;
+  title: string;
+  model: string;
+  created_ms: number;
+  updated_ms: number;
+}
+
+/** One stored chat turn. Mirrors `anchor_hub::StoredMessage`. */
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  /** Raw JSON of `GenerationStats` for an assistant turn; null for user turns. */
+  stats_json: string | null;
+  created_ms: number;
+}
+
+/**
+ * One streamed event from the `run_chat` command, mirrored from the Tauri
+ * `ChatEvent` (serde-tagged on `kind`).
+ */
+export type ChatEvent =
+  /** One streamed response delta. */
+  | { kind: "token"; text: string }
+  /** The assistant turn finished; `response` is the full, authoritative text
+   *  (a thinking model may stream nothing and only produce it here). */
+  | { kind: "result"; response: string; stats: GenerationStats }
+  /** The turn failed (the user message stays persisted for a retry). */
+  | { kind: "failed"; message: string };
+
 /**
  * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`
  * (`rename_all = "snake_case"`). The crate is a stub today, so these only drive

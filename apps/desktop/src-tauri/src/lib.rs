@@ -12,7 +12,10 @@ use std::sync::Mutex;
 use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model};
 use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
-use anchor_hub::{BenchProgress, CompareEvent, PullProgress, Registry};
+use anchor_hub::{
+    BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats,
+    PullProgress, Registry, StoredMessage,
+};
 use anchor_search::{QueryHistory, SemanticIndex};
 use anchor_workflows::{ResearchConfig, ResearchEvent};
 use anchor_system::Profiler;
@@ -237,6 +240,149 @@ async fn run_research(
     Ok(())
 }
 
+/// Keep-alive for chat: weights stay resident between turns so a follow-up
+/// doesn't reload the model. Evicted on leaving chat / switching model (the
+/// frontend calls `unload_model`).
+const CHAT_KEEP_ALIVE_SECS: i64 = 300;
+
+/// Chars of the first user message kept as a conversation's auto-title.
+const CHAT_TITLE_LEN: usize = 60;
+
+/// One streamed event from [`run_chat`]. Mirrored on the frontend as `ChatEvent`.
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ChatEvent {
+    /// One streamed response delta.
+    Token { text: String },
+    /// The assistant turn finished; carries the full text (authoritative — a
+    /// thinking model may stream nothing and only produce it here) plus stats.
+    Result { response: String, stats: GenerationStats },
+    /// The turn failed (the user message is still persisted for a retry).
+    Failed { message: String },
+}
+
+/// Streams one assistant turn for a conversation.
+///
+/// The DB is the source of truth: the user message is persisted first, the full
+/// history is loaded and sent to `/api/chat` (so the model's chat template frames
+/// the roles), tokens stream back over `on_event`, and the assistant message +
+/// stats are persisted on success. Serialized behind `compare_lock` (shared with
+/// compare/research/benchmark) so a turn never competes for RAM with those.
+#[tauri::command]
+async fn run_chat(
+    app: AppHandle,
+    conversation_id: String,
+    model: String,
+    content: String,
+    on_event: Channel<ChatEvent>,
+) -> Result<(), String> {
+    ensure_server(&app).await?;
+    let registry = registry(&app)?;
+
+    // First message in an empty conversation names it (and it may switch models).
+    let prior = registry.messages_for(&conversation_id).map_err(|e| e.to_string())?;
+    if prior.is_empty() {
+        let title: String = content.trim().chars().take(CHAT_TITLE_LEN).collect();
+        let _ = registry.rename_conversation(&conversation_id, if title.is_empty() { "New chat" } else { &title });
+    }
+    let _ = registry.set_conversation_model(&conversation_id, &model);
+
+    // Persist the user turn, then build the message array from full history.
+    registry
+        .append_message(
+            &conversation_id,
+            &StoredMessage {
+                id: rand_hex(8)?,
+                role: "user".into(),
+                content: content.clone(),
+                stats_json: None,
+                created_ms: now_ms(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    let messages: Vec<ChatMessage> = registry
+        .messages_for(&conversation_id)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|m| ChatMessage { role: m.role, content: m.content })
+        .collect();
+
+    let req = ChatRequest {
+        model,
+        messages,
+        keep_alive_secs: CHAT_KEEP_ALIVE_SECS,
+        // Answer directly rather than stream reasoning into a `thinking` field
+        // (which `content` — what we stream — would leave empty). Matches the
+        // comparison/benchmark requests. A "show reasoning" toggle can flip this.
+        think: Some(false),
+        num_ctx: None,
+        temperature: None,
+    };
+
+    let state = app.state::<ServerState>();
+    let _run = state.compare_lock.lock().await;
+    let result = registry
+        .chat(&req, |tok| {
+            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
+            let _ = on_event.send(ChatEvent::Token { text: tok.to_string() });
+        })
+        .await;
+
+    match result {
+        Ok((text, stats)) => {
+            let _ = registry.append_message(
+                &conversation_id,
+                &StoredMessage {
+                    id: rand_hex(8)?,
+                    role: "assistant".into(),
+                    content: text.clone(),
+                    stats_json: serde_json::to_string(&stats).ok(),
+                    created_ms: now_ms(),
+                },
+            );
+            let _ = on_event.send(ChatEvent::Result { response: text, stats });
+            Ok(())
+        }
+        Err(e) => {
+            let _ = on_event.send(ChatEvent::Failed { message: e.to_string() });
+            Ok(())
+        }
+    }
+}
+
+/// Lists chat conversations, most-recently-updated first.
+#[tauri::command]
+async fn list_conversations(app: AppHandle) -> Result<Vec<Conversation>, String> {
+    registry(&app)?.list_conversations().map_err(|e| e.to_string())
+}
+
+/// Creates an empty conversation for the given model. Title is set from the
+/// first message on the first [`run_chat`].
+#[tauri::command]
+async fn create_conversation(app: AppHandle, model: String) -> Result<Conversation, String> {
+    registry(&app)?
+        .create_conversation(&rand_hex(8)?, "New chat", &model, now_ms())
+        .map_err(|e| e.to_string())
+}
+
+/// Reads a conversation's messages in chronological order.
+#[tauri::command]
+async fn conversation_messages(app: AppHandle, id: String) -> Result<Vec<StoredMessage>, String> {
+    registry(&app)?.messages_for(&id).map_err(|e| e.to_string())
+}
+
+/// Renames a conversation.
+#[tauri::command]
+async fn rename_conversation(app: AppHandle, id: String, title: String) -> Result<(), String> {
+    registry(&app)?.rename_conversation(&id, &title).map_err(|e| e.to_string())
+}
+
+/// Deletes a conversation and all of its messages.
+#[tauri::command]
+async fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
+    registry(&app)?.delete_conversation(&id).map_err(|e| e.to_string())
+}
+
 /// Evicts a model's weights from Ollama. The frontend calls this when a run is
 /// cancelled or its view unmounts, so a dropped generation stream never leaves a
 /// model resident. Best-effort — a down server (nothing to unload) is ignored.
@@ -346,16 +492,22 @@ fn install_id(app: &AppHandle) -> Result<String, String> {
             return Ok(trimmed.to_string());
         }
     }
-    let mut bytes = [0u8; 16];
+    let id = rand_hex(16)?;
+    let _ = std::fs::create_dir_all(&dir);
+    std::fs::write(&path, &id).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// `n` random bytes from the system CSPRNG, hex-encoded. Used for install and
+/// message ids without pulling in a uuid crate for a couple of call sites.
+fn rand_hex(n: usize) -> Result<String, String> {
+    let mut bytes = vec![0u8; n];
     std::io::Read::read_exact(
         &mut std::fs::File::open("/dev/urandom").map_err(|e| e.to_string())?,
         &mut bytes,
     )
     .map_err(|e| e.to_string())?;
-    let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let _ = std::fs::create_dir_all(&dir);
-    std::fs::write(&path, &id).map_err(|e| e.to_string())?;
-    Ok(id)
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// The host's benchmark match identity, derived from the cached hardware profile.
@@ -489,6 +641,12 @@ pub fn run() {
             download_model,
             compare_models,
             run_research,
+            run_chat,
+            list_conversations,
+            create_conversation,
+            conversation_messages,
+            rename_conversation,
+            delete_conversation,
             unload_model,
             remove_model,
             get_hardware_profile,

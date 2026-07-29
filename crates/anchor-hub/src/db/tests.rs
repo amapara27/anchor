@@ -228,6 +228,46 @@ fn review_allowance_caps_at_three_per_week_but_rereads_are_free() {
 }
 
 #[test]
+fn conversation_messages_round_trip_and_delete_cascades() {
+    let conn = in_memory();
+    let conv = Conversation {
+        id: "c1".to_string(),
+        title: "First chat".to_string(),
+        model: "llama3.1:8b".to_string(),
+        created_ms: 1_000,
+        updated_ms: 1_000,
+    };
+    insert_conversation(&conn, &conv).unwrap();
+
+    let user = StoredMessage {
+        id: "m1".to_string(),
+        role: "user".to_string(),
+        content: "hi".to_string(),
+        stats_json: None,
+        created_ms: 1_100,
+    };
+    let assistant = StoredMessage {
+        id: "m2".to_string(),
+        role: "assistant".to_string(),
+        content: "hello".to_string(),
+        stats_json: Some("{\"eval_count\":5}".to_string()),
+        created_ms: 1_200,
+    };
+    append_message(&conn, "c1", &user).unwrap();
+    append_message(&conn, "c1", &assistant).unwrap();
+
+    // Read back in order, and the last append bumped updated_ms.
+    let msgs = messages_for(&conn, "c1").unwrap();
+    assert_eq!(msgs.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["m1", "m2"]);
+    assert_eq!(list_conversations(&conn).unwrap()[0].updated_ms, 1_200);
+
+    // Deleting the conversation cascades its messages.
+    delete_conversation(&conn, "c1").unwrap();
+    assert!(list_conversations(&conn).unwrap().is_empty());
+    assert!(messages_for(&conn, "c1").unwrap().is_empty());
+}
+
+#[test]
 fn delete_one_removes_a_single_row() {
     let mut conn = in_memory();
     replace_all(

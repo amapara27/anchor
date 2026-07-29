@@ -614,6 +614,161 @@ where
     Ok((text, stats))
 }
 
+/// One turn in a chat conversation. Mirrors Ollama's `/api/chat` message shape
+/// and the frontend `ChatMessage` (role + content).
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct ChatMessage {
+    /// `"user"`, `"assistant"`, or `"system"`.
+    pub role: String,
+    pub content: String,
+}
+
+/// Parameters for a streaming `POST /api/chat` call — the multi-turn cousin of
+/// [`GenerateRequest`]. Full message history is sent each turn so the model's
+/// own chat template frames the roles (flattening to a single prompt would
+/// bypass that and degrade multi-turn quality).
+#[derive(Debug, Clone)]
+pub struct ChatRequest {
+    pub model: String,
+    /// The full conversation so far, oldest first, including the new user turn.
+    pub messages: Vec<ChatMessage>,
+    /// `keep_alive` in seconds. A positive value keeps weights resident between
+    /// turns; `0` evicts immediately.
+    pub keep_alive_secs: i64,
+    /// Whether a thinking-capable model emits reasoning. `Some(false)` makes such
+    /// models answer directly — otherwise the reasoning streams in a separate
+    /// `thinking` field and `content` (what we stream) stays empty. `None` omits it.
+    pub think: Option<bool>,
+    /// Context window (`options.num_ctx`). `None` leaves Ollama's default.
+    pub num_ctx: Option<u32>,
+    /// Sampling temperature (`options.temperature`). `None` leaves the default.
+    pub temperature: Option<f32>,
+}
+
+/// The `message` sub-object of one `/api/chat` frame. Intermediate frames carry
+/// a `content` delta; a thinking model may stream reasoning in `thinking`.
+#[derive(Debug, Default, Deserialize)]
+struct ChatFrameMessage {
+    #[serde(default)]
+    content: String,
+    #[serde(default)]
+    thinking: String,
+}
+
+/// One NDJSON frame from a streaming `POST /api/chat`. Same timing tail as
+/// [`GenerateChunk`], but the token lives under `message.content`.
+#[derive(Debug, Default, Deserialize)]
+struct ChatChunk {
+    #[serde(default)]
+    message: ChatFrameMessage,
+    #[serde(default)]
+    done: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+    #[serde(default)]
+    load_duration: Option<u64>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    prompt_eval_duration: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    eval_duration: Option<u64>,
+}
+
+impl ChatChunk {
+    fn into_stats(self) -> GenerationStats {
+        GenerationStats {
+            total_duration_ns: self.total_duration,
+            load_duration_ns: self.load_duration,
+            prompt_eval_count: self.prompt_eval_count,
+            prompt_eval_duration_ns: self.prompt_eval_duration,
+            eval_count: self.eval_count,
+            eval_duration_ns: self.eval_duration,
+        }
+    }
+}
+
+/// Runs a streaming multi-turn chat, invoking `on_token` for each response delta
+/// and returning the full assistant text plus final [`GenerationStats`].
+///
+/// Mirrors [`generate`] but hits `/api/chat` with a message array, so the model's
+/// chat template handles the roles. A mid-stream `{"error": ...}` frame surfaces
+/// as an error; a thinking-only stream falls back to the reasoning text.
+pub async fn chat<F>(
+    host: &str,
+    req: &ChatRequest,
+    mut on_token: F,
+) -> Result<(String, GenerationStats)>
+where
+    F: FnMut(&str) + Send,
+{
+    let url = format!("{host}/api/chat");
+    let client = reqwest::Client::builder()
+        .connect_timeout(GENERATE_CONNECT_TIMEOUT)
+        .read_timeout(GENERATE_READ_TIMEOUT)
+        .build()?;
+
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "messages": req.messages,
+        "stream": true,
+        "keep_alive": req.keep_alive_secs,
+    });
+    let mut options = serde_json::Map::new();
+    if let Some(num_ctx) = req.num_ctx {
+        options.insert("num_ctx".into(), num_ctx.into());
+    }
+    if let Some(temperature) = req.temperature {
+        options.insert("temperature".into(), temperature.into());
+    }
+    if !options.is_empty() {
+        body["options"] = serde_json::Value::Object(options);
+    }
+    if let Some(think) = req.think {
+        body["think"] = serde_json::Value::Bool(think);
+    }
+
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await?
+        .error_for_status()?;
+
+    let mut text = String::new();
+    let mut thinking = String::new();
+    let mut stats = GenerationStats::default();
+
+    for_each_ndjson_line(resp, MAX_GENERATE_LINE_BYTES, |line| {
+        if let Ok(frame) = serde_json::from_slice::<ChatChunk>(line) {
+            if let Some(err) = frame.error {
+                return Err(Error::Ollama(err));
+            }
+            if !frame.message.content.is_empty() {
+                on_token(&frame.message.content);
+                text.push_str(&frame.message.content);
+            }
+            if !frame.message.thinking.is_empty() {
+                thinking.push_str(&frame.message.thinking);
+            }
+            if frame.done {
+                stats = frame.into_stats();
+            }
+        }
+        Ok(())
+    })
+    .await?;
+
+    if text.is_empty() && !thinking.is_empty() {
+        text = thinking;
+    }
+    Ok((text, stats))
+}
+
 /// Removes a model from the local Ollama server via `DELETE /api/delete`.
 pub async fn delete(host: &str, id: &str) -> Result<()> {
     let url = format!("{host}/api/delete");

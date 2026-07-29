@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Version 1 of the schema.
 ///
@@ -91,6 +91,32 @@ const V1: &str = "
     ALTER TABLE models ADD COLUMN arch TEXT;
 ";
 
+/// Version 2: chat persistence — conversations and their messages.
+///
+/// `ON DELETE CASCADE` needs `PRAGMA foreign_keys=ON` at the connection level;
+/// the cascade is also enforced by hand in [`delete_conversation`] so a
+/// connection without the pragma still can't orphan messages.
+const V2: &str = "
+    CREATE TABLE IF NOT EXISTS conversations (
+        id         TEXT PRIMARY KEY,
+        title      TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        created_ms INTEGER NOT NULL,
+        updated_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+        id              TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        role            TEXT NOT NULL,
+        content         TEXT NOT NULL,
+        stats_json      TEXT,
+        created_ms      INTEGER NOT NULL,
+        FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS messages_by_conversation
+        ON messages (conversation_id, created_ms);
+";
+
 /// Brings the database up to [`SCHEMA_VERSION`]. Idempotent.
 ///
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
@@ -103,6 +129,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     let tx = conn.transaction()?;
     if version < 1 {
         tx.execute_batch(V1)?;
+    }
+    if version < 2 {
+        tx.execute_batch(V2)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -379,6 +408,134 @@ pub struct ReviewAllowance {
     pub unlocked: bool,
     pub used: u32,
     pub allowance: u32,
+}
+
+/// A persisted chat conversation. Mirrored on the frontend as `Conversation`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Conversation {
+    pub id: String,
+    pub title: String,
+    /// The model this conversation talks to (changeable mid-thread).
+    pub model: String,
+    pub created_ms: i64,
+    pub updated_ms: i64,
+}
+
+/// One stored chat turn. Mirrored on the frontend as `ChatMessage` (the `stats`
+/// there is `GenerationStats`, JSON-encoded in `stats_json` here).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StoredMessage {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    /// Generation stats for an assistant turn, as raw JSON. `None` for user turns.
+    pub stats_json: Option<String>,
+    pub created_ms: i64,
+}
+
+/// Inserts a new conversation row.
+pub fn insert_conversation(conn: &Connection, c: &Conversation) -> Result<()> {
+    conn.execute(
+        "INSERT INTO conversations (id, title, model, created_ms, updated_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![c.id, c.title, c.model, c.created_ms, c.updated_ms],
+    )?;
+    Ok(())
+}
+
+/// Lists conversations, most-recently-updated first.
+pub fn list_conversations(conn: &Connection) -> Result<Vec<Conversation>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, model, created_ms, updated_ms
+         FROM conversations ORDER BY updated_ms DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Conversation {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            model: row.get(2)?,
+            created_ms: row.get(3)?,
+            updated_ms: row.get(4)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// The model a conversation currently uses, or `None` if it doesn't exist.
+pub fn conversation_model(conn: &Connection, id: &str) -> Result<Option<String>> {
+    conn.query_row(
+        "SELECT model FROM conversations WHERE id = ?1",
+        [id],
+        |r| r.get(0),
+    )
+    .map(Some)
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other.into()),
+    })
+}
+
+/// Renames a conversation (title only; ordering is untouched).
+pub fn rename_conversation(conn: &Connection, id: &str, title: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE conversations SET title = ?2 WHERE id = ?1",
+        rusqlite::params![id, title],
+    )?;
+    Ok(())
+}
+
+/// Points a conversation at a different model.
+pub fn set_conversation_model(conn: &Connection, id: &str, model: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE conversations SET model = ?2 WHERE id = ?1",
+        rusqlite::params![id, model],
+    )?;
+    Ok(())
+}
+
+/// Deletes a conversation and all of its messages.
+///
+/// Explicit message delete rather than relying on the FK cascade, which needs
+/// `PRAGMA foreign_keys=ON` per connection — this keeps it correct regardless.
+pub fn delete_conversation(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM messages WHERE conversation_id = ?1", [id])?;
+    conn.execute("DELETE FROM conversations WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Appends one message and bumps its conversation's `updated_ms` to the same
+/// timestamp, so the sidebar re-sorts the active chat to the top.
+pub fn append_message(conn: &Connection, conversation_id: &str, m: &StoredMessage) -> Result<()> {
+    conn.execute(
+        "INSERT INTO messages (id, conversation_id, role, content, stats_json, created_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![m.id, conversation_id, m.role, m.content, m.stats_json, m.created_ms],
+    )?;
+    conn.execute(
+        "UPDATE conversations SET updated_ms = ?2 WHERE id = ?1",
+        rusqlite::params![conversation_id, m.created_ms],
+    )?;
+    Ok(())
+}
+
+/// Reads a conversation's messages in chronological order.
+pub fn messages_for(conn: &Connection, conversation_id: &str) -> Result<Vec<StoredMessage>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, role, content, stats_json, created_ms
+         FROM messages WHERE conversation_id = ?1 ORDER BY created_ms",
+    )?;
+    let rows = stmt.query_map([conversation_id], |row| {
+        Ok(StoredMessage {
+            id: row.get(0)?,
+            role: row.get(1)?,
+            content: row.get(2)?,
+            stats_json: row.get(3)?,
+            created_ms: row.get(4)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 fn bench_source_to_str(s: BenchSource) -> &'static str {

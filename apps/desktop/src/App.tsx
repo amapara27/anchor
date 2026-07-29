@@ -3,7 +3,7 @@ import type { ModelsTab, Tab } from "./types";
 import { ModelsProvider } from "./lib/useModels";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
-import { ChatPlaceholder } from "./components/ChatPlaceholder";
+import { ChatWorkspace } from "./components/ChatWorkspace";
 import { WorkflowLibrary } from "./components/WorkflowLibrary";
 import { ModelsHub } from "./components/ModelsHub";
 import { SettingsPage } from "./components/SettingsPage";
@@ -42,13 +42,20 @@ export default function App() {
         <div className="flex min-h-0 flex-1">
           <Sidebar active={tab} onSelect={setTab} />
           <main className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
-            {/* key remounts on tab switch so the page-enter animation replays */}
-            <div key={tab} className="animate-fade-in mx-auto max-w-[1440px] px-6 py-9 lg:px-8">
-              {tab === "chat" && <ChatPlaceholder />}
-              {tab === "agents" && <WorkflowLibrary />}
-              {tab === "models" && <ModelsHub openModel={openModel} initialTab={modelsTab} />}
-              {tab === "settings" && <SettingsPage />}
-            </div>
+            {/* Chat owns the full height (its own internal scroll + composer);
+                every other tab uses the padded, max-width content column. */}
+            {tab === "chat" ? (
+              <div key={tab} className="animate-fade-in h-full">
+                <ChatWorkspace />
+              </div>
+            ) : (
+              // key remounts on tab switch so the page-enter animation replays
+              <div key={tab} className="animate-fade-in mx-auto max-w-[1440px] px-6 py-9 lg:px-8">
+                {tab === "agents" && <WorkflowLibrary />}
+                {tab === "models" && <ModelsHub openModel={openModel} initialTab={modelsTab} />}
+                {tab === "settings" && <SettingsPage />}
+              </div>
+            )}
           </main>
         </div>
 
