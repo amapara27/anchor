@@ -243,6 +243,7 @@ fn conversation_messages_round_trip_and_delete_cascades() {
         id: "m1".to_string(),
         role: "user".to_string(),
         content: "hi".to_string(),
+        thinking: None,
         stats_json: None,
         created_ms: 1_100,
     };
@@ -250,15 +251,17 @@ fn conversation_messages_round_trip_and_delete_cascades() {
         id: "m2".to_string(),
         role: "assistant".to_string(),
         content: "hello".to_string(),
+        thinking: Some("let me think".to_string()),
         stats_json: Some("{\"eval_count\":5}".to_string()),
         created_ms: 1_200,
     };
     append_message(&conn, "c1", &user).unwrap();
     append_message(&conn, "c1", &assistant).unwrap();
 
-    // Read back in order, and the last append bumped updated_ms.
+    // Read back in order, reasoning survives the round-trip, updated_ms bumped.
     let msgs = messages_for(&conn, "c1").unwrap();
     assert_eq!(msgs.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["m1", "m2"]);
+    assert_eq!(msgs[1].thinking.as_deref(), Some("let me think"));
     assert_eq!(list_conversations(&conn).unwrap()[0].updated_ms, 1_200);
 
     // Deleting the conversation cascades its messages.

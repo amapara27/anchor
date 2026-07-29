@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Version 1 of the schema.
 ///
@@ -117,6 +117,10 @@ const V2: &str = "
         ON messages (conversation_id, created_ms);
 ";
 
+/// Adds an assistant turn's reasoning (from a thinking model), shown collapsed
+/// in the UI. Nullable — user turns and non-thinking replies leave it `NULL`.
+const V3: &str = "ALTER TABLE messages ADD COLUMN thinking TEXT;";
+
 /// Brings the database up to [`SCHEMA_VERSION`]. Idempotent.
 ///
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
@@ -132,6 +136,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 2 {
         tx.execute_batch(V2)?;
+    }
+    if version < 3 {
+        tx.execute_batch(V3)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -428,6 +435,8 @@ pub struct StoredMessage {
     pub id: String,
     pub role: String,
     pub content: String,
+    /// A thinking model's reasoning for an assistant turn. `None` otherwise.
+    pub thinking: Option<String>,
     /// Generation stats for an assistant turn, as raw JSON. `None` for user turns.
     pub stats_json: Option<String>,
     pub created_ms: i64,
@@ -508,9 +517,9 @@ pub fn delete_conversation(conn: &Connection, id: &str) -> Result<()> {
 /// timestamp, so the sidebar re-sorts the active chat to the top.
 pub fn append_message(conn: &Connection, conversation_id: &str, m: &StoredMessage) -> Result<()> {
     conn.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, stats_json, created_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![m.id, conversation_id, m.role, m.content, m.stats_json, m.created_ms],
+        "INSERT INTO messages (id, conversation_id, role, content, thinking, stats_json, created_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![m.id, conversation_id, m.role, m.content, m.thinking, m.stats_json, m.created_ms],
     )?;
     conn.execute(
         "UPDATE conversations SET updated_ms = ?2 WHERE id = ?1",
@@ -522,7 +531,7 @@ pub fn append_message(conn: &Connection, conversation_id: &str, m: &StoredMessag
 /// Reads a conversation's messages in chronological order.
 pub fn messages_for(conn: &Connection, conversation_id: &str) -> Result<Vec<StoredMessage>> {
     let mut stmt = conn.prepare(
-        "SELECT id, role, content, stats_json, created_ms
+        "SELECT id, role, content, thinking, stats_json, created_ms
          FROM messages WHERE conversation_id = ?1 ORDER BY created_ms",
     )?;
     let rows = stmt.query_map([conversation_id], |row| {
@@ -530,8 +539,9 @@ pub fn messages_for(conn: &Connection, conversation_id: &str) -> Result<Vec<Stor
             id: row.get(0)?,
             role: row.get(1)?,
             content: row.get(2)?,
-            stats_json: row.get(3)?,
-            created_ms: row.get(4)?,
+            thinking: row.get(3)?,
+            stats_json: row.get(4)?,
+            created_ms: row.get(5)?,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()

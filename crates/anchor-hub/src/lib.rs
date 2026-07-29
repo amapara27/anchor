@@ -250,9 +250,9 @@ impl Registry {
         &self,
         req: &ChatRequest,
         on_token: F,
-    ) -> Result<(String, GenerationStats)>
+    ) -> Result<(String, String, GenerationStats)>
     where
-        F: FnMut(&str) + Send,
+        F: FnMut(bool, &str) + Send,
     {
         ollama::chat(&self.host, req, on_token).await
     }

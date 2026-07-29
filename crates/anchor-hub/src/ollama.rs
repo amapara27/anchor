@@ -692,8 +692,9 @@ impl ChatChunk {
     }
 }
 
-/// Runs a streaming multi-turn chat, invoking `on_token` for each response delta
-/// and returning the full assistant text plus final [`GenerationStats`].
+/// Runs a streaming multi-turn chat, invoking `on_token(is_thinking, delta)` for
+/// each delta (thinking deltas flagged `true`) and returning the full assistant
+/// text, its reasoning, and final [`GenerationStats`].
 ///
 /// Mirrors [`generate`] but hits `/api/chat` with a message array, so the model's
 /// chat template handles the roles. A mid-stream `{"error": ...}` frame surfaces
@@ -702,9 +703,9 @@ pub async fn chat<F>(
     host: &str,
     req: &ChatRequest,
     mut on_token: F,
-) -> Result<(String, GenerationStats)>
+) -> Result<(String, String, GenerationStats)>
 where
-    F: FnMut(&str) + Send,
+    F: FnMut(bool, &str) + Send,
 {
     let url = format!("{host}/api/chat");
     let client = reqwest::Client::builder()
@@ -749,10 +750,11 @@ where
                 return Err(Error::Ollama(err));
             }
             if !frame.message.content.is_empty() {
-                on_token(&frame.message.content);
+                on_token(false, &frame.message.content);
                 text.push_str(&frame.message.content);
             }
             if !frame.message.thinking.is_empty() {
+                on_token(true, &frame.message.thinking);
                 thinking.push_str(&frame.message.thinking);
             }
             if frame.done {
@@ -763,10 +765,12 @@ where
     })
     .await?;
 
+    // A model that thought but produced no answer: promote reasoning to the
+    // answer (and don't also show it as separate thinking) rather than a blank.
     if text.is_empty() && !thinking.is_empty() {
-        text = thinking;
+        text = std::mem::take(&mut thinking);
     }
-    Ok((text, stats))
+    Ok((text, thinking, stats))
 }
 
 /// Removes a model from the local Ollama server via `DELETE /api/delete`.

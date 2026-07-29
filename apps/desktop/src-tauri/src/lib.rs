@@ -254,9 +254,12 @@ const CHAT_TITLE_LEN: usize = 60;
 enum ChatEvent {
     /// One streamed response delta.
     Token { text: String },
+    /// One streamed reasoning delta (thinking-capable models only).
+    Thinking { text: String },
     /// The assistant turn finished; carries the full text (authoritative — a
-    /// thinking model may stream nothing and only produce it here) plus stats.
-    Result { response: String, stats: GenerationStats },
+    /// thinking model may stream nothing and only produce it here), the reasoning
+    /// (empty if none), and stats.
+    Result { response: String, thinking: String, stats: GenerationStats },
     /// The turn failed (the user message is still persisted for a retry).
     Failed { message: String },
 }
@@ -295,6 +298,7 @@ async fn run_chat(
                 id: rand_hex(8)?,
                 role: "user".into(),
                 content: content.clone(),
+                thinking: None,
                 stats_json: None,
                 created_ms: now_ms(),
             },
@@ -311,10 +315,10 @@ async fn run_chat(
         model,
         messages,
         keep_alive_secs: CHAT_KEEP_ALIVE_SECS,
-        // Answer directly rather than stream reasoning into a `thinking` field
-        // (which `content` — what we stream — would leave empty). Matches the
-        // comparison/benchmark requests. A "show reasoning" toggle can flip this.
-        think: Some(false),
+        // Omit `think` so thinking-capable models stream their reasoning (surfaced
+        // collapsed in the UI) while others answer directly. `Some(true)` would
+        // error on non-thinking models like llama3.1.
+        think: None,
         num_ctx: None,
         temperature: None,
     };
@@ -322,25 +326,30 @@ async fn run_chat(
     let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
     let result = registry
-        .chat(&req, |tok| {
+        .chat(&req, |is_thinking, tok| {
             // Best-effort: a dropped channel (UI navigated away) shouldn't error.
-            let _ = on_event.send(ChatEvent::Token { text: tok.to_string() });
+            let _ = on_event.send(if is_thinking {
+                ChatEvent::Thinking { text: tok.to_string() }
+            } else {
+                ChatEvent::Token { text: tok.to_string() }
+            });
         })
         .await;
 
     match result {
-        Ok((text, stats)) => {
+        Ok((text, thinking, stats)) => {
             let _ = registry.append_message(
                 &conversation_id,
                 &StoredMessage {
                     id: rand_hex(8)?,
                     role: "assistant".into(),
                     content: text.clone(),
+                    thinking: (!thinking.is_empty()).then(|| thinking.clone()),
                     stats_json: serde_json::to_string(&stats).ok(),
                     created_ms: now_ms(),
                 },
             );
-            let _ = on_event.send(ChatEvent::Result { response: text, stats });
+            let _ = on_event.send(ChatEvent::Result { response: text, thinking, stats });
             Ok(())
         }
         Err(e) => {
