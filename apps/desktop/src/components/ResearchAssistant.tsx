@@ -6,6 +6,7 @@ import { formatTokSec, tokensPerSecond } from "../lib/format";
 import type { ResearchDepth, ResearchFormat } from "../types";
 import { PageHeader } from "./PageHeader";
 import { ModelPicker } from "./ModelPicker";
+import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
 import { Chip } from "./ui/Chip";
 import { CheckIcon, ChevronDownIcon, SearchIcon } from "./icons";
@@ -202,7 +203,7 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
 }
 
 const INPUT_CLASS =
-  "w-full rounded-lg border border-white/8 bg-white/5 px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60";
+  "w-full rounded-lg border border-hair bg-inset px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60";
 
 /** Labeled form row. */
 function Field({
@@ -227,43 +228,6 @@ function Field({
         )}
       </label>
       {children}
-    </div>
-  );
-}
-
-/** Native select styled with the app's SelectChip idiom. */
-function Select<T extends string>({
-  label,
-  value,
-  onChange,
-  options,
-  disabled,
-}: {
-  label: string;
-  value: T;
-  onChange: (v: T) => void;
-  options: { value: T; label: string }[];
-  disabled?: boolean;
-}) {
-  return (
-    <div className="min-w-0 flex-1">
-      <label className="mb-1.5 block label-caps">{label}</label>
-      <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value as T)}
-          disabled={disabled}
-          aria-label={label}
-          className="w-full cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/5 py-2.5 pl-3 pr-9 text-sm font-medium text-fg transition-colors hover:border-white/15 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50 [&>option]:bg-surface [&>option]:text-fg"
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
-      </div>
     </div>
   );
 }
@@ -350,7 +314,7 @@ function PhaseStepper({ phase }: { phase: ResearchState["phase"] }) {
                   ? "bg-accent/15 text-accent-text ring-accent/40"
                   : done
                     ? "text-ok ring-ok/30"
-                    : "text-fg-subtle ring-white/10",
+                    : "text-fg-subtle ring-hair",
               ].join(" ")}
             >
               {active ? (
@@ -362,7 +326,7 @@ function PhaseStepper({ phase }: { phase: ResearchState["phase"] }) {
               )}
               {step.label}
             </span>
-            {i < STEPS.length - 1 && <span className="h-px w-4 bg-white/10" />}
+            {i < STEPS.length - 1 && <span className="h-px w-4 bg-raised" />}
           </div>
         );
       })}
@@ -373,7 +337,7 @@ function PhaseStepper({ phase }: { phase: ResearchState["phase"] }) {
 function Spinner({ small }: { small?: boolean }) {
   return (
     <span
-      className={`${small ? "size-3 border" : "size-4 border-2"} animate-spin rounded-full border-white/30 border-t-white`}
+      className={`${small ? "size-3 border" : "size-4 border-2"} animate-spin rounded-full border-hair2 border-t-white`}
       aria-hidden
     />
   );

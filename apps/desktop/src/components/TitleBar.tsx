@@ -1,12 +1,6 @@
-import type { Tab } from "../types";
+import { useServerStatus } from "../lib/useServerStatus";
+import { useTheme } from "../lib/useTheme";
 import { SearchIcon } from "./icons";
-
-const PAGE_LABEL: Record<Tab, string> = {
-  chat: "Chat",
-  agents: "Agents",
-  models: "Models",
-  settings: "Settings",
-};
 
 /**
  * Custom frameless top bar. The window uses macOS `titleBarStyle: "Overlay"`,
@@ -14,33 +8,56 @@ const PAGE_LABEL: Record<Tab, string> = {
  * (`pl-20`) and make the whole strip a drag region. Interactive children opt out
  * of dragging by simply not carrying the `data-tauri-drag-region` attribute.
  */
-export function TitleBar({ active, onOpenPalette }: { active: Tab; onOpenPalette?: () => void }) {
+export function TitleBar({ onOpenPalette }: { onOpenPalette?: () => void }) {
+  const { status } = useServerStatus();
+  const { theme, toggle } = useTheme();
+  const reachable = status?.reachable ?? false;
+
   return (
     <header
       data-tauri-drag-region
-      className="relative z-30 flex h-16 shrink-0 select-none items-center border-b border-white/8 bg-chrome pl-20 pr-4"
+      className="relative z-30 flex h-[42px] shrink-0 select-none items-center gap-3.5 border-b border-hair bg-chrome pl-20 pr-3.5"
     >
-      {/* Left: current location, sitting just past the traffic-lights inset. */}
-      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        <span className="text-[13px] font-semibold tracking-tight text-fg">
-          Anchor
-        </span>
-        <span className="text-fg-subtle" aria-hidden>
-          /
-        </span>
-        <span className="truncate text-[13px] font-medium text-fg-muted">{PAGE_LABEL[active]}</span>
-      </div>
+      <span data-tauri-drag-region className="data text-[11px] uppercase tracking-[0.06em] text-fg-subtle">
+        Anchor
+      </span>
 
-      {/* Center: command-palette trigger styled as the global search field. */}
+      <div data-tauri-drag-region className="flex-1" />
+
       <button
         type="button"
         onClick={onOpenPalette}
-        aria-label="Open command palette"
-        className="absolute left-1/2 top-1/2 flex w-96 max-w-[40vw] -translate-x-1/2 -translate-y-1/2 cursor-pointer items-center gap-2.5 rounded-[var(--radius-control)] border border-white/8 bg-canvas px-3 py-2 text-left transition-colors duration-150 ease-out hover:border-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+        aria-label="Search or run a command"
+        className="flex h-[26px] cursor-pointer items-center gap-2 rounded-[7px] border border-hair bg-inset px-2.5 text-xs text-fg-subtle transition-colors duration-150 ease-out hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
       >
-        <SearchIcon className="size-4 shrink-0 text-fg-subtle" />
-        <span className="flex-1 truncate text-sm text-fg-subtle">Search models, pages…</span>
-        <kbd className="data shrink-0 text-[11px] leading-none tracking-tight text-fg-subtle">⌘ K</kbd>
+        <SearchIcon className="size-3.5" />
+        <span>Search or run a command</span>
+        <kbd className="data rounded border border-hair px-1 py-px text-[10px] leading-none">⌘K</kbd>
+      </button>
+
+      {/* Live Ollama reachability — the one always-on status in the app. */}
+      <div
+        className="flex items-center gap-1.5 rounded-full border border-hair py-[3px] pl-[7px] pr-2.5"
+        title={reachable ? "Ollama is reachable" : "Ollama is not running"}
+      >
+        <span
+          className={`size-1.5 rounded-full ${reachable ? "animate-pulse-dot bg-ok" : "bg-fg-subtle"}`}
+          aria-hidden
+        />
+        <span className="data text-[10.5px] text-fg-muted">
+          {reachable ? `Ollama${status?.version ? ` · ${status.version}` : ""}` : "Ollama offline"}
+        </span>
+      </div>
+
+      <button
+        type="button"
+        onClick={toggle}
+        title="Toggle appearance"
+        aria-label="Toggle appearance"
+        className="data flex h-[26px] cursor-pointer items-center gap-2 rounded-full border border-hair px-2.5 text-[10.5px] text-fg-muted transition-colors duration-150 ease-out hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+      >
+        <span className="size-2.5 rounded-full bg-accent" aria-hidden />
+        {theme === "dark" ? "Dark" : "Light"}
       </button>
     </header>
   );

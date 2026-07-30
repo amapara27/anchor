@@ -1,6 +1,10 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import type { Tab } from "../types";
-import { ChatIcon, LibraryIcon, PanelLeftIcon, SettingsIcon, WorkflowIcon } from "./icons";
+import { useModels } from "../lib/useModels";
+import { useHardwareProfile } from "../lib/useHardwareProfile";
+import { formatBytes } from "../lib/format";
+import { Meter } from "./ui/SegmentedBar";
+import { BarChartIcon, ChatIcon, CubeIcon, DatabaseIcon, SettingsIcon, TargetIcon } from "./icons";
 
 interface SidebarProps {
   active: Tab;
@@ -9,77 +13,57 @@ interface SidebarProps {
 
 type NavItem = { tab: Tab; label: string; Icon: typeof ChatIcon };
 
-// Two groups: Workspace leads with use (chat/agents); Manage is the tooling.
+// Workspace leads with use (chat/agents); Manage is the tooling around it.
 const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
   {
     heading: "Workspace",
     items: [
       { tab: "chat", label: "Chat", Icon: ChatIcon },
-      { tab: "agents", label: "Agents", Icon: WorkflowIcon },
+      { tab: "agents", label: "Agents", Icon: TargetIcon },
     ],
   },
   {
     heading: "Manage",
     items: [
-      { tab: "models", label: "Models", Icon: LibraryIcon },
+      { tab: "models", label: "Models", Icon: CubeIcon },
+      { tab: "storage", label: "Storage", Icon: DatabaseIcon },
+      { tab: "benchmarks", label: "Benchmarks", Icon: BarChartIcon },
       { tab: "settings", label: "Settings", Icon: SettingsIcon },
     ],
   },
 ];
 
 const VERSION = "v0.1.0";
-const STORAGE_KEY = "anchor.sidebarCollapsed";
 
-/** Persistent, collapsible left navigation rail. */
+/** Persistent left navigation rail. */
 export function Sidebar({ active, onSelect }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY) === "true";
-    } catch {
-      return false;
-    }
-  });
+  const { models } = useModels();
+  const { profile } = useHardwareProfile();
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, String(collapsed));
-    } catch {
-      // Storage may be unavailable; collapse state stays in-memory.
-    }
-  }, [collapsed]);
+  // Real headroom: installed model weights against this Mac's unified memory.
+  const weightsBytes = useMemo(
+    () => models.filter((m) => m.status === "installed").reduce((sum, m) => sum + (m.size_bytes ?? 0), 0),
+    [models],
+  );
+  const memoryBytes = profile?.memory_bytes ?? null;
+  const fraction = memoryBytes && memoryBytes > 0 ? weightsBytes / memoryBytes : 0;
 
   return (
-    <aside
-      className={[
-        "flex h-full shrink-0 flex-col border-r border-white/8 bg-chrome px-3 py-5 transition-[width] duration-300",
-        "[transition-timing-function:var(--ease-out)]",
-        collapsed ? "w-16" : "w-[260px]",
-      ].join(" ")}
-    >
-      <div className={["flex items-center gap-2.5 px-1", collapsed ? "justify-center" : ""].join(" ")}>
-        {/* Brand tile: flat neutral square with the mark in the single accent. */}
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/8 bg-white/5">
-          <AnchorMark className="size-5 text-accent-text" />
+    <aside className="flex h-full w-[216px] shrink-0 flex-col gap-0.5 border-r border-hair bg-chrome px-2.5 py-3.5">
+      <div className="flex items-center gap-2.5 px-1.5 pb-3.5 pt-0.5">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-hair bg-accent-soft">
+          <AnchorMark className="size-4 text-accent-text" />
         </span>
-        {!collapsed && (
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-lg font-semibold leading-tight tracking-tight text-fg">Anchor</span>
-            <span className="label-caps block leading-tight">{VERSION}</span>
-          </span>
-        )}
-        {!collapsed && <ToggleButton collapsed={collapsed} onClick={() => setCollapsed((c) => !c)} />}
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-[15px] font-semibold tracking-tight text-fg">Anchor</span>
+          <span className="data text-[10px] text-fg-subtle">{VERSION}</span>
+        </span>
       </div>
 
-      {collapsed && (
-        <div className="mt-3 flex justify-center">
-          <ToggleButton collapsed={collapsed} onClick={() => setCollapsed((c) => !c)} />
-        </div>
-      )}
-
-      <nav className="mt-7 flex flex-col gap-5">
+      <nav className="flex flex-col gap-0.5">
         {NAV_GROUPS.map((group) => (
-          <div key={group.heading} className="flex flex-col gap-1">
-            {!collapsed && <span className="label-caps px-3 pb-1">{group.heading}</span>}
+          <div key={group.heading} className="flex flex-col gap-0.5">
+            <span className="label-caps px-2 pb-1 pt-3.5 first:pt-1.5">{group.heading}</span>
             {group.items.map(({ tab, label, Icon }) => {
               const isActive = active === tab;
               return (
@@ -88,19 +72,14 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
                   type="button"
                   onClick={() => onSelect(tab)}
                   aria-current={isActive ? "page" : undefined}
-                  aria-label={collapsed ? label : undefined}
-                  title={collapsed ? label : undefined}
                   className={[
-                    "flex h-[38px] w-full cursor-pointer items-center gap-2.5 rounded-r-lg border-l-2 text-sm font-medium transition-colors active:scale-[0.98]",
-                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-                    collapsed ? "justify-center px-0" : "px-3",
-                    isActive
-                      ? "border-accent bg-white/5 text-fg"
-                      : "border-transparent text-fg-muted hover:bg-white/[0.03] hover:text-fg",
+                    "flex h-[34px] w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] font-medium",
+                    "transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
+                    isActive ? "bg-accent-soft text-fg" : "text-fg-muted hover:bg-inset hover:text-fg",
                   ].join(" ")}
                 >
-                  <Icon className={["size-4 shrink-0", isActive ? "text-accent-text" : ""].join(" ")} />
-                  {!collapsed && label}
+                  <Icon className={`size-4 shrink-0 ${isActive ? "text-accent-text" : ""}`} />
+                  {label}
                 </button>
               );
             })}
@@ -108,33 +87,28 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         ))}
       </nav>
 
-      {/* Footer: version + the local-first promise. Green dot = running locally. */}
-      <div
-        className={[
-          "mt-auto flex items-center gap-2 border-t border-white/8 pt-4 text-[11px] text-fg-subtle",
-          collapsed ? "justify-center px-0" : "px-2",
-        ].join(" ")}
-        title="Everything runs on this Mac"
-      >
-        <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
-        {!collapsed && <span className="data truncate">100% local</span>}
+      {/* Footer: unified-memory headroom + the local-first promise. */}
+      <div className="mt-auto flex flex-col gap-2 border-t border-hair px-1 pt-3.5">
+        {memoryBytes != null && (
+          <>
+            <div className="data flex justify-between gap-2 whitespace-nowrap text-[10.5px] text-fg-subtle">
+              <span>Memory</span>
+              <span className="text-fg-muted">
+                {formatBytes(weightsBytes)} / {formatBytes(memoryBytes)}
+              </span>
+            </div>
+            <Meter fraction={fraction} />
+          </>
+        )}
+        <div
+          className="data flex items-center gap-1.5 text-[10.5px] text-fg-subtle"
+          title="Everything runs on this Mac"
+        >
+          <span className="size-[5px] shrink-0 rounded-full bg-ok" aria-hidden />
+          100% local
+        </div>
       </div>
     </aside>
-  );
-}
-
-function ToggleButton({ collapsed, onClick }: { collapsed: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      aria-pressed={collapsed}
-      title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      className="cursor-pointer rounded-md p-1.5 text-fg-subtle transition-colors hover:bg-white/6 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-    >
-      <PanelLeftIcon className="size-4" />
-    </button>
   );
 }
 
@@ -150,10 +124,11 @@ function AnchorMark({ className }: { className?: string }) {
       className={className}
       aria-hidden
     >
-      <circle cx="12" cy="5" r="2.5" />
-      <path d="M12 7.5V21" />
-      <path d="M5 12H3a9 9 0 0 0 18 0h-2" />
-      <path d="M8 12H16" />
+      <circle cx="12" cy="3.6" r="2" />
+      <path d="M12 5.6v15.2" />
+      <path d="M8.2 8.6h7.6" />
+      <path d="M3.5 12.9a8.5 8.5 0 0 0 8.5 7.9 8.5 8.5 0 0 0 8.5-7.9" />
+      <path d="M3.5 12.9 1.7 11.2M3.5 12.9l2.3-.6M20.5 12.9l1.8-1.7M20.5 12.9l-2.3-.6" />
     </svg>
   );
 }

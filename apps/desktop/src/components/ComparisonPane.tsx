@@ -3,7 +3,7 @@ import type { SlotState } from "../lib/useComparison";
 import { formatBytes, formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
 import { SparkleIcon, WarningIcon, ZapIcon } from "./icons";
 import { ProgressTrack } from "./DownloadProgressBar";
-import { StatTile } from "./ui/StatTile";
+import { StatCard } from "./ui/StatCard";
 
 interface ComparisonPaneProps {
   /** "A" / "B" — shown as an eyebrow so the panes are distinguishable. */
@@ -113,9 +113,9 @@ function GeneratingState() {
         Generating…
       </div>
       <div className="space-y-2">
-        <div className="shimmer h-3 w-11/12 rounded bg-white/6" />
-        <div className="shimmer h-3 w-4/5 rounded bg-white/6" />
-        <div className="shimmer h-3 w-2/3 rounded bg-white/6" />
+        <div className="shimmer h-3 w-11/12 rounded bg-inset" />
+        <div className="shimmer h-3 w-4/5 rounded bg-inset" />
+        <div className="shimmer h-3 w-2/3 rounded bg-inset" />
       </div>
     </div>
   );
@@ -155,9 +155,9 @@ function StatRow({
       ? (stats.load_duration_ns ?? 0) + (stats.prompt_eval_duration_ns ?? 0)
       : null;
   return (
-    <div className="mt-4 border-t border-white/8 pt-4">
+    <div className="mt-4 border-t border-hair pt-4">
       <div className="grid grid-cols-2 gap-2">
-        <StatTile
+        <StatCard
           recessed
           compact
           label="Throughput"
@@ -168,9 +168,9 @@ function StatRow({
             </span>
           }
         />
-        <StatTile recessed compact label="TTFT" value={formatDuration(ttftNs)} sub="load + prompt eval" />
-        <StatTile recessed compact label="Total" value={formatDuration(stats.total_duration_ns)} />
-        <StatTile
+        <StatCard recessed compact label="TTFT" value={formatDuration(ttftNs)} sub="load + prompt eval" />
+        <StatCard recessed compact label="Total" value={formatDuration(stats.total_duration_ns)} />
+        <StatCard
           recessed
           compact
           label="Tokens"
@@ -189,8 +189,8 @@ function StatRow({
 }
 
 const PHASE_META: Record<SlotState["phase"], { label: string; cls: string }> = {
-  idle: { label: "Idle", cls: "text-fg-subtle ring-white/10" },
-  queued: { label: "Queued", cls: "text-fg-muted ring-white/10" },
+  idle: { label: "Idle", cls: "text-fg-subtle ring-hair" },
+  queued: { label: "Queued", cls: "text-fg-muted ring-hair" },
   downloading: { label: "Downloading", cls: "text-accent-text ring-accent/25" },
   loading: { label: "Loading", cls: "text-accent-text ring-accent/25" },
   generating: { label: "Generating", cls: "text-accent-text ring-accent/25" },
@@ -203,7 +203,7 @@ function PhaseChip({ phase }: { phase: SlotState["phase"] }) {
   return (
     <span
       className={[
-        "rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
+        "rounded-md bg-inset px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
         meta.cls,
       ].join(" ")}
     >

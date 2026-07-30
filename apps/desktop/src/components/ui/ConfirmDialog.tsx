@@ -47,7 +47,7 @@ export function ConfirmDialog({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="relative w-full max-w-sm rounded-[var(--radius-card)] border border-[var(--hairline-strong)] bg-surface p-5 shadow-overlay outline-none"
+        className="relative w-full max-w-sm rounded-[var(--radius-card)] border border-hair2 bg-surface p-5 shadow-overlay outline-none"
       >
         <h2 className="text-base font-semibold text-fg">{title}</h2>
         <p className="mt-1.5 text-sm leading-relaxed text-fg-muted">{body}</p>

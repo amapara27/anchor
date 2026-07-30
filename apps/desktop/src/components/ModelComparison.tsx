@@ -114,7 +114,7 @@ export function ModelComparison() {
             disabled={running || loading}
           />
           <div className="flex shrink-0 items-center justify-center pb-7 lg:pb-9">
-            <span className="data flex size-8 items-center justify-center rounded-full bg-white/5 text-xs font-semibold text-fg-muted ring-1 ring-white/10">
+            <span className="data flex size-8 items-center justify-center rounded-full bg-inset text-xs font-semibold text-fg-muted ring-1 ring-hair">
               VS
             </span>
           </div>
@@ -142,7 +142,7 @@ export function ModelComparison() {
             disabled={running}
             rows={3}
             placeholder="Ask both models the same thing…"
-            className="scrollbar-slim w-full resize-y rounded-lg border border-white/8 bg-white/5 px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+            className="scrollbar-slim w-full resize-y rounded-lg border border-hair bg-inset px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
           />
         </div>
 
@@ -237,11 +237,11 @@ function ThroughputBar({
               <span className="data truncate font-medium text-fg">{row.name}</span>
               <span className="data text-fg-muted">{formatTokSec(row.tok)}</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/8">
+            <div className="h-2 overflow-hidden rounded-full bg-raised">
               <div
                 className={[
                   "h-full rounded-full transition-[width] duration-500 [transition-timing-function:var(--ease-out)]",
-                  row.lead ? "bg-accent" : "bg-white/20",
+                  row.lead ? "bg-accent" : "bg-hair2",
                 ].join(" ")}
                 style={{ width: `${(row.tok / max) * 100}%` }}
               />
@@ -256,7 +256,7 @@ function ThroughputBar({
 function Spinner() {
   return (
     <span
-      className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white"
+      className="size-4 animate-spin rounded-full border-2 border-hair2 border-t-white"
       aria-hidden
     />
   );

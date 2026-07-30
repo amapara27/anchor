@@ -2,7 +2,8 @@ import type { HardwareProfile, LibraryModel, QuantId } from "../types";
 import { formatBytes, formatTokSec } from "../lib/format";
 import { DEFAULT_CONTEXT, estimateFit } from "../lib/fit";
 import { resolveTokPerSec } from "../lib/tokps";
-import { ChevronDownIcon, DownloadIcon } from "./icons";
+import { ModelSelect } from "./ui/ModelSelect";
+import { DownloadIcon } from "./icons";
 
 interface ModelPickerProps {
   label: string;
@@ -12,8 +13,7 @@ interface ModelPickerProps {
   /** Model chosen in the other slot — disabled here so the two stay distinct. */
   disabledId?: string;
   disabled?: boolean;
-  /** When set, show a fit + throughput hint for the selected model (the moat).
-   *  Native `<select>` can't render per-row hints, so it targets the selection. */
+  /** When set, show a fit + throughput hint for the selected model (the moat). */
   profile?: HardwareProfile | null;
 }
 
@@ -25,22 +25,11 @@ const FIT_LABEL: Record<string, { text: string; tone: string } | undefined> = {
 };
 
 /**
- * Labeled model dropdown for one comparison slot. Reuses the `SelectChip` idiom
- * (appearance-none native select + our chevron) from `LibraryToolbar`, grouped
- * into Installed / Available, with a status line below so the user knows whether
- * a pick will trigger a download.
+ * Labeled model dropdown for one comparison slot: the shared `ModelSelect`
+ * (installed/available groups, per-row fit and size) plus a status line so the
+ * user knows whether a pick will trigger a download.
  */
-export function ModelPicker({
-  label,
-  value,
-  onChange,
-  models,
-  disabledId,
-  disabled,
-  profile,
-}: ModelPickerProps) {
-  const installed = models.filter((m) => m.status === "installed");
-  const available = models.filter((m) => m.status === "available");
+export function ModelPicker({ label, value, onChange, models, disabledId, disabled, profile }: ModelPickerProps) {
   const selected = models.find((m) => m.id === value);
 
   // Hardware hint for the selected model (only when a profile is supplied).
@@ -62,41 +51,16 @@ export function ModelPicker({
 
   return (
     <div className="min-w-0 flex-1">
-      <label className="mb-1.5 block label-caps">
-        {label}
-      </label>
-      <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-          aria-label={`${label} model`}
-          className="w-full cursor-pointer appearance-none rounded-lg border border-white/8 bg-white/5 py-2.5 pl-3 pr-9 text-sm font-medium text-fg transition-colors hover:border-white/15 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50 [&>optgroup]:bg-surface [&>option]:bg-surface [&>option]:text-fg"
-        >
-          <option value="" disabled>
-            Choose a model…
-          </option>
-          {installed.length > 0 && (
-            <optgroup label="Installed">
-              {installed.map((m) => (
-                <option key={m.id} value={m.id} disabled={m.id === disabledId}>
-                  {m.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-          {available.length > 0 && (
-            <optgroup label="Available to download">
-              {available.map((m) => (
-                <option key={m.id} value={m.id} disabled={m.id === disabledId}>
-                  {m.name}
-                </option>
-              ))}
-            </optgroup>
-          )}
-        </select>
-        <ChevronDownIcon className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-fg-subtle" />
-      </div>
+      <ModelSelect
+        label={label}
+        ariaLabel={`${label} model`}
+        value={value}
+        onChange={onChange}
+        models={models}
+        profile={profile}
+        disabled={disabled}
+        disabledId={disabledId}
+      />
 
       {/* Install status — icon + text, never colour alone. */}
       <div className="mt-2 flex items-center gap-1.5 text-xs">

@@ -76,7 +76,7 @@ export function SearchPage() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="e.g. a model for web scraping, or RAG over my notes…"
           aria-label="Describe your use case"
-          className="w-full rounded-[var(--radius-card)] border border-white/8 bg-white/5 py-3 pl-10 pr-32 text-sm text-fg placeholder:text-fg-subtle transition-colors focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
+          className="w-full rounded-[var(--radius-card)] border border-hair bg-inset py-3 pl-10 pr-32 text-sm text-fg placeholder:text-fg-subtle transition-colors focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
         {/* Right cluster: clear + Search grouped so they can't overlap. */}
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -174,7 +174,7 @@ function ChipRow({
           onClick={() => onPick(chip)}
           className="cursor-pointer rounded-md transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
         >
-          <Chip className="hover:text-fg hover:ring-white/20">{chip}</Chip>
+          <Chip className="hover:text-fg hover:ring-hair2">{chip}</Chip>
         </button>
       ))}
     </div>
@@ -187,12 +187,12 @@ function ResultSkeleton() {
       {Array.from({ length: 3 }).map((_, i) => (
         <div key={i} className="card shimmer p-4">
           <div className="flex items-center justify-between">
-            <div className="h-4 w-40 rounded bg-white/8" />
-            <div className="h-7 w-24 rounded-lg bg-white/8" />
+            <div className="h-4 w-40 rounded bg-raised" />
+            <div className="h-7 w-24 rounded-lg bg-raised" />
           </div>
-          <div className="mt-3 h-1.5 w-full rounded-full bg-white/8" />
-          <div className="mt-3 h-3 w-full rounded bg-white/8" />
-          <div className="mt-2 h-3 w-3/4 rounded bg-white/8" />
+          <div className="mt-3 h-1.5 w-full rounded-full bg-raised" />
+          <div className="mt-3 h-3 w-full rounded bg-raised" />
+          <div className="mt-2 h-3 w-3/4 rounded bg-raised" />
         </div>
       ))}
     </div>
@@ -201,7 +201,7 @@ function ResultSkeleton() {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex items-start gap-3 rounded-[var(--radius-card)] border border-white/10 bg-white/[0.02] px-4 py-3" role="status">
+    <div className="flex items-start gap-3 rounded-[var(--radius-card)] border border-hair bg-inset px-4 py-3" role="status">
       <WarningIcon className="mt-0.5 size-4 shrink-0 text-warn" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-fg">Couldn’t run the search</p>
@@ -210,7 +210,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
       <button
         type="button"
         onClick={onRetry}
-        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-white/20 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+        className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-hair px-2.5 py-1 text-xs font-medium text-fg-muted transition-colors hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
       >
         <RefreshIcon className="size-3.5" /> Retry
       </button>

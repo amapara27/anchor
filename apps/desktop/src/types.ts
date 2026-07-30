@@ -265,10 +265,10 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "chat" | "agents" | "models" | "settings";
+export type Tab = "chat" | "agents" | "models" | "storage" | "benchmarks" | "settings";
 
 /** Sub-views inside the Models hub. */
-export type ModelsTab = "explore" | "installed" | "compare" | "benchmark" | "disk";
+export type ModelsTab = "installed" | "discover" | "compare";
 
 /** Live Ollama server status. Mirrors the `get_server_status` command. */
 export interface ServerStatus {
@@ -299,6 +299,8 @@ export interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
+  /** A thinking model's reasoning for an assistant turn; null otherwise. */
+  thinking: string | null;
   /** Raw JSON of `GenerationStats` for an assistant turn; null for user turns. */
   stats_json: string | null;
   created_ms: number;
@@ -311,9 +313,12 @@ export interface ChatMessage {
 export type ChatEvent =
   /** One streamed response delta. */
   | { kind: "token"; text: string }
+  /** One streamed reasoning delta (thinking-capable models only). */
+  | { kind: "thinking"; text: string }
   /** The assistant turn finished; `response` is the full, authoritative text
-   *  (a thinking model may stream nothing and only produce it here). */
-  | { kind: "result"; response: string; stats: GenerationStats }
+   *  (a thinking model may stream nothing and only produce it here), `thinking`
+   *  its reasoning (empty if none). */
+  | { kind: "result"; response: string; thinking: string; stats: GenerationStats }
   /** The turn failed (the user message stays persisted for a retry). */
   | { kind: "failed"; message: string };
 

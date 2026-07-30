@@ -23,11 +23,11 @@ interface Command {
 const PAGES: { tab: Tab; label: string; sub?: ModelsTab }[] = [
   { tab: "chat", label: "Chat" },
   { tab: "agents", label: "Agents" },
-  { tab: "models", label: "Explore models", sub: "explore" },
   { tab: "models", label: "Installed models", sub: "installed" },
+  { tab: "models", label: "Discover models", sub: "discover" },
   { tab: "models", label: "Model Comparison", sub: "compare" },
-  { tab: "models", label: "Benchmarks", sub: "benchmark" },
-  { tab: "models", label: "Disk Usage", sub: "disk" },
+  { tab: "storage", label: "Storage" },
+  { tab: "benchmarks", label: "Benchmarks" },
   { tab: "settings", label: "Settings" },
 ];
 
@@ -95,7 +95,7 @@ export function CommandPalette({ open, onClose, onNavigate, onJumpToModel }: Com
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[15vh]" role="dialog" aria-modal="true" aria-label="Command palette">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden />
       <div
-        className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--hairline-strong)] bg-surface shadow-overlay"
+        className="relative flex w-full max-w-lg flex-col overflow-hidden rounded-[var(--radius-card)] border border-hair2 bg-surface shadow-(--shadow-overlay)"
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -112,7 +112,7 @@ export function CommandPalette({ open, onClose, onNavigate, onJumpToModel }: Com
           }
         }}
       >
-        <div className="flex items-center gap-2.5 border-b border-[var(--hairline)] px-4">
+        <div className="flex items-center gap-2.5 border-b border-hair px-4">
           <SearchIcon className="size-4 shrink-0 text-fg-subtle" />
           <input
             ref={inputRef}
@@ -136,7 +136,7 @@ export function CommandPalette({ open, onClose, onNavigate, onJumpToModel }: Com
                   onClick={() => run(i)}
                   className={[
                     "flex w-full items-center gap-3 px-4 py-2 text-left transition-colors duration-150 ease-out",
-                    i === active ? "bg-surface-raised" : "",
+                    i === active ? "bg-raised" : "",
                   ].join(" ")}
                 >
                   <span className="data min-w-0 flex-1 truncate text-sm text-fg">{c.label}</span>

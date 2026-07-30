@@ -1,65 +1,151 @@
-/* Inter (prose/UI) + Geist Mono (data/numerals) — the design-system typefaces.
-   Must precede the Tailwind import so they stay ahead of all emitted rules. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap");
+/* Instrument Sans (prose/UI) + JetBrains Mono (data/numerals) — the design-system
+   typefaces. Must precede the Tailwind import so they stay ahead of all emitted rules. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 /*
- * Anchor design tokens — "Refined Minimal Dark".
- * Flat near-black surfaces, hairline borders, near-monochrome text, and a single
- * restrained blue accent reserved for the primary action + active nav.
- * Depth comes from borders and surface steps, not from blur, glow, or gradients.
- * Dark mode only.
+ * Anchor design tokens.
+ * Two moods, one structure: dark leans graphite + violet, light leans cream + gold.
+ * Depth comes from hairline borders and small surface steps, never blur or glow.
+ *
+ * Raw tokens live on :root so they cascade under [data-theme]; `@theme inline`
+ * below re-exports them as Tailwind colours. `inline` is required — a plain
+ * @theme resolves the value at definition time and the light override would
+ * never win.
  */
-@theme {
-  /* Prose/UI is Inter; model names, stats, labels, and badges use Geist Mono. */
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+:root {
+  --canvas: #0a0a0b;
+  --chrome: #0e0e10;
+  --surface: #141416;
+  --raised: #1b1b1f;
+  --inset: rgb(255 255 255 / 0.035);
 
-  /* Surfaces — flat and opaque; each step is a small lightness lift. */
-  --color-canvas: #0b0c0e; /* app background */
-  --color-surface: #131417; /* cards, panels */
-  --color-surface-raised: #191b1f; /* hover / elevated */
-  --color-chrome: #0e0f12; /* sidebar, title bar */
+  --hair: rgb(255 255 255 / 0.085);
+  --hair2: rgb(255 255 255 / 0.15);
 
-  /* Hairlines carry the structure. */
-  --hairline: rgb(255 255 255 / 0.07);
-  --hairline-strong: rgb(255 255 255 / 0.12);
+  --fg: #eaeaec;
+  --muted: #9b9ba3;
+  --subtle: #6a6a72;
+
+  --accent: #7a67de;
+  --on-accent: #ffffff;
+  --accent-text: #c4b7fb;
+  --accent-soft: rgb(139 123 232 / 0.15);
+  --accent-line: rgb(139 123 232 / 0.35);
+
+  --ok: #6bb58c;
+  --warn: #d2ae74;
+  --danger: #de9494;
+}
+
+:root[data-theme="light"] {
+  --canvas: #f7f4ed;
+  --chrome: #f1ede3;
+  --surface: #fffdf8;
+  --raised: #efeae0;
+  --inset: rgb(28 22 10 / 0.035);
+
+  --hair: rgb(28 22 10 / 0.11);
+  --hair2: rgb(28 22 10 / 0.2);
+
+  --fg: #1c1a15;
+  --muted: #6c6558;
+  --subtle: #98917f;
+
+  --accent: #9a7317;
+  --on-accent: #fffdf8;
+  --accent-text: #7a5a0e;
+  --accent-soft: rgb(154 115 23 / 0.13);
+  --accent-line: rgb(154 115 23 / 0.4);
+
+  --ok: #3e7f5c;
+  --warn: #8a6a22;
+  --danger: #a8544f;
+}
+
+@theme inline {
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+
+  /* Surfaces — flat and opaque; each step is a small lightness move. */
+  --color-canvas: var(--canvas);
+  --color-chrome: var(--chrome);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-inset: var(--inset);
+
+  /* Hairlines carry the structure. Use `border-hair` — never `border-white/8`,
+     which is invisible on the cream canvas. */
+  --color-hair: var(--hair);
+  --color-hair2: var(--hair2);
 
   /* Foreground ramp. */
-  --color-fg: #e7e8ea;
-  --color-fg-muted: #9a9ea5;
-  --color-fg-subtle: #6a6e76;
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--muted);
+  --color-fg-subtle: var(--subtle);
 
-  /* Accent — single, restrained blue. Solid fills only, no gradient.
-     Reserve the accent for the ONE primary action per view (+ active nav);
-     every secondary action is a ghost/text button. */
-  --color-accent: #4f7cff;
-  --color-accent-fg: #ffffff;
-  --color-accent-text: #93b0ff; /* ≥4.5:1 on canvas — links, active nav text */
+  /* Accent — one hue per theme. Solid fills only, no gradient. */
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--on-accent);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-line);
 
-  /* Status — desaturated; used as small dots/icons + text, never filled pills. */
-  --color-ok: #5fb585; /* installed / ready / online */
-  --color-warn: #c9a36a; /* tight fit */
-  --color-danger: #d98a8a; /* won't fit / error */
+  /* Status — desaturated; small dots/icons + text, never filled pills. */
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
 
-  /* Radii — radius belongs on interactive elements (`--radius-control`);
-     flat, non-interactive sections should stay square. */
-  --radius-card: 8px;
+  /* Radii — the design's scale. Radius belongs on interactive elements. */
   --radius-control: 8px;
+  --radius-card: 10px;
+  --radius-panel: 12px;
 
   /* Elevation — borders do the work; one soft shadow reserved for overlays. */
   --shadow-overlay: 0 16px 48px -24px rgb(0 0 0 / 0.7);
 
-  /* One shared motion rhythm — 150ms ease-out, hover states only. No scale/glow. */
+  /* One shared motion rhythm. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   --animate-fade-in: fade-in 0.2s ease both;
+  --animate-fade-up: fade-up 0.3s var(--ease-out) both;
+  --animate-blink: blink 1.1s steps(1) infinite;
+  --animate-pulse-dot: pulse-dot 2.6s var(--ease-out) infinite;
 
   @keyframes fade-in {
     from {
       opacity: 0;
     }
     to {
+      opacity: 1;
+    }
+  }
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes blink {
+    0%,
+    45% {
+      opacity: 1;
+    }
+    55%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
       opacity: 1;
     }
   }
@@ -74,12 +160,20 @@
 
   body {
     margin: 0;
-    background-color: var(--color-canvas);
-    color: var(--color-fg);
+    background-color: var(--canvas);
+    color: var(--fg);
     font-family: var(--font-sans);
-    font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+
+  /* Form controls inherit the app face rather than the platform's. */
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
   }
 
   /* Tabular figures for spec numbers so columns don't jitter. */
@@ -90,7 +184,6 @@
   .data {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-feature-settings: normal;
   }
 }
 
@@ -98,11 +191,11 @@
   /* Caps label — mono eyebrow for section headers and card kickers. */
   .label-caps {
     font-family: var(--font-mono);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: var(--color-fg-subtle);
+    color: var(--subtle);
   }
   /* Metric text — mono figures for stats, sizes, and throughput. */
   .mono-metric {
@@ -114,41 +207,40 @@
 
   /* Standard card: flat opaque surface, hairline border. No blur, no shadow. */
   .card {
-    border: 1px solid var(--hairline);
+    border: 1px solid var(--hair);
     border-radius: var(--radius-card);
-    background-color: var(--color-surface);
+    background-color: var(--surface);
   }
-  /* Interactive cards lift their edge + surface on hover — no transform. */
+  /* Interactive cards lift their edge on hover. */
   .card-interactive {
     transition:
       border-color 0.16s var(--ease-out),
       background-color 0.16s var(--ease-out);
   }
   .card-interactive:hover {
-    border-color: var(--hairline-strong);
-    background-color: var(--color-surface-raised);
+    border-color: var(--hair2);
   }
 
   /* Slim, theme-aware scrollbars — the default macOS ones look out of place. */
   .scrollbar-slim {
     scrollbar-width: thin;
-    scrollbar-color: var(--hairline-strong) transparent;
+    scrollbar-color: var(--hair2) transparent;
   }
   .scrollbar-slim::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
+    width: 9px;
+    height: 9px;
   }
   .scrollbar-slim::-webkit-scrollbar-thumb {
-    background-color: var(--hairline-strong);
+    background-color: var(--hair2);
     border-radius: 9999px;
     border: 3px solid transparent;
     background-clip: padding-box;
   }
-  .scrollbar-slim::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(255 255 255 / 0.2);
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
   }
 
-  /* Skeleton shimmer — neutral white-alpha sweep, no accent. */
+  /* Skeleton shimmer — neutral, follows the hairline token in both themes. */
   .shimmer {
     position: relative;
     overflow: hidden;
@@ -157,7 +249,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / 0.05) 50%, transparent 70%);
+    background: linear-gradient(100deg, transparent 30%, var(--hair) 50%, transparent 70%);
     background-size: 200% 100%;
     animation: shimmer-sweep 1.6s ease-in-out infinite;
   }

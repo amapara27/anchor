@@ -14,7 +14,7 @@ export function StatusBadge({ status, className = "" }: { status: ModelStatus; c
         className,
       ].join(" ")}
     >
-      <span className={["size-1.5 shrink-0 rounded-full", installed ? "bg-ok" : "bg-white/25"].join(" ")} />
+      <span className={["size-1.5 shrink-0 rounded-full", installed ? "bg-ok" : "bg-hair2"].join(" ")} />
       {installed ? "Installed" : "Available"}
     </span>
   );

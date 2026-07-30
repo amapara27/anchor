@@ -4,8 +4,10 @@ import { ModelsProvider } from "./lib/useModels";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChatWorkspace } from "./components/ChatWorkspace";
-import { WorkflowLibrary } from "./components/WorkflowLibrary";
+import { AgentsPage } from "./components/AgentsPage";
 import { ModelsHub } from "./components/ModelsHub";
+import { StoragePage } from "./components/StoragePage";
+import { BenchmarksPage } from "./components/BenchmarksPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { CommandPalette } from "./components/CommandPalette";
 
@@ -38,25 +40,29 @@ export default function App() {
     // sync + download map, and tab switches don't refetch.
     <ModelsProvider>
       <div className="flex h-dvh flex-col">
-        <TitleBar active={tab} onOpenPalette={() => setPaletteOpen(true)} />
+        <TitleBar onOpenPalette={() => setPaletteOpen(true)} />
         <div className="flex min-h-0 flex-1">
           <Sidebar active={tab} onSelect={setTab} />
-          <main className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
-            {/* Chat owns the full height (its own internal scroll + composer);
-                every other tab uses the padded, max-width content column. */}
-            {tab === "chat" ? (
-              <div key={tab} className="animate-fade-in h-full">
-                <ChatWorkspace />
-              </div>
-            ) : (
-              // key remounts on tab switch so the page-enter animation replays
-              <div key={tab} className="animate-fade-in mx-auto max-w-[1440px] px-6 py-9 lg:px-8">
-                {tab === "agents" && <WorkflowLibrary />}
-                {tab === "models" && <ModelsHub openModel={openModel} initialTab={modelsTab} />}
+          {/* Chat and Models own their full height (internal scroll + side
+              panes); the flat pages scroll inside a padded content column. */}
+          {tab === "chat" ? (
+            <main key={tab} className="animate-fade-in flex min-w-0 flex-1">
+              <ChatWorkspace />
+            </main>
+          ) : tab === "models" ? (
+            <main key={tab} className="animate-fade-in flex min-w-0 flex-1 overflow-hidden">
+              <ModelsHub openModel={openModel} initialTab={modelsTab} />
+            </main>
+          ) : (
+            <main key={tab} className="scrollbar-slim animate-fade-in min-w-0 flex-1 overflow-y-auto">
+              <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-[18px] px-7 pb-9 pt-6">
+                {tab === "agents" && <AgentsPage />}
+                {tab === "storage" && <StoragePage />}
+                {tab === "benchmarks" && <BenchmarksPage />}
                 {tab === "settings" && <SettingsPage />}
               </div>
-            )}
-          </main>
+            </main>
+          )}
         </div>
 
         <CommandPalette

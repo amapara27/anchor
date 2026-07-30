@@ -3,7 +3,7 @@ import { formatContext, formatParams } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 import { FitBadge } from "./FitBadge";
 import { SpecPill } from "./SpecPill";
-import { StatTile } from "./ui/StatTile";
+import { StatCard } from "./ui/StatCard";
 import { Chip } from "./ui/Chip";
 import { DownloadProgressBar } from "./DownloadProgressBar";
 import { CheckIcon, ChipIcon, DownloadIcon, LayersIcon, RulerIcon, SparkleIcon, XIcon } from "./icons";
@@ -64,7 +64,7 @@ export function SearchResultCard({
           <div className="min-w-0">
             <p className="label-caps truncate">
               <span className="capitalize">{profile.family}</span>
-              <span className="mx-1.5 text-white/20">·</span>
+              <span className="mx-1.5 text-fg-subtle">·</span>
               {profile.publisher}
             </p>
             <div className="mt-1.5 flex items-center gap-2.5">
@@ -88,10 +88,10 @@ export function SearchResultCard({
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <StatTile recessed label="Size" value={`${profile.download_gb.toFixed(1)}`} sub="GB download" compact />
-          <StatTile recessed label="Req. RAM" value={`${profile.min_memory_gb.toFixed(0)}`} sub="GB minimum" compact />
-          <StatTile recessed label="Quant" value={profile.quant} compact />
-          <StatTile recessed label="Context" value={formatContext(profile.context_tokens)} compact />
+          <StatCard recessed label="Size" value={`${profile.download_gb.toFixed(1)}`} sub="GB download" compact />
+          <StatCard recessed label="Req. RAM" value={`${profile.min_memory_gb.toFixed(0)}`} sub="GB minimum" compact />
+          <StatCard recessed label="Quant" value={profile.quant} compact />
+          <StatCard recessed label="Context" value={formatContext(profile.context_tokens)} compact />
         </div>
 
         <div className="mt-4">
@@ -110,7 +110,7 @@ export function SearchResultCard({
         {isDownloading ? (
           <DownloadProgressBar download={download} totalBytes={profile.download_gb * GB} />
         ) : (
-          <div className="mt-5 flex items-center gap-2 border-t border-white/8 pt-4">
+          <div className="mt-5 flex items-center gap-2 border-t border-hair pt-4">
             <ActionButton
               installed={installed}
               isDownloading={isDownloading}
@@ -143,7 +143,7 @@ export function SearchResultCard({
           </div>
           <p className="label-caps mt-1 truncate text-[10px]">
             <span className="capitalize">{profile.family}</span>
-            <span className="mx-1.5 text-white/20">·</span>
+            <span className="mx-1.5 text-fg-subtle">·</span>
             {profile.publisher}
           </p>
         </div>
@@ -170,7 +170,7 @@ export function SearchResultCard({
       {isDownloading ? (
         <DownloadProgressBar download={download} totalBytes={profile.download_gb * GB} />
       ) : (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/8 pt-3">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-hair pt-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
             <SpecPill icon={<RulerIcon className="size-3.5" />} label="Parameters" value={formatParams(profile.params_b)} />
             <SpecPill icon={<LayersIcon className="size-3.5" />} label="Quantization" value={profile.quant} />
@@ -218,7 +218,7 @@ function ActionButton({
         type="button"
         onClick={onCancel}
         aria-label={`Cancel download of ${name}`}
-        className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/12 px-2.5 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-white/20 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.97]"
+        className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-hair px-2.5 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.97]"
       >
         <XIcon className="size-3.5" /> Cancel
       </button>
@@ -233,7 +233,7 @@ function ActionButton({
         "inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.97]",
         primary
           ? "bg-accent text-accent-fg hover:bg-accent/90"
-          : "border border-white/12 font-medium text-fg-muted hover:border-white/20 hover:text-fg",
+          : "border border-hair font-medium text-fg-muted hover:border-hair2 hover:text-fg",
       ].join(" ")}
     >
       <DownloadIcon className="size-3.5" /> Download

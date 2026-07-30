@@ -92,8 +92,8 @@ export function useChat() {
       const streamId = `stream-${now}`;
       setMessages((m) => [
         ...m,
-        { id: `local-${now}`, role: "user", content, stats_json: null, created_ms: now },
-        { id: streamId, role: "assistant", content: "", stats_json: null, created_ms: now + 1 },
+        { id: `local-${now}`, role: "user", content, thinking: null, stats_json: null, created_ms: now },
+        { id: streamId, role: "assistant", content: "", thinking: null, stats_json: null, created_ms: now + 1 },
       ]);
 
       const channel = new Channel<ChatEvent>();
@@ -103,13 +103,24 @@ export function useChat() {
           setMessages((m) =>
             m.map((msg) => (msg.id === streamId ? { ...msg, content: msg.content + event.text } : msg)),
           );
+        } else if (event.kind === "thinking") {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === streamId ? { ...msg, thinking: (msg.thinking ?? "") + event.text } : msg,
+            ),
+          );
         } else if (event.kind === "result") {
           // Use the authoritative final text (covers a thinking model that
-          // streamed no `content` tokens), and record the stats.
+          // streamed no `content` tokens), and record reasoning + stats.
           setMessages((m) =>
             m.map((msg) =>
               msg.id === streamId
-                ? { ...msg, content: event.response, stats_json: JSON.stringify(event.stats) }
+                ? {
+                    ...msg,
+                    content: event.response,
+                    thinking: event.thinking || null,
+                    stats_json: JSON.stringify(event.stats),
+                  }
                 : msg,
             ),
           );
