@@ -6,7 +6,7 @@ import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmark
 import { formatBytes } from "../lib/format";
 import { COMMUNITY_FEED, CONTRIBUTION, WANTED_RUNS } from "../lib/fixtures";
 import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
-import { Select } from "./ui/Select";
+import { ModelSelect } from "./ui/ModelSelect";
 import { Tabs } from "./ui/Tabs";
 import { Toggle } from "./ui/Toggle";
 import { Meter } from "./ui/SegmentedBar";
@@ -119,15 +119,15 @@ export function BenchmarksPage() {
             { key: "community", label: "Community" },
           ]}
         />
-        <Select
+        <ModelSelect
           value={modelId ?? ""}
           onChange={setSelected}
-          options={installed.map((m) => ({ value: m.id, label: m.name }))}
-          placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"}
+          models={installed}
+          profile={profile}
           disabled={installed.length === 0 || running}
           variant="pill"
           ariaLabel="Benchmark model"
-          menuWidth={280}
+          placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"}
         />
         <span className="data ml-auto text-[11px] text-fg-subtle">{TAB_HINT[tab]}</span>
       </div>

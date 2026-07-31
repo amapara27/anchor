@@ -1,18 +1,11 @@
-import type { DownloadState, LibraryModel, QuantId } from "../types";
+import type { DownloadState, LibraryModel } from "../types";
 import { formatBytes, formatContext, formatParams, formatTokSec } from "../lib/format";
-import { DEFAULT_CONTEXT, estimateFit } from "../lib/fit";
-import { resolveTokPerSec } from "../lib/tokps";
+import { DEFAULT_CONTEXT, fitContext } from "../lib/fit";
+import { hardwareHint } from "../lib/hint";
 import { SegmentedBar } from "./ui/SegmentedBar";
 import { GhostButton, PrimaryButton } from "./PageHeader";
 import { DownloadProgressBar } from "./DownloadProgressBar";
 import { DownloadIcon, TrashIcon } from "./icons";
-
-const FIT_LABEL: Record<string, { text: string; tone: string }> = {
-  ok: { text: "fits", tone: "text-ok" },
-  tight: { text: "tight", tone: "text-warn" },
-  wont_fit: { text: "won't fit", tone: "text-danger" },
-  unknown: { text: "unknown", tone: "text-fg-subtle" },
-};
 
 /**
  * Persistent right-hand detail pane for the selected model: identity, specs,
@@ -47,15 +40,20 @@ export function ModelDetailAside({
     );
   }
 
-  const fit = estimateFit(
-    model.spec.params_b,
-    model.spec.quant as QuantId,
-    DEFAULT_CONTEXT,
-    { memory_bytes: totalMemoryBytes },
-    { arch: model.arch, size_bytes: model.size_bytes },
+  // The context the fit is judged at — the breakdown rows must name the same one.
+  const fitCtx = fitContext(model.spec.context_tokens || DEFAULT_CONTEXT);
+  const hint = hardwareHint(
+    {
+      id: model.id,
+      params_b: model.spec.params_b,
+      quant: model.spec.quant,
+      contextTokens: fitCtx,
+      arch: model.arch,
+      sizeBytes: model.size_bytes,
+    },
+    { memory_bytes: totalMemoryBytes, chip },
   );
-  const fitLabel = FIT_LABEL[fit.tier];
-  const tps = resolveTokPerSec(chip, model.id, model.spec.params_b, model.spec.quant as QuantId);
+  const { fit, tps } = hint;
   const installed = model.status === "installed";
 
   const { weightsGB, kvCacheGB, computeBufferGB, osReserveGB, availableGB } = fit.breakdown;
@@ -104,12 +102,12 @@ export function ModelDetailAside({
           <div className="card flex flex-col gap-2.5 p-3.5">
             <div className="flex items-baseline gap-2">
               <span className="label-caps">Memory fit</span>
-              <span className={`data ml-auto text-[11px] ${fitLabel.tone}`}>{fitLabel.text}</span>
+              <span className={`data ml-auto text-[11px] ${hint.tone}`}>{hint.label.toLowerCase()}</span>
             </div>
             <SegmentedBar segments={segments} />
             <div className="data flex flex-col gap-1.5 text-[11px] text-fg-muted">
               <Row label="weights" value={`${weightsGB.toFixed(1)} GB`} />
-              <Row label={`kv cache @ ${formatContext(DEFAULT_CONTEXT)}`} value={`${kvCacheGB.toFixed(1)} GB`} />
+              <Row label={`kv cache @ ${formatContext(fitCtx)}`} value={`${kvCacheGB.toFixed(1)} GB`} />
               <Row label="compute buffer" value={`${computeBufferGB.toFixed(1)} GB`} />
               <Row label="os reserve" value={`${osReserveGB.toFixed(1)} GB`} />
               <span className="flex justify-between border-t border-hair pt-1.5 text-fg">

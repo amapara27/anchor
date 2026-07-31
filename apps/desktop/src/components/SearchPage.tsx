@@ -22,7 +22,6 @@ export function SearchPage() {
   const { results, confident, status, error, query, recents, search } = useModelSearch();
   const { models, downloads, startDownload, cancelDownload } = useModels();
   const { profile } = useHardwareProfile();
-  const totalMemoryBytes = profile?.memory_bytes ?? null;
 
   const [input, setInput] = useState("");
 
@@ -47,7 +46,7 @@ export function SearchPage() {
         download={downloads[result.profile.id]}
         onDownload={() => lib && startDownload(lib)}
         onCancel={() => cancelDownload(result.profile.id)}
-        totalMemoryBytes={totalMemoryBytes}
+        hardware={profile}
       />
     );
   };

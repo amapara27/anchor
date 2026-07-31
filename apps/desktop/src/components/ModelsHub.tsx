@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ModelsTab, QuantId } from "../types";
+import type { ModelsTab } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { getLastUsed } from "../lib/lastUsed";
 import { formatBytes, formatContext, formatParams, formatTokSec } from "../lib/format";
-import { DEFAULT_CONTEXT, estimateFit } from "../lib/fit";
-import { resolveTokPerSec } from "../lib/tokps";
+import { DEFAULT_CONTEXT } from "../lib/fit";
+import { hardwareHint } from "../lib/hint";
 import { PageHeader, PrimaryButton } from "./PageHeader";
 import { Tabs } from "./ui/Tabs";
 import { Meter, SegmentedBar } from "./ui/SegmentedBar";
@@ -69,15 +69,19 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
   const rows = useMemo(() => {
     const now = Date.now();
     return installed.map((m) => {
-      const fit = estimateFit(
-        m.spec.params_b,
-        m.spec.quant as QuantId,
-        DEFAULT_CONTEXT,
-        { memory_bytes: totalMemoryBytes },
-        { arch: m.arch, size_bytes: m.size_bytes },
+      const hint = hardwareHint(
+        {
+          id: m.id,
+          params_b: m.spec.params_b,
+          quant: m.spec.quant,
+          contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT,
+          arch: m.arch,
+          sizeBytes: m.size_bytes,
+        },
+        { memory_bytes: totalMemoryBytes, chip },
       );
+      const { fit, tps } = hint;
       const lastUsed = getLastUsed(m.id);
-      const tps = resolveTokPerSec(chip, m.id, m.spec.params_b, m.spec.quant as QuantId);
       return {
         model: m,
         fit,

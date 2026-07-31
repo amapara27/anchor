@@ -1,20 +1,14 @@
 import { useMemo } from "react";
-import type { HardwareProfile, LibraryModel, QuantId } from "../../types";
+import type { HardwareProfile, LibraryModel } from "../../types";
 import { formatBytes } from "../../lib/format";
-import { DEFAULT_CONTEXT, estimateFit } from "../../lib/fit";
+import { DEFAULT_CONTEXT } from "../../lib/fit";
+import { hardwareHint, type HardwareHint } from "../../lib/hint";
 import { Select, type SelectOption } from "./Select";
-
-/** Fit tier → dot colour + short label, shared by the row and the trigger. */
-const FIT: Record<string, { tone: string; text: string }> = {
-  ok: { tone: "text-ok", text: "fits" },
-  tight: { tone: "text-warn", text: "tight" },
-  wont_fit: { tone: "text-danger", text: "won't fit" },
-};
 
 interface ModelMeta {
   installed: boolean;
   size: string | null;
-  fit: { tone: string; text: string } | null;
+  hint: HardwareHint | null;
 }
 
 /**
@@ -33,6 +27,7 @@ export function ModelSelect({
   label,
   ariaLabel = "Model",
   className,
+  placeholder = "Choose a model…",
 }: {
   value: string;
   onChange: (id: string) => void;
@@ -45,24 +40,25 @@ export function ModelSelect({
   label?: string;
   ariaLabel?: string;
   className?: string;
+  placeholder?: string;
 }) {
   const options = useMemo<SelectOption[]>(
     () =>
       models.map((m) => {
-        const fit =
-          profile?.memory_bytes != null
-            ? estimateFit(
-                m.spec.params_b,
-                m.spec.quant as QuantId,
-                DEFAULT_CONTEXT,
-                { memory_bytes: profile.memory_bytes },
-                { arch: m.arch, size_bytes: m.size_bytes },
-              )
-            : null;
         const meta: ModelMeta = {
           installed: m.status === "installed",
           size: m.size_bytes != null ? formatBytes(m.size_bytes) : null,
-          fit: fit ? (FIT[fit.tier] ?? null) : null,
+          hint: hardwareHint(
+            {
+              id: m.id,
+              params_b: m.spec.params_b,
+              quant: m.spec.quant,
+              contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT,
+              arch: m.arch,
+              sizeBytes: m.size_bytes,
+            },
+            profile,
+          ),
         };
         return {
           value: m.id,
@@ -91,7 +87,7 @@ export function ModelSelect({
       label={label}
       ariaLabel={ariaLabel}
       className={className}
-      placeholder="Choose a model…"
+      placeholder={placeholder}
       menuWidth={variant === "pill" ? 300 : "trigger"}
       renderValue={(o) => {
         const meta = o.meta as ModelMeta;
@@ -103,13 +99,19 @@ export function ModelSelect({
         );
       }}
       renderOption={(o) => {
-        const meta = o.meta as ModelMeta;
+        const { installed, size, hint } = o.meta as ModelMeta;
+        // A model that won't fit shows its shortfall instead of its size — the
+        // row is 300px and the missing GB is the number that decides the pick.
+        const showSize = size && hint?.tier !== "wont_fit";
         return (
-          <span className="flex min-w-0 items-center gap-2">
-            <span className={`size-1.5 shrink-0 rounded-full ${meta.installed ? "bg-ok" : "bg-hair2"}`} />
+          <span className="flex min-w-0 items-center gap-2" title={hint?.text}>
+            <span className={`size-1.5 shrink-0 rounded-full ${installed ? "bg-ok" : "bg-hair2"}`} />
             <span className="data min-w-0 flex-1 truncate">{o.label}</span>
-            {meta.fit && <span className={`data shrink-0 text-[10px] ${meta.fit.tone}`}>{meta.fit.text}</span>}
-            {meta.size && <span className="data shrink-0 text-[10px] text-fg-subtle">{meta.size}</span>}
+            {hint && hint.tier !== "unknown" && (
+              <span className={`data shrink-0 text-[10px] ${hint.tone}`}>{hint.label.toLowerCase()}</span>
+            )}
+            {hint?.detail && <span className="data shrink-0 text-[10px] text-fg-muted">{hint.detail}</span>}
+            {showSize && <span className="data shrink-0 text-[10px] text-fg-subtle">{size}</span>}
           </span>
         );
       }}

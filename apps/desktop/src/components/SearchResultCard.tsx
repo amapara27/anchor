@@ -1,12 +1,12 @@
-import type { DownloadState, LibraryModel, ScoredModel } from "../types";
+import type { DownloadState, HardwareProfile, LibraryModel, ScoredModel } from "../types";
 import { formatContext, formatParams } from "../lib/format";
+import { hardwareHint, type HardwareHint } from "../lib/hint";
 import { StatusBadge } from "./StatusBadge";
-import { FitBadge } from "./FitBadge";
 import { SpecPill } from "./SpecPill";
 import { StatCard } from "./ui/StatCard";
 import { Chip } from "./ui/Chip";
 import { DownloadProgressBar } from "./DownloadProgressBar";
-import { CheckIcon, ChipIcon, DownloadIcon, LayersIcon, RulerIcon, SparkleIcon, XIcon } from "./icons";
+import { CheckIcon, ChipIcon, DownloadIcon, LayersIcon, RulerIcon, SparkleIcon, WarningIcon, XIcon } from "./icons";
 
 const GB = 1024 ** 3;
 
@@ -23,7 +23,41 @@ interface SearchResultCardProps {
   download?: DownloadState;
   onDownload: () => void;
   onCancel: () => void;
-  totalMemoryBytes?: number | null;
+  /** Host profile — memory decides the fit, chip decides the speed. */
+  hardware?: HardwareProfile | null;
+}
+
+/**
+ * The moat, at the point of purchase: whether this model fits this Mac and how
+ * fast it will run. Always renders — on the screen where you choose what to
+ * download, "fits comfortably" is signal too, and a badge that appears only on
+ * bad news reads as missing data rather than good news (the reason the old
+ * warn-only FitBadge was replaced here).
+ */
+function HardwareLine({ hint, className = "" }: { hint: HardwareHint; className?: string }) {
+  if (hint.tier === "unknown") return null;
+  const warn = hint.tier !== "ok";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs ${className}`}
+      title={hint.tps?.source === "measured" ? "Measured on this Mac" : "Estimated for this Mac"}
+    >
+      {warn ? (
+        <WarningIcon className={`size-3 shrink-0 ${hint.tone}`} />
+      ) : (
+        <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
+      )}
+      <span className={`font-medium ${hint.tone}`}>{hint.label}</span>
+      {hint.detail && (
+        <>
+          <span className="text-fg-subtle" aria-hidden>
+            ·
+          </span>
+          <span className="data text-fg-muted">{hint.detail}</span>
+        </>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -46,11 +80,25 @@ export function SearchResultCard({
   download,
   onDownload,
   onCancel,
-  totalMemoryBytes,
+  hardware,
 }: SearchResultCardProps) {
   const { profile } = result;
   const installed = libraryModel?.status === "installed";
   const isDownloading = download != null;
+
+  // Prefer the installed model's real GGUF metadata and on-disk size; fall back
+  // to the catalog figures for anything not downloaded yet.
+  const hint = hardwareHint(
+    {
+      id: profile.id,
+      params_b: profile.params_b,
+      quant: profile.quant,
+      contextTokens: profile.context_tokens,
+      arch: libraryModel?.arch,
+      sizeBytes: libraryModel?.size_bytes,
+    },
+    hardware,
+  );
 
   // The "why": the authored profile prose. The keyword tail (after "Keywords:")
   // is rendered as chips below, so strip it here. Kept as a single text slot so a
@@ -70,15 +118,8 @@ export function SearchResultCard({
             <div className="mt-1.5 flex items-center gap-2.5">
               <h3 className="data truncate text-2xl font-semibold tracking-tight text-fg">{profile.name}</h3>
               <StatusBadge status={libraryModel?.status ?? "available"} />
-              <FitBadge
-                params_b={profile.params_b}
-                quant={profile.quant}
-                contextTokens={profile.context_tokens}
-                totalMemoryBytes={totalMemoryBytes}
-                arch={libraryModel?.arch}
-                sizeBytes={libraryModel?.size_bytes}
-              />
             </div>
+            <HardwareLine hint={hint} className="mt-2" />
           </div>
           {/* Relevance badge — raw cosine in mono, no fake percentages. */}
           <span className="mono-metric inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs text-accent-text ring-1 ring-inset ring-accent/30">
@@ -132,14 +173,7 @@ export function SearchResultCard({
           <div className="flex items-center gap-2.5">
             <h3 className="data truncate font-semibold text-fg">{profile.name}</h3>
             <StatusBadge status={libraryModel?.status ?? "available"} />
-            <FitBadge
-              params_b={profile.params_b}
-              quant={profile.quant}
-              contextTokens={profile.context_tokens}
-              totalMemoryBytes={totalMemoryBytes}
-              arch={libraryModel?.arch}
-              sizeBytes={libraryModel?.size_bytes}
-            />
+            <HardwareLine hint={hint} />
           </div>
           <p className="label-caps mt-1 truncate text-[10px]">
             <span className="capitalize">{profile.family}</span>

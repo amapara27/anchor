@@ -1,7 +1,7 @@
-import type { HardwareProfile, LibraryModel, QuantId } from "../types";
-import { formatBytes, formatTokSec } from "../lib/format";
-import { DEFAULT_CONTEXT, estimateFit } from "../lib/fit";
-import { resolveTokPerSec } from "../lib/tokps";
+import type { HardwareProfile, LibraryModel } from "../types";
+import { formatBytes } from "../lib/format";
+import { DEFAULT_CONTEXT } from "../lib/fit";
+import { hardwareHint } from "../lib/hint";
 import { ModelSelect } from "./ui/ModelSelect";
 import { DownloadIcon } from "./icons";
 
@@ -17,13 +17,6 @@ interface ModelPickerProps {
   profile?: HardwareProfile | null;
 }
 
-/** Fit tier → short label + tone, for the selected-model hardware hint. */
-const FIT_LABEL: Record<string, { text: string; tone: string } | undefined> = {
-  ok: { text: "Fits", tone: "text-ok" },
-  tight: { text: "Tight fit", tone: "text-warn" },
-  wont_fit: { text: "Won't fit", tone: "text-danger" },
-};
-
 /**
  * Labeled model dropdown for one comparison slot: the shared `ModelSelect`
  * (installed/available groups, per-row fit and size) plus a status line so the
@@ -33,21 +26,19 @@ export function ModelPicker({ label, value, onChange, models, disabledId, disabl
   const selected = models.find((m) => m.id === value);
 
   // Hardware hint for the selected model (only when a profile is supplied).
-  const fit =
-    profile && selected
-      ? estimateFit(
-          selected.spec.params_b,
-          selected.spec.quant as QuantId,
-          DEFAULT_CONTEXT,
-          { memory_bytes: profile.memory_bytes },
-          { arch: selected.arch, size_bytes: selected.size_bytes },
-        )
-      : null;
-  const tps =
-    profile && selected
-      ? resolveTokPerSec(profile.chip, selected.id, selected.spec.params_b, selected.spec.quant as QuantId)
-      : null;
-  const fitLabel = fit ? FIT_LABEL[fit.tier] : undefined;
+  const hint = selected
+    ? hardwareHint(
+        {
+          id: selected.id,
+          params_b: selected.spec.params_b,
+          quant: selected.spec.quant,
+          contextTokens: selected.spec.context_tokens || DEFAULT_CONTEXT,
+          arch: selected.arch,
+          sizeBytes: selected.size_bytes,
+        },
+        profile,
+      )
+    : null;
 
   return (
     <div className="min-w-0 flex-1">
@@ -81,16 +72,16 @@ export function ModelPicker({ label, value, onChange, models, disabledId, disabl
         )}
       </div>
 
-      {/* Hardware hint: fit tier + throughput on this Mac. */}
-      {selected && fitLabel && (
+      {/* Hardware hint: fit tier + throughput (or the shortfall) on this Mac. */}
+      {hint && hint.tier !== "unknown" && (
         <div className="mt-1 flex items-center gap-1.5 text-xs text-fg-subtle">
-          <span className={`font-medium ${fitLabel.tone}`}>{fitLabel.text}</span>
-          {tps && (
+          <span className={`font-medium ${hint.tone}`}>{hint.label}</span>
+          {hint.detail && (
             <>
               <span aria-hidden>·</span>
               <span className="data">
-                ~{formatTokSec(tps.value)}
-                {tps.source === "estimated" && <span className="text-fg-subtle"> est.</span>}
+                {hint.detail}
+                {hint.tps?.source === "measured" && <span className="text-ok"> measured</span>}
               </span>
             </>
           )}

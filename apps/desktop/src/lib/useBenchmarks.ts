@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { BenchProgress, BenchRun, MatchQuality, ReviewAllowance } from "../types";
+import { saveMeasuredRun } from "./measured";
 
 /** Results grouped by how well the measuring machine matches this one. */
 export interface MatchGroup {
@@ -28,6 +29,29 @@ function group(runs: BenchRun[]): MatchGroup[] {
     quality,
     runs: runs.filter((r) => (r.match_quality ?? "same_family") === quality),
   })).filter((g) => g.runs.length > 0);
+}
+
+/**
+ * Feed a finished suite back into the hardware-truth engine, so every model
+ * picker upgrades from a bandwidth estimate to this machine's real number.
+ * The run's `hw.chip` and `quant` are the same strings `resolveTokPerSec` looks
+ * up (`HardwareProfile.chip`, `Model.quantization`) — if either drifts the match
+ * silently misses and the estimate keeps winning.
+ *
+ * ponytail: localStorage bridge, mirroring what Compare already writes. Swap for
+ * a `bench_medians()` query when results need to outlive it — a restored DB or
+ * cloud-synced runs, neither of which exists yet.
+ */
+function recordMeasured(run: BenchRun): void {
+  if (run.decode_tps_median == null) return;
+  saveMeasuredRun({
+    modelId: run.model_name,
+    chip: run.hw.chip,
+    quant: run.quant ?? "unknown",
+    tokPerSec: run.decode_tps_median,
+    prompt: `${run.suite_id} v${run.suite_version}`,
+    ts: Date.now(),
+  });
 }
 
 export function useBenchmarks(modelId: string | null) {
@@ -83,6 +107,7 @@ export function useBenchmarks(modelId: string | null) {
           case "done":
             setProgress(null);
             setRunning(false);
+            recordMeasured(event.run);
             void load(id);
             break;
           case "failed":

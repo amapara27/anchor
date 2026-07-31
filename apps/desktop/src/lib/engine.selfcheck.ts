@@ -8,6 +8,7 @@ import { estimateFit, fitContext } from "./fit.ts";
 import { computeBufferBytes, kvCacheBytes, metadataKvBytesPerToken } from "./kv.ts";
 import { QUANTS, quantMeta } from "./quant.ts";
 import { estimateTokPerSec, resolveTokPerSec } from "./tokps.ts";
+import { hardwareHint } from "./hint.ts";
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error("selfcheck failed: " + msg);
@@ -160,5 +161,39 @@ assert(estimateTokPerSec("Intel Core i7", 7, "Q4_K_M") === null, "non-Apple-Sili
 // With no measured runs, resolve falls back to the estimate.
 const resolved = resolveTokPerSec("Apple M1", "llama3.1:8b", 7, "Q4_K_M");
 assert(!!resolved && resolved.source === "estimated", "resolve falls back to estimate");
+
+// --- Hardware hint ---------------------------------------------------------
+// The single verdict every picker renders. It adds no math, so these check the
+// wiring: which half is shown, and that nothing bogus leaks out when the host
+// or the chip is unknown.
+const M4 = { memory_bytes: 16 * 1e9, chip: "Apple M4" };
+const smallModel = { id: "llama3.2:1b", params_b: 1.2, quant: "Q4_K_M", contextTokens: 131072 };
+
+const fits = hardwareHint(smallModel, M4);
+assert(fits.tier === "ok", "1.2B Q4 on 16 GB fits");
+assert(fits.deficitGB === null, "a fitting model has no shortfall");
+assert(fits.text.startsWith("Fits · ~") && fits.text.endsWith("tok/s"), "fits ⇒ speed is the detail");
+
+// Too big for the machine: the shortfall replaces the speed, because a
+// throughput figure for a model that can't load is noise.
+const oversized = hardwareHint({ ...smallModel, id: "llama3.1:70b", params_b: 70 }, M4);
+assert(oversized.tier === "wont_fit", "70B Q4 on 16 GB won't fit");
+assert((oversized.deficitGB ?? 0) > 0, "won't fit ⇒ positive shortfall");
+assert(oversized.text.includes("needs ") && !oversized.text.includes("tok/s"), "won't fit ⇒ shortfall, not speed");
+
+// Host memory unknown ⇒ "unknown", and critically NO shortfall: availableGB is
+// 0 there, so a sign-based deficit would invent a bogus GB figure.
+const noHost = hardwareHint(smallModel, null);
+assert(noHost.tier === "unknown", "no profile ⇒ unknown tier");
+assert(noHost.deficitGB === null, "unknown tier ⇒ no invented shortfall");
+
+// Non-Apple-Silicon: fit still resolves, throughput doesn't — and the text must
+// not end in a dangling separator.
+const intel = hardwareHint(smallModel, { memory_bytes: 16 * 1e9, chip: "Intel Core i7" });
+assert(intel.tps === null && intel.tpsLabel === null, "unknown chip ⇒ no throughput");
+assert(intel.text === "Fits", "no detail ⇒ label alone, no trailing separator");
+
+// The tilde is the only claim of precision: estimates get it, measurements don't.
+assert(fits.tpsLabel?.startsWith("~") === true, "estimated throughput is marked with ~");
 
 console.log("engine.selfcheck: all checks passed");
