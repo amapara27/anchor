@@ -287,3 +287,39 @@ fn delete_one_removes_a_single_row() {
     assert_eq!(read.len(), 1);
     assert_eq!(read[0].id, "b");
 }
+
+#[test]
+fn agent_runs_round_trip_newest_first() {
+    let conn = in_memory();
+    let run = |id: &str, started_ms: i64| AgentRun {
+        id: id.to_string(),
+        agent_id: "research-assistant".to_string(),
+        model: "llama3.1:8b".to_string(),
+        task: "unified memory bandwidth".to_string(),
+        status: "completed".to_string(),
+        started_ms,
+        duration_ms: 4_000,
+        tokens: Some(812),
+        detail_json: Some(r#"{"output":"brief","phases":[{"phase":"planning","ms":900}]}"#.to_string()),
+    };
+    insert_agent_run(&conn, &run("older", 1_000)).unwrap();
+    insert_agent_run(&conn, &run("newer", 2_000)).unwrap();
+
+    let rows = list_agent_runs(&conn, 10).unwrap();
+    assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["newer", "older"]);
+    assert_eq!(rows[0].tokens, Some(812));
+    assert!(rows[0].detail_json.as_deref().unwrap().contains("planning"));
+
+    // Re-saving the same id updates in place rather than duplicating the run.
+    let mut edited = run("newer", 2_000);
+    edited.status = "failed".to_string();
+    edited.duration_ms = 9_999;
+    insert_agent_run(&conn, &edited).unwrap();
+    let rows = list_agent_runs(&conn, 10).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].status, "failed");
+    assert_eq!(rows[0].duration_ms, 9_999);
+
+    // `limit` truncates from the newest end.
+    assert_eq!(list_agent_runs(&conn, 1).unwrap()[0].id, "newer");
+}

@@ -396,6 +396,37 @@ export type ResearchEvent =
   /** The run failed. */
   | { kind: "failed"; message: string };
 
+/**
+ * One finished agent run, as stored. Mirrors `anchor_hub::AgentRun` — the row
+ * travels in both directions, since the frontend owns the streamed run and
+ * assembles it for storage.
+ */
+export interface AgentRun {
+  id: string;
+  /** Which agent produced it, e.g. `research-assistant`. */
+  agent_id: string;
+  model: string;
+  /** What was asked — the research focus. */
+  task: string;
+  status: "completed" | "failed";
+  started_ms: number;
+  duration_ms: number;
+  tokens: number | null;
+  /** JSON of `AgentRunDetail`; parsed on demand by the run inspector. */
+  detail_json: string | null;
+}
+
+/** The payload inside `AgentRun.detail_json` — everything only the inspector reads. */
+export interface AgentRunDetail {
+  /** The brief the run produced (empty on failure). */
+  output: string;
+  queries: string[];
+  sources: { title: string; url: string }[];
+  /** Real wall time per lifecycle phase, in order — the run's trace. */
+  phases: { phase: string; ms: number }[];
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Hardware-truth engine — fit, quant, and throughput. Consumed by the fit
 // breakdown panel, the model table, and Compare. All numbers are ESTIMATES

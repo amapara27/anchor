@@ -13,7 +13,7 @@ use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model};
 use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
-    BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats,
+    AgentRun, BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats,
     PullProgress, Registry, StoredMessage,
 };
 use anchor_search::{QueryHistory, SemanticIndex};
@@ -392,6 +392,23 @@ async fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
     registry(&app)?.delete_conversation(&id).map_err(|e| e.to_string())
 }
 
+/// Stores a finished agent run. The frontend owns the streamed run, so it
+/// assembles the whole row and hands it over once the run settles.
+#[tauri::command]
+async fn save_agent_run(app: AppHandle, run: AgentRun) -> Result<(), String> {
+    registry(&app)?.save_agent_run(&run).map_err(|e| e.to_string())
+}
+
+/// Agent run history, newest first.
+#[tauri::command]
+async fn agent_runs(app: AppHandle) -> Result<Vec<AgentRun>, String> {
+    registry(&app)?.agent_runs(AGENT_RUN_LIMIT).map_err(|e| e.to_string())
+}
+
+/// Runs kept in the history view. Enough to cover the stat band's 7-day window
+/// many times over; the table itself is never pruned.
+const AGENT_RUN_LIMIT: u32 = 200;
+
 /// Evicts a model's weights from Ollama. The frontend calls this when a run is
 /// cancelled or its view unmounts, so a dropped generation stream never leaves a
 /// model resident. Best-effort — a down server (nothing to unload) is ignored.
@@ -656,6 +673,8 @@ pub fn run() {
             conversation_messages,
             rename_conversation,
             delete_conversation,
+            save_agent_run,
+            agent_runs,
             unload_model,
             remove_model,
             get_hardware_profile,

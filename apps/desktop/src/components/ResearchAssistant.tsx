@@ -34,9 +34,10 @@ const STEPS = [
 ] as const;
 
 /**
- * The Research Assistant workflow view: pick a model, enter a focus, tune the
+ * The Research Assistant agent view: pick a model, enter a focus, tune the
  * knobs, and stream a cited web-research brief. Launched in place from the
- * Workflow Library card (`onBack` returns to it).
+ * Agents page (`onBack` returns to it, which also refreshes the run history —
+ * `useResearch` files every settled run).
  */
 export function ResearchAssistant({ onBack }: { onBack: () => void }) {
   const { models, loading } = useModels();
@@ -85,7 +86,7 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <Button variant="text" onClick={onBack}>
-          ← Workflow Library
+          ← Agents
         </Button>
         {hasRun && (
           <Button variant="ghost" onClick={reset} disabled={running}>

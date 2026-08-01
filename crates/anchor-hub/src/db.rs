@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// Version 1 of the schema.
 ///
@@ -121,6 +121,27 @@ const V2: &str = "
 /// in the UI. Nullable — user turns and non-thinking replies leave it `NULL`.
 const V3: &str = "ALTER TABLE messages ADD COLUMN thinking TEXT;";
 
+/// Version 4: agent run history — one row per finished agent run.
+///
+/// `detail_json` holds the run's payload (output, queries, sources, phase
+/// timings) as a single column, for the same reason `models.arch` does: nothing
+/// queries inside it, it is only ever read back whole, and a widening detail
+/// then costs no migration.
+const V4: &str = "
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id          TEXT PRIMARY KEY,
+        agent_id    TEXT NOT NULL,
+        model       TEXT NOT NULL,
+        task        TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        started_ms  INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        tokens      INTEGER,
+        detail_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS agent_runs_recent ON agent_runs (started_ms DESC);
+";
+
 /// Brings the database up to [`SCHEMA_VERSION`]. Idempotent.
 ///
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
@@ -139,6 +160,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 3 {
         tx.execute_batch(V3)?;
+    }
+    if version < 4 {
+        tx.execute_batch(V4)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -542,6 +566,77 @@ pub fn messages_for(conn: &Connection, conversation_id: &str) -> Result<Vec<Stor
             thinking: row.get(3)?,
             stats_json: row.get(4)?,
             created_ms: row.get(5)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// One finished agent run. Mirrored on the frontend as `AgentRun`.
+///
+/// Deserialize as well as Serialize: unlike chat, the whole row is assembled on
+/// the frontend (which owns the streamed run) and handed back to be stored.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentRun {
+    pub id: String,
+    /// Which agent produced it, e.g. `research-assistant`.
+    pub agent_id: String,
+    pub model: String,
+    /// What was asked — the research focus, shown as the run's subtitle.
+    pub task: String,
+    /// `completed` or `failed`.
+    pub status: String,
+    pub started_ms: i64,
+    pub duration_ms: i64,
+    /// Tokens generated, when the model reported them.
+    pub tokens: Option<i64>,
+    /// Run payload (output, queries, sources, phase timings) as raw JSON.
+    pub detail_json: Option<String>,
+}
+
+/// Stores a finished run. Upsert so a re-save of the same id can't duplicate it.
+pub fn insert_agent_run(conn: &Connection, r: &AgentRun) -> Result<()> {
+    conn.execute(
+        "INSERT INTO agent_runs
+            (id, agent_id, model, task, status, started_ms, duration_ms, tokens, detail_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(id) DO UPDATE SET
+            status      = excluded.status,
+            duration_ms = excluded.duration_ms,
+            tokens      = excluded.tokens,
+            detail_json = excluded.detail_json",
+        rusqlite::params![
+            r.id,
+            r.agent_id,
+            r.model,
+            r.task,
+            r.status,
+            r.started_ms,
+            r.duration_ms,
+            r.tokens,
+            r.detail_json,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Reads run history, newest first.
+pub fn list_agent_runs(conn: &Connection, limit: u32) -> Result<Vec<AgentRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent_id, model, task, status, started_ms, duration_ms, tokens, detail_json
+         FROM agent_runs ORDER BY started_ms DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit], |row| {
+        Ok(AgentRun {
+            id: row.get(0)?,
+            agent_id: row.get(1)?,
+            model: row.get(2)?,
+            task: row.get(3)?,
+            status: row.get(4)?,
+            started_ms: row.get(5)?,
+            duration_ms: row.get(6)?,
+            tokens: row.get(7)?,
+            detail_json: row.get(8)?,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()

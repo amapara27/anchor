@@ -18,7 +18,7 @@ pub mod status;
 pub mod updates;
 
 pub use bench::BenchProgress;
-pub use db::{Conversation, StoredMessage};
+pub use db::{AgentRun, Conversation, StoredMessage};
 pub use ollama::{ChatMessage, ChatRequest, GenerateRequest, GenerationStats, PullProgress};
 
 use serde::Serialize;
@@ -305,6 +305,16 @@ impl Registry {
     /// Deletes a conversation and all of its messages.
     pub fn delete_conversation(&self, id: &str) -> Result<()> {
         db::delete_conversation(&self.connect()?, id)
+    }
+
+    /// Stores a finished agent run.
+    pub fn save_agent_run(&self, run: &AgentRun) -> Result<()> {
+        db::insert_agent_run(&self.connect()?, run)
+    }
+
+    /// Reads agent run history, newest first.
+    pub fn agent_runs(&self, limit: u32) -> Result<Vec<AgentRun>> {
+        db::list_agent_runs(&self.connect()?, limit)
     }
 
     /// Evicts a model's weights from Ollama with a zero-length, `keep_alive: 0`
