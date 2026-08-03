@@ -1,30 +1,23 @@
-import { StubPanel } from "../StubPanel";
 import type { AgentEntry } from "../types";
+import { KnowledgeBasePanel } from "./Panel";
+import { ASK_PHASES, INGEST_PHASES } from "./phases";
 
 /**
- * Knowledge Base. Owned by its worktree — flip `ready` to `true` and swap
- * `Panel` for the real one when the executor lands.
+ * Knowledge Base: several corpora, each with its own local model, answered from
+ * embedded chunks only.
  *
  * Backend: `run_knowledge_base` / `kb_ingest` →
  * `anchor_workflows::agents::knowledge_base`, with documents and embedded chunks
  * in `kb_documents` / `kb_chunks` (schema V5).
+ *
+ * Both lifecycles are declared: the run inspector labels stored ingest phases
+ * too, while the panel's stepper only walks the ask phases.
  */
 const entry: AgentEntry = {
   id: "knowledge-base",
-  Panel: ({ onBack }) => StubPanel({ name: "Knowledge Base", onBack }),
-  ready: false,
-  phases: {
-    retrieving: {
-      label: "Retrieving",
-      detail: "Find the passages closest to the question",
-      color: "var(--accent-text)",
-    },
-    answering: {
-      label: "Answering",
-      detail: "Answer from the retrieved passages",
-      color: "var(--accent)",
-    },
-  },
+  Panel: KnowledgeBasePanel,
+  ready: true,
+  phases: { ...ASK_PHASES, ...INGEST_PHASES },
 };
 
 export default entry;
