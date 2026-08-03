@@ -9,6 +9,10 @@ repository.workspace = true
 
 [dependencies]
 anchor-hub = { workspace = true }
+# Knowledge Base reuses the BGE-small embedder + cosine that power Discover.
+anchor-search = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
+# Text extraction for the shared file tool (PDF Q&A, Code Reviewer, Knowledge Base).
+pdf-extract = "0.12"

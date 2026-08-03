@@ -323,3 +323,67 @@ fn agent_runs_round_trip_newest_first() {
     // `limit` truncates from the newest end.
     assert_eq!(list_agent_runs(&conn, 1).unwrap()[0].id, "newer");
 }
+
+#[test]
+fn memories_are_scoped_and_newest_first() {
+    let conn = in_memory();
+    let mem = |id: &str, scope: &str, created_ms: i64| AgentMemory {
+        id: id.to_string(),
+        agent_id: "local-memory-chat".to_string(),
+        scope: scope.to_string(),
+        content: format!("fact {id}"),
+        created_ms,
+    };
+    insert_memory(&conn, &mem("a", "proj", 1_000)).unwrap();
+    insert_memory(&conn, &mem("b", "proj", 2_000)).unwrap();
+    insert_memory(&conn, &mem("c", "other", 3_000)).unwrap();
+
+    // Another scope's facts must not leak into this one.
+    let rows = list_memories(&conn, "local-memory-chat", "proj", 10).unwrap();
+    assert_eq!(rows.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+
+    delete_memory(&conn, "b").unwrap();
+    assert_eq!(list_memories(&conn, "local-memory-chat", "proj", 10).unwrap().len(), 1);
+}
+
+#[test]
+fn kb_chunks_round_trip_embeddings() {
+    let mut conn = in_memory();
+    let doc = KbDocument {
+        id: "d1".into(),
+        title: "Unified memory".into(),
+        path: Some("/tmp/a.pdf".into()),
+        chunks: 2,
+        added_ms: 1_000,
+    };
+    insert_kb_document(&conn, &doc).unwrap();
+    let chunk = |id: &str, ord: i64, embedding: Vec<f32>| KbChunk {
+        id: id.to_string(),
+        doc_id: "d1".to_string(),
+        ord,
+        text: format!("chunk {id}"),
+        embedding,
+    };
+    replace_kb_chunks(
+        &mut conn,
+        "d1",
+        &[chunk("c0", 0, vec![0.5, -0.25]), chunk("c1", 1, vec![])],
+    )
+    .unwrap();
+
+    let mut rows = list_kb_chunks(&conn).unwrap();
+    rows.sort_by_key(|c| c.ord);
+    assert_eq!(rows.len(), 2);
+    // Floats survive the little-endian blob round trip exactly.
+    assert_eq!(rows[0].embedding, vec![0.5, -0.25]);
+    assert!(rows[1].embedding.is_empty()); // stored without a vector
+
+    // Re-ingesting replaces rather than appends.
+    replace_kb_chunks(&mut conn, "d1", &[chunk("c0", 0, vec![1.0])]).unwrap();
+    assert_eq!(list_kb_chunks(&conn).unwrap().len(), 1);
+
+    // Dropping the document takes its chunks with it.
+    delete_kb_document(&conn, "d1").unwrap();
+    assert!(list_kb_documents(&conn).unwrap().is_empty());
+    assert!(list_kb_chunks(&conn).unwrap().is_empty());
+}

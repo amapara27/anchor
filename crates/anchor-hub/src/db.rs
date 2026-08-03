@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// Version 1 of the schema.
 ///
@@ -142,6 +142,43 @@ const V4: &str = "
     CREATE INDEX IF NOT EXISTS agent_runs_recent ON agent_runs (started_ms DESC);
 ";
 
+/// Version 5: durable state for the memory-backed agents.
+///
+/// Both tables land in one migration on purpose — the Local Memory Chat and
+/// Knowledge Base agents are built in parallel, and two migrations racing for the
+/// same `user_version` is the one conflict git cannot resolve.
+///
+/// `kb_chunks.embedding` is the raw 384-float BGE-small vector as little-endian
+/// bytes; cosine runs in Rust. SQLite can't index it usefully, and a blob keeps
+/// the row readable in one pass.
+const V5: &str = "
+    CREATE TABLE IF NOT EXISTS agent_memory (
+        id          TEXT PRIMARY KEY,
+        agent_id    TEXT NOT NULL,
+        scope       TEXT NOT NULL,
+        content     TEXT NOT NULL,
+        created_ms  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS agent_memory_scope
+        ON agent_memory (agent_id, scope, created_ms DESC);
+
+    CREATE TABLE IF NOT EXISTS kb_documents (
+        id        TEXT PRIMARY KEY,
+        title     TEXT NOT NULL,
+        path      TEXT,
+        chunks    INTEGER NOT NULL DEFAULT 0,
+        added_ms  INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+        id        TEXT PRIMARY KEY,
+        doc_id    TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+        ord       INTEGER NOT NULL,
+        text      TEXT NOT NULL,
+        embedding BLOB
+    );
+    CREATE INDEX IF NOT EXISTS kb_chunks_doc ON kb_chunks (doc_id, ord);
+";
+
 /// Brings the database up to [`SCHEMA_VERSION`]. Idempotent.
 ///
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
@@ -163,6 +200,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 4 {
         tx.execute_batch(V4)?;
+    }
+    if version < 5 {
+        tx.execute_batch(V5)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -641,6 +681,177 @@ pub fn list_agent_runs(conn: &Connection, limit: u32) -> Result<Vec<AgentRun>> {
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+/// One remembered fact. Mirrored on the frontend as `AgentMemory`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentMemory {
+    pub id: String,
+    /// Which agent owns it, e.g. `local-memory-chat`.
+    pub agent_id: String,
+    /// Partitions memories within one agent (a conversation id, a project name).
+    pub scope: String,
+    pub content: String,
+    pub created_ms: i64,
+}
+
+/// Stores a fact. Upsert so re-saving the same id can't duplicate it.
+pub fn insert_memory(conn: &Connection, m: &AgentMemory) -> Result<()> {
+    conn.execute(
+        "INSERT INTO agent_memory (id, agent_id, scope, content, created_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET content = excluded.content",
+        rusqlite::params![m.id, m.agent_id, m.scope, m.content, m.created_ms],
+    )?;
+    Ok(())
+}
+
+/// Reads an agent's memories for one scope, newest first.
+pub fn list_memories(
+    conn: &Connection,
+    agent_id: &str,
+    scope: &str,
+    limit: u32,
+) -> Result<Vec<AgentMemory>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, agent_id, scope, content, created_ms FROM agent_memory
+         WHERE agent_id = ?1 AND scope = ?2 ORDER BY created_ms DESC LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![agent_id, scope, limit], |row| {
+        Ok(AgentMemory {
+            id: row.get(0)?,
+            agent_id: row.get(1)?,
+            scope: row.get(2)?,
+            content: row.get(3)?,
+            created_ms: row.get(4)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// Forgets one fact.
+pub fn delete_memory(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM agent_memory WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// One ingested knowledge-base document. Mirrored on the frontend as `KbDocument`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KbDocument {
+    pub id: String,
+    pub title: String,
+    /// Source path on disk, when it came from a file.
+    pub path: Option<String>,
+    /// How many chunks it was split into.
+    pub chunks: i64,
+    pub added_ms: i64,
+}
+
+/// One chunk of a document plus its embedding vector.
+#[derive(Debug, Clone)]
+pub struct KbChunk {
+    pub id: String,
+    pub doc_id: String,
+    /// Position within the document, 0-based.
+    pub ord: i64,
+    pub text: String,
+    /// BGE-small vector; empty when the chunk was stored without one.
+    pub embedding: Vec<f32>,
+}
+
+/// Registers a document. Upsert so a re-ingest of the same id replaces it.
+pub fn insert_kb_document(conn: &Connection, d: &KbDocument) -> Result<()> {
+    conn.execute(
+        "INSERT INTO kb_documents (id, title, path, chunks, added_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title, path = excluded.path, chunks = excluded.chunks",
+        rusqlite::params![d.id, d.title, d.path, d.chunks, d.added_ms],
+    )?;
+    Ok(())
+}
+
+/// Lists ingested documents, newest first.
+pub fn list_kb_documents(conn: &Connection) -> Result<Vec<KbDocument>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, path, chunks, added_ms FROM kb_documents ORDER BY added_ms DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(KbDocument {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            path: row.get(2)?,
+            chunks: row.get(3)?,
+            added_ms: row.get(4)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// Drops a document and its chunks. Deletes chunks by hand rather than trusting
+/// `ON DELETE CASCADE`, which needs a per-connection pragma — same reason
+/// [`delete_conversation`] does.
+pub fn delete_kb_document(conn: &Connection, id: &str) -> Result<()> {
+    conn.execute("DELETE FROM kb_chunks WHERE doc_id = ?1", [id])?;
+    conn.execute("DELETE FROM kb_documents WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Stores a document's chunks in one transaction, replacing any it already had.
+pub fn replace_kb_chunks(conn: &mut Connection, doc_id: &str, chunks: &[KbChunk]) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM kb_chunks WHERE doc_id = ?1", [doc_id])?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO kb_chunks (id, doc_id, ord, text, embedding) VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for c in chunks {
+            stmt.execute(rusqlite::params![
+                c.id,
+                c.doc_id,
+                c.ord,
+                c.text,
+                embedding_to_blob(&c.embedding),
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Reads every chunk, for a linear cosine scan.
+///
+/// ponytail: whole-table read + brute-force similarity. Fine into tens of
+/// thousands of chunks; add an ANN index only if a real corpus outgrows it.
+pub fn list_kb_chunks(conn: &Connection) -> Result<Vec<KbChunk>> {
+    let mut stmt = conn.prepare("SELECT id, doc_id, ord, text, embedding FROM kb_chunks")?;
+    let rows = stmt.query_map([], |row| {
+        let blob: Option<Vec<u8>> = row.get(4)?;
+        Ok(KbChunk {
+            id: row.get(0)?,
+            doc_id: row.get(1)?,
+            ord: row.get(2)?,
+            text: row.get(3)?,
+            embedding: blob.as_deref().map(blob_to_embedding).unwrap_or_default(),
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// Packs an embedding into little-endian bytes for the `BLOB` column.
+fn embedding_to_blob(v: &[f32]) -> Vec<u8> {
+    v.iter().flat_map(|f| f.to_le_bytes()).collect()
+}
+
+/// Unpacks a stored embedding. A truncated blob yields the floats that survive
+/// rather than failing the read — a bad vector just ranks poorly.
+fn blob_to_embedding(b: &[u8]) -> Vec<f32> {
+    b.chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect()
 }
 
 fn bench_source_to_str(s: BenchSource) -> &'static str {

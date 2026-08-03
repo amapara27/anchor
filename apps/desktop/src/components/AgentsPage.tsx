@@ -3,10 +3,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AgentRun } from "../types";
 import { runDetail, useAgentRuns } from "../lib/useAgentRuns";
 import { WORKFLOW_CATEGORY, WORKFLOW_TEMPLATES, TOOL_META } from "../lib/workflows";
+import { AGENTS, isReady, phaseMeta } from "../agents/registry";
 import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { StatCard } from "./ui/StatCard";
 import { Tabs } from "./ui/Tabs";
-import { ResearchAssistant } from "./ResearchAssistant";
 import { PlusIcon, TargetIcon } from "./icons";
 
 type AgentTab = "runs" | "agents";
@@ -22,15 +22,8 @@ const STATUS_COLOR: Record<string, string> = {
   failed: "var(--danger)",
 };
 
-/** Research phase → the trace bar's tone. Unknown phases fall back to muted. */
-const PHASE_COLOR: Record<string, string> = {
-  planning: "var(--accent-text)",
-  searching: "var(--hair2)",
-  synthesizing: "var(--accent)",
-};
-
-/** The only agent with an executor behind it; the rest are templates. */
-const RUNNABLE = "research-assistant";
+/** The agent launched by the header's "New run" — the one always worth landing on. */
+const DEFAULT_AGENT = "research-assistant";
 
 const DAY_MS = 86_400_000;
 const RUN_COLUMNS = "grid-cols-[minmax(0,1fr)_116px_74px_84px_108px]";
@@ -97,9 +90,10 @@ export function AgentsPage() {
   const stats = useMemo(() => summarise(runs), [runs]);
   const run = runs.find((r) => r.id === activeRun) ?? runs[0] ?? null;
 
-  if (launched === RUNNABLE) {
+  const active = launched ? AGENTS[launched] : null;
+  if (active) {
     return (
-      <ResearchAssistant
+      <active.Panel
         onBack={() => {
           setLaunched(null);
           reload(); // the run just finished — pick it up in the history
@@ -116,7 +110,7 @@ export function AgentsPage() {
         subtitle="Tool-enabled runs on local models. Every phase, source and token count is logged on this Mac — nothing leaves it but the web searches you ask for."
         actions={
           <>
-            <PrimaryButton onClick={() => setLaunched(RUNNABLE)}>
+            <PrimaryButton onClick={() => setLaunched(DEFAULT_AGENT)}>
               <PlusIcon className="size-3.5" />
               New run
             </PrimaryButton>
@@ -236,7 +230,7 @@ export function AgentsPage() {
               </div>
               <div className="mt-auto flex items-center gap-2 border-t border-hair pt-2.5">
                 <span className="data min-w-0 flex-1 truncate text-[11px] text-fg-subtle">{w.model}</span>
-                {w.id === RUNNABLE ? (
+                {isReady(w.id) ? (
                   <PrimaryButton onClick={() => setLaunched(w.id)} className="h-7 text-xs">
                     Spin up
                   </PrimaryButton>
@@ -306,7 +300,7 @@ function RunInspector({ run }: { run: AgentRun }) {
                     {p.phase}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg">
-                    {PHASE_LABEL[p.phase] ?? p.phase}
+                    {phaseMeta(run.agent_id, p.phase)?.detail ?? p.phase}
                   </span>
                   <span className="data text-[10.5px] text-fg-subtle">{formatElapsed(p.ms)}</span>
                 </div>
@@ -316,7 +310,7 @@ function RunInspector({ run }: { run: AgentRun }) {
                     style={{
                       marginLeft: `${left * 100}%`,
                       width: `${width * 100}%`,
-                      background: PHASE_COLOR[p.phase] ?? "var(--hair2)",
+                      background: phaseMeta(run.agent_id, p.phase)?.color ?? "var(--hair2)",
                     }}
                   />
                 </span>
@@ -354,13 +348,6 @@ function RunInspector({ run }: { run: AgentRun }) {
     </div>
   );
 }
-
-/** Phase id → what actually happened during it. */
-const PHASE_LABEL: Record<string, string> = {
-  planning: "Decompose the focus into search queries",
-  searching: "Search the web and read sources",
-  synthesizing: "Draft the cited brief",
-};
 
 function Field({ label, value }: { label: string; value: string }) {
   return (

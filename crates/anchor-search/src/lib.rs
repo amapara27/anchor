@@ -116,7 +116,7 @@ fn query_text(query: &str) -> String {
 /// Cosine similarity between two equal-length vectors. fastembed already
 /// L2-normalises BGE output (so this reduces to a dot product), but computing
 /// the norms keeps it correct regardless; a zero-norm input yields `0.0`.
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
+pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let mut dot = 0.0;
     let mut na = 0.0;
     let mut nb = 0.0;

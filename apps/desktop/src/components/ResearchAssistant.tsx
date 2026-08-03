@@ -4,12 +4,13 @@ import { useModels } from "../lib/useModels";
 import { useResearch, type ResearchState } from "../lib/useResearch";
 import { formatTokSec, tokensPerSecond } from "../lib/format";
 import type { ResearchDepth, ResearchFormat } from "../types";
-import { PageHeader } from "./PageHeader";
+import { AgentHeader, Field, INPUT_CLASS, PhaseStepper, Spinner } from "../agents/AgentShell";
+import { RESEARCH_PHASES } from "../agents/research-assistant/phases";
 import { ModelPicker } from "./ModelPicker";
 import { Select } from "./ui/Select";
 import { Button } from "./ui/Button";
 import { Chip } from "./ui/Chip";
-import { CheckIcon, ChevronDownIcon, SearchIcon } from "./icons";
+import { ChevronDownIcon, SearchIcon } from "./icons";
 
 /** localStorage key for the user's Tavily API key. */
 const API_KEY_STORAGE = "anchor.tavilyApiKey";
@@ -26,12 +27,6 @@ const FORMATS: { value: ResearchFormat; label: string }[] = [
   { value: "outline", label: "Outline" },
   { value: "qa", label: "Q&A" },
 ];
-
-const STEPS = [
-  { key: "planning", label: "Planning" },
-  { key: "searching", label: "Searching" },
-  { key: "synthesizing", label: "Synthesizing" },
-] as const;
 
 /**
  * The Research Assistant agent view: pick a model, enter a focus, tune the
@@ -84,21 +79,14 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <Button variant="text" onClick={onBack}>
-          ← Agents
-        </Button>
-        {hasRun && (
-          <Button variant="ghost" onClick={reset} disabled={running}>
-            New research
-          </Button>
-        )}
-      </div>
-
-      <PageHeader
-        eyebrow="Automation"
+      <AgentHeader
         title="Research Assistant"
         subtitle="Searches the web, reads sources, and synthesizes a cited brief on any topic."
+        onBack={onBack}
+        onReset={reset}
+        resetLabel="New research"
+        running={running}
+        showReset={hasRun}
       />
 
       {/* Setup */}
@@ -203,40 +191,12 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
   );
 }
 
-const INPUT_CLASS =
-  "w-full rounded-lg border border-hair bg-inset px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60";
-
-/** Labeled form row. */
-function Field({
-  label,
-  htmlFor,
-  optional,
-  note,
-  children,
-}: {
-  label: string;
-  htmlFor: string;
-  optional?: boolean;
-  note?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label htmlFor={htmlFor} className="mb-1.5 block label-caps">
-        {label}
-        {(optional || note) && (
-          <span className="ml-1 normal-case text-fg-subtle">({optional ? "optional" : note})</span>
-        )}
-      </label>
-      {children}
-    </div>
-  );
-}
-
 function ResearchResults({ state, tok }: { state: ResearchState; tok: number | null }) {
   return (
     <div className="flex flex-col gap-4">
-      {state.phase !== "failed" && <PhaseStepper phase={state.phase} />}
+      {state.phase !== "failed" && (
+        <PhaseStepper phases={RESEARCH_PHASES} current={state.phase} />
+      )}
 
       {state.phase === "failed" && (
         <div className="card border-danger/40 p-4 text-sm text-danger">{state.error}</div>
@@ -297,49 +257,3 @@ function ResearchResults({ state, tok }: { state: ResearchState; tok: number | n
   );
 }
 
-/** Three-step progress: Planning → Searching → Synthesizing. */
-function PhaseStepper({ phase }: { phase: ResearchState["phase"] }) {
-  const order = ["planning", "searching", "synthesizing", "done"];
-  const current = order.indexOf(phase);
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
-      {STEPS.map((step, i) => {
-        const done = phase === "done" || current > i;
-        const active = current === i && phase !== "done";
-        return (
-          <div key={step.key} className="flex items-center gap-2">
-            <span
-              className={[
-                "flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium ring-1 ring-inset",
-                active
-                  ? "bg-accent/15 text-accent-text ring-accent/40"
-                  : done
-                    ? "text-ok ring-ok/30"
-                    : "text-fg-subtle ring-hair",
-              ].join(" ")}
-            >
-              {active ? (
-                <Spinner small />
-              ) : done ? (
-                <CheckIcon className="size-3" />
-              ) : (
-                <span className="size-1.5 rounded-full bg-current" />
-              )}
-              {step.label}
-            </span>
-            {i < STEPS.length - 1 && <span className="h-px w-4 bg-raised" />}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function Spinner({ small }: { small?: boolean }) {
-  return (
-    <span
-      className={`${small ? "size-3 border" : "size-4 border-2"} animate-spin rounded-full border-hair2 border-t-white`}
-      aria-hidden
-    />
-  );
-}

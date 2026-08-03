@@ -98,6 +98,10 @@ function saveRun(
  * Owns a single Research Assistant run: wires a Tauri `Channel`, reduces the
  * streamed events, persists the settled run, and evicts the model on
  * cancel/unmount. Mirrors `useComparison`'s channel + `runId` idiom.
+ *
+ * ponytail: every other agent shares `agents/useAgent.ts`, which is this hook
+ * generalised. This one stays because `ResearchEvent` is a richer union than
+ * `AgentEvent`; fold it in if research ever moves to the shared protocol.
  */
 export function useResearch() {
   const [state, setState] = useState<ResearchState>(INITIAL);

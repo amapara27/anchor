@@ -6,9 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod agents;
 pub mod research;
 pub mod search;
+pub mod tools;
 
+pub use agents::AgentEvent;
 pub use research::{run_research, Depth, Format, Phase, ResearchConfig, ResearchEvent};
 pub use search::Source;
 
