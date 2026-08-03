@@ -4,6 +4,9 @@
 # Rust
 /target
 **/target
+# Shared CARGO_TARGET_DIR for the agent worktrees — one build of the heavy
+# deps (onnxruntime/fastembed) instead of one per worktree.
+/.cargo-target-shared
 
 # Node
 node_modules
