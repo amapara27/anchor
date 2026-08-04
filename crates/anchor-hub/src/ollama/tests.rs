@@ -244,3 +244,58 @@ fn generate_chunk_captures_thinking() {
     assert_eq!(frame.response, "");
     assert_eq!(frame.thinking, "Let me think");
 }
+
+fn chat_req() -> ChatRequest {
+    ChatRequest {
+        model: "llama3.2:1b".into(),
+        messages: vec![ChatMessage { role: "user".into(), content: "hi".into() }],
+        keep_alive_secs: 300,
+        think: None,
+        num_ctx: None,
+        temperature: None,
+        top_p: None,
+    }
+}
+
+#[test]
+fn chat_body_omits_unset_options_entirely() {
+    // An untuned preset must produce the exact request we sent before presets
+    // existed: no `options` key at all, not an empty object and not zeros.
+    let body = chat_body(&chat_req());
+    assert!(body.get("options").is_none());
+    assert!(body.get("think").is_none());
+    assert_eq!(body["keep_alive"], 300);
+    assert_eq!(body["messages"][0]["role"], "user");
+}
+
+#[test]
+fn chat_body_carries_every_tuned_option() {
+    let req = ChatRequest {
+        num_ctx: Some(8192),
+        temperature: Some(0.0),
+        top_p: Some(0.85),
+        ..chat_req()
+    };
+    let body = chat_body(&req);
+    assert_eq!(body["options"]["num_ctx"], 8192);
+    // Zero is a real, meaningful value — it must survive, not be treated as unset.
+    assert_eq!(body["options"]["temperature"], 0.0);
+    // Compared back at f32: serde_json widens an f32 to f64, so 0.85 serialises
+    // as 0.8500000238418579. Ollama parses it back to a float, so it's cosmetic.
+    assert_eq!(body["options"]["top_p"].as_f64().unwrap() as f32, 0.85);
+}
+
+#[test]
+fn chat_body_sends_a_system_turn_ahead_of_history() {
+    // How a preset's system prompt reaches the model: prepended to `messages`,
+    // which is why `ChatRequest` needs no `system` field of its own.
+    let mut req = chat_req();
+    req.messages.insert(
+        0,
+        ChatMessage { role: "system".into(), content: "Be terse.".into() },
+    );
+    let body = chat_body(&req);
+    assert_eq!(body["messages"][0]["role"], "system");
+    assert_eq!(body["messages"][0]["content"], "Be terse.");
+    assert_eq!(body["messages"][1]["role"], "user");
+}

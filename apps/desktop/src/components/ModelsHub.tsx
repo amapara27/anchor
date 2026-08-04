@@ -12,6 +12,7 @@ import { Tabs } from "./ui/Tabs";
 import { Meter, SegmentedBar } from "./ui/SegmentedBar";
 import { ModelDetailAside } from "./ModelDetailAside";
 import { SearchPage } from "./SearchPage";
+import { BrowsePage } from "./BrowsePage";
 import { ModelComparison } from "./ModelComparison";
 import { DownloadIcon, RefreshIcon, SearchIcon } from "./icons";
 
@@ -177,6 +178,7 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
               items={[
                 { key: "installed", label: "Installed", count: installed.length },
                 { key: "discover", label: "Discover" },
+                { key: "browse", label: "Browse all" },
                 { key: "compare", label: "Compare" },
               ]}
             />
@@ -292,17 +294,18 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
             ))}
 
           {tab === "discover" && <SearchPage />}
+          {tab === "browse" && <BrowsePage />}
           {tab === "compare" && <ModelComparison />}
         </div>
       </div>
 
-      {tab !== "compare" && (
+      {tab !== "compare" && tab !== "browse" && (
         <ModelDetailAside
           model={selected}
           download={selected ? downloads[selected.id] : undefined}
           totalMemoryBytes={totalMemoryBytes}
           chip={chip}
-          onDownload={() => selected && startDownload(selected)}
+          onDownload={() => selected && startDownload(selected.id)}
           onRemove={() => {
             if (!selected) return;
             removeModel(selected.id);

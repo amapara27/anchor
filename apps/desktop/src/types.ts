@@ -268,7 +268,7 @@ export type SortKey = "name" | "size" | "params";
 export type Tab = "chat" | "agents" | "models" | "storage" | "benchmarks" | "settings";
 
 /** Sub-views inside the Models hub. */
-export type ModelsTab = "installed" | "discover" | "compare";
+export type ModelsTab = "installed" | "discover" | "browse" | "compare";
 
 /** Live Ollama server status. Mirrors the `get_server_status` command. */
 export interface ServerStatus {
@@ -318,6 +318,50 @@ export interface Preset {
 
 /** Id of the preset every conversation falls back to. Mirrors `anchor_hub::DEFAULT_PRESET_ID`. */
 export const DEFAULT_PRESET_ID = "default";
+
+/**
+ * One model Ollama currently has resident, from `GET /api/ps`. Mirrors
+ * `anchor_hub::status::RunningModel`.
+ */
+export interface RunningModel {
+  name: string;
+  /** Bytes held in VRAM, when reported. */
+  size_vram: number | null;
+  /** Total resident bytes — weights + KV cache + compute buffers. */
+  size: number | null;
+  /** The context length it was actually loaded with (Ollama clamps requests). */
+  context_length: number | null;
+}
+
+/**
+ * One model in the public Ollama library. Mirrors `anchor_hub::library::LibraryEntry`.
+ *
+ * Not to be confused with `LibraryModel` above — that's Anchor's *installed*
+ * library joined against the curated catalog; this is the whole of ollama.com,
+ * i.e. everything that could be downloaded.
+ */
+export interface LibraryEntry {
+  name: string;
+  description: string;
+  /** Badges from the listing: `tools`, `vision`, `thinking`, `embedding`, … */
+  capabilities: string[];
+  /** Parameter variants, e.g. `["8b", "70b"]`; pullable as `name:size`. */
+  sizes: string[];
+  pulls: number;
+  tag_count: number;
+  /** Relative recency as published, e.g. `"1 year ago"`. */
+  updated: string;
+}
+
+/** One pullable tag of a library model. Mirrors `anchor_hub::library::LibraryTag`. */
+export interface LibraryTag {
+  /** Full id to pull, e.g. `"llama3.1:8b"`. */
+  tag: string;
+  size: string;
+  context: string;
+  modality: string;
+  digest: string;
+}
 
 /** One stored chat turn. Mirrors `anchor_hub::StoredMessage`. */
 export interface ChatMessage {

@@ -643,6 +643,8 @@ pub struct ChatRequest {
     pub num_ctx: Option<u32>,
     /// Sampling temperature (`options.temperature`). `None` leaves the default.
     pub temperature: Option<f32>,
+    /// Nucleus-sampling cutoff (`options.top_p`). `None` leaves the default.
+    pub top_p: Option<f32>,
 }
 
 /// The `message` sub-object of one `/api/chat` frame. Intermediate frames carry
@@ -692,6 +694,38 @@ impl ChatChunk {
     }
 }
 
+/// Builds the `POST /api/chat` request body.
+///
+/// Split out from [`chat`] so the option mapping is testable without a server:
+/// an unset field must be *absent* from `options`, not sent as a zero — a
+/// `temperature: 0` we didn't mean makes the model deterministic, and an
+/// `options: {}` is a different request than no `options` at all.
+fn chat_body(req: &ChatRequest) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": req.model,
+        "messages": req.messages,
+        "stream": true,
+        "keep_alive": req.keep_alive_secs,
+    });
+    let mut options = serde_json::Map::new();
+    if let Some(num_ctx) = req.num_ctx {
+        options.insert("num_ctx".into(), num_ctx.into());
+    }
+    if let Some(temperature) = req.temperature {
+        options.insert("temperature".into(), temperature.into());
+    }
+    if let Some(top_p) = req.top_p {
+        options.insert("top_p".into(), top_p.into());
+    }
+    if !options.is_empty() {
+        body["options"] = serde_json::Value::Object(options);
+    }
+    if let Some(think) = req.think {
+        body["think"] = serde_json::Value::Bool(think);
+    }
+    body
+}
+
 /// Runs a streaming multi-turn chat, invoking `on_token(is_thinking, delta)` for
 /// each delta (thinking deltas flagged `true`) and returning the full assistant
 /// text, its reasoning, and final [`GenerationStats`].
@@ -713,29 +747,9 @@ where
         .read_timeout(GENERATE_READ_TIMEOUT)
         .build()?;
 
-    let mut body = serde_json::json!({
-        "model": req.model,
-        "messages": req.messages,
-        "stream": true,
-        "keep_alive": req.keep_alive_secs,
-    });
-    let mut options = serde_json::Map::new();
-    if let Some(num_ctx) = req.num_ctx {
-        options.insert("num_ctx".into(), num_ctx.into());
-    }
-    if let Some(temperature) = req.temperature {
-        options.insert("temperature".into(), temperature.into());
-    }
-    if !options.is_empty() {
-        body["options"] = serde_json::Value::Object(options);
-    }
-    if let Some(think) = req.think {
-        body["think"] = serde_json::Value::Bool(think);
-    }
-
     let resp = client
         .post(&url)
-        .json(&body)
+        .json(&chat_body(req))
         .send()
         .await?
         .error_for_status()?;

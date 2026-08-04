@@ -11,7 +11,12 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 7;
+
+/// The preset a conversation falls back to when it has none of its own. Seeded
+/// by [`V6`] and never deleted — the Settings panel edits this row, which is why
+/// there is no separate "inference defaults" store.
+pub const DEFAULT_PRESET_ID: &str = "default";
 
 /// Version 1 of the schema.
 ///
@@ -179,6 +184,55 @@ const V5: &str = "
     CREATE INDEX IF NOT EXISTS kb_chunks_doc ON kb_chunks (doc_id, ord);
 ";
 
+/// Version 6: inference presets — a named bundle of {system prompt, temperature,
+/// num_ctx, top_p} a conversation can be run under.
+///
+/// Every tuning column is nullable and `NULL` means "leave it to Ollama", which
+/// maps exactly onto the `Option<T>` fields of [`ChatRequest`](crate::ChatRequest)
+/// — so the seeded `default` row reproduces today's behaviour exactly until the
+/// user changes something.
+///
+/// One table serves both presets and the app's inference defaults: the defaults
+/// *are* the `default` row. Two stores would mean two resolution paths and a
+/// rule about which wins.
+const V6: &str = "
+    CREATE TABLE IF NOT EXISTS presets (
+        id          TEXT PRIMARY KEY,
+        name        TEXT NOT NULL,
+        system      TEXT,
+        temperature REAL,
+        num_ctx     INTEGER,
+        top_p       REAL,
+        model       TEXT,
+        created_ms  INTEGER NOT NULL
+    );
+    INSERT OR IGNORE INTO presets (id, name, created_ms) VALUES ('default', 'Default', 0);
+    ALTER TABLE conversations ADD COLUMN preset_id TEXT;
+";
+
+/// Version 7: a cache of the public Ollama library listing.
+///
+/// Cached because it's scraped from a website (see [`library`](crate::library)):
+/// browsing must work offline, must not re-fetch a 700 KB page on every visit,
+/// and — most importantly — must survive a redesign that breaks the parser by
+/// serving the last good copy rather than an empty catalog.
+///
+/// `capabilities`/`sizes` are JSON arrays in one column each, for the same
+/// reason `models.arch` is: nothing queries inside them, they're only ever read
+/// back whole.
+const V7: &str = "
+    CREATE TABLE IF NOT EXISTS library_models (
+        name         TEXT PRIMARY KEY,
+        description  TEXT NOT NULL,
+        capabilities TEXT NOT NULL,
+        sizes        TEXT NOT NULL,
+        pulls        INTEGER NOT NULL,
+        tag_count    INTEGER NOT NULL,
+        updated      TEXT NOT NULL,
+        fetched_ms   INTEGER NOT NULL
+    );
+";
+
 /// Brings the database up to [`SCHEMA_VERSION`]. Idempotent.
 ///
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
@@ -203,6 +257,12 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 5 {
         tx.execute_batch(V5)?;
+    }
+    if version < 6 {
+        tx.execute_batch(V6)?;
+    }
+    if version < 7 {
+        tx.execute_batch(V7)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -488,6 +548,9 @@ pub struct Conversation {
     pub title: String,
     /// The model this conversation talks to (changeable mid-thread).
     pub model: String,
+    /// The [`Preset`] this conversation runs under. `None` falls back to
+    /// [`DEFAULT_PRESET_ID`], so an old conversation needs no backfill.
+    pub preset_id: Option<String>,
     pub created_ms: i64,
     pub updated_ms: i64,
 }
@@ -509,9 +572,9 @@ pub struct StoredMessage {
 /// Inserts a new conversation row.
 pub fn insert_conversation(conn: &Connection, c: &Conversation) -> Result<()> {
     conn.execute(
-        "INSERT INTO conversations (id, title, model, created_ms, updated_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![c.id, c.title, c.model, c.created_ms, c.updated_ms],
+        "INSERT INTO conversations (id, title, model, preset_id, created_ms, updated_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![c.id, c.title, c.model, c.preset_id, c.created_ms, c.updated_ms],
     )?;
     Ok(())
 }
@@ -519,7 +582,7 @@ pub fn insert_conversation(conn: &Connection, c: &Conversation) -> Result<()> {
 /// Lists conversations, most-recently-updated first.
 pub fn list_conversations(conn: &Connection) -> Result<Vec<Conversation>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, created_ms, updated_ms
+        "SELECT id, title, model, preset_id, created_ms, updated_ms
          FROM conversations ORDER BY updated_ms DESC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -527,8 +590,9 @@ pub fn list_conversations(conn: &Connection) -> Result<Vec<Conversation>> {
             id: row.get(0)?,
             title: row.get(1)?,
             model: row.get(2)?,
-            created_ms: row.get(3)?,
-            updated_ms: row.get(4)?,
+            preset_id: row.get(3)?,
+            created_ms: row.get(4)?,
+            updated_ms: row.get(5)?,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -610,6 +674,206 @@ pub fn messages_for(conn: &Connection, conversation_id: &str) -> Result<Vec<Stor
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+/// A named bundle of generation settings. Mirrored on the frontend as `Preset`.
+///
+/// Every tuning field is optional and `None` means "leave it to Ollama" — the
+/// same contract as the matching [`ChatRequest`](crate::ChatRequest) fields, so
+/// resolving a preset is a straight field copy with no defaulting in between.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Preset {
+    pub id: String,
+    pub name: String,
+    /// Prepended as a `system` turn at request time. Never stored as a message —
+    /// that would re-prepend it on every subsequent turn.
+    pub system: Option<String>,
+    pub temperature: Option<f32>,
+    pub num_ctx: Option<u32>,
+    pub top_p: Option<f32>,
+    /// The model this preset was written for, when it's model-specific. Advisory
+    /// only today: the UI surfaces it, nothing enforces it.
+    pub model: Option<String>,
+    pub created_ms: i64,
+}
+
+/// Every column of `presets`, in the order [`row_to_preset`] reads them.
+const PRESET_COLUMNS: &str = "id, name, system, temperature, num_ctx, top_p, model, created_ms";
+
+fn row_to_preset(row: &rusqlite::Row<'_>) -> rusqlite::Result<Preset> {
+    Ok(Preset {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        system: row.get(2)?,
+        temperature: row.get(3)?,
+        num_ctx: row.get(4)?,
+        top_p: row.get(5)?,
+        model: row.get(6)?,
+        created_ms: row.get(7)?,
+    })
+}
+
+/// Lists presets with the default first, then oldest-first.
+pub fn list_presets(conn: &Connection) -> Result<Vec<Preset>> {
+    let sql = format!(
+        "SELECT {PRESET_COLUMNS} FROM presets
+         ORDER BY (id = '{DEFAULT_PRESET_ID}') DESC, created_ms, name"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], row_to_preset)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// Inserts or updates one preset, keyed on its id.
+pub fn upsert_preset(conn: &Connection, p: &Preset) -> Result<()> {
+    conn.execute(
+        "INSERT INTO presets (id, name, system, temperature, num_ctx, top_p, model, created_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET
+            name        = excluded.name,
+            system      = excluded.system,
+            temperature = excluded.temperature,
+            num_ctx     = excluded.num_ctx,
+            top_p       = excluded.top_p,
+            model       = excluded.model",
+        rusqlite::params![
+            p.id,
+            p.name,
+            p.system,
+            p.temperature,
+            p.num_ctx,
+            p.top_p,
+            p.model,
+            p.created_ms,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Deletes a preset and detaches any conversation using it (which then falls
+/// back to the default). Deleting [`DEFAULT_PRESET_ID`] is a no-op — every
+/// conversation resolves through it, so it must always exist.
+pub fn delete_preset(conn: &Connection, id: &str) -> Result<()> {
+    if id == DEFAULT_PRESET_ID {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE conversations SET preset_id = NULL WHERE preset_id = ?1",
+        [id],
+    )?;
+    conn.execute("DELETE FROM presets WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Points a conversation at a preset, or at the default when `preset_id` is
+/// `None`.
+pub fn set_conversation_preset(
+    conn: &Connection,
+    id: &str,
+    preset_id: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE conversations SET preset_id = ?2 WHERE id = ?1",
+        rusqlite::params![id, preset_id],
+    )?;
+    Ok(())
+}
+
+/// The preset a conversation runs under: its own, else the default.
+///
+/// One query rather than two round-trips — `COALESCE` does the fallback, and a
+/// conversation pointing at a preset that no longer exists simply matches no row
+/// and yields `None` (the caller then sends no options, i.e. Ollama's defaults).
+pub fn preset_for_conversation(conn: &Connection, conversation_id: &str) -> Result<Option<Preset>> {
+    let sql = format!(
+        "SELECT {PRESET_COLUMNS} FROM presets
+          WHERE id = COALESCE(
+              (SELECT preset_id FROM conversations WHERE id = ?1),
+              '{DEFAULT_PRESET_ID}'
+          )"
+    );
+    conn.query_row(&sql, [conversation_id], row_to_preset)
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(other.into()),
+        })
+}
+
+/// Replaces the cached library listing in one transaction, stamping every row
+/// with `fetched_ms`.
+///
+/// Wholesale replace for the same reason [`replace_all`] does it: the cache is a
+/// mirror, and a model pulled from the library upstream should vanish here too.
+/// Callers must not call this with an empty listing — see
+/// [`Registry::library`](crate::Registry::library).
+pub fn replace_library(
+    conn: &mut Connection,
+    entries: &[crate::library::LibraryEntry],
+    fetched_ms: i64,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM library_models", [])?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO library_models
+                (name, description, capabilities, sizes, pulls, tag_count, updated, fetched_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for e in entries {
+            stmt.execute(rusqlite::params![
+                e.name,
+                e.description,
+                serde_json::to_string(&e.capabilities)?,
+                serde_json::to_string(&e.sizes)?,
+                e.pulls,
+                e.tag_count,
+                e.updated,
+                fetched_ms,
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// Reads the cached library listing, most-pulled first, with the timestamp it
+/// was fetched at (`None` when the cache is empty).
+pub fn read_library(conn: &Connection) -> Result<(Vec<crate::library::LibraryEntry>, Option<i64>)> {
+    let mut stmt = conn.prepare(
+        "SELECT name, description, capabilities, sizes, pulls, tag_count, updated, fetched_ms
+         FROM library_models ORDER BY pulls DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            crate::library::LibraryEntry {
+                name: row.get(0)?,
+                description: row.get(1)?,
+                // A corrupt JSON column degrades to no badges rather than
+                // failing the whole read — the row is still browsable.
+                capabilities: json_strings(&row.get::<_, String>(2)?),
+                sizes: json_strings(&row.get::<_, String>(3)?),
+                pulls: row.get(4)?,
+                tag_count: row.get(5)?,
+                updated: row.get(6)?,
+            },
+            row.get::<_, i64>(7)?,
+        ))
+    })?;
+    let mut entries = Vec::new();
+    let mut fetched = None;
+    for row in rows {
+        let (entry, at) = row?;
+        entries.push(entry);
+        fetched = Some(at);
+    }
+    Ok((entries, fetched))
+}
+
+/// Reads a JSON string array back, degrading to empty on anything unparseable.
+fn json_strings(raw: &str) -> Vec<String> {
+    serde_json::from_str(raw).unwrap_or_default()
 }
 
 /// One finished agent run. Mirrored on the frontend as `AgentRun`.

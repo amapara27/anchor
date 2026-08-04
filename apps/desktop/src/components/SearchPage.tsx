@@ -44,7 +44,7 @@ export function SearchPage() {
         hero={hero}
         libraryModel={lib}
         download={downloads[result.profile.id]}
-        onDownload={() => lib && startDownload(lib)}
+        onDownload={() => lib && startDownload(lib.id)}
         onCancel={() => cancelDownload(result.profile.id)}
         hardware={profile}
       />

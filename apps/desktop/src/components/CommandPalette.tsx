@@ -25,6 +25,7 @@ const PAGES: { tab: Tab; label: string; sub?: ModelsTab }[] = [
   { tab: "agents", label: "Agents" },
   { tab: "models", label: "Installed models", sub: "installed" },
   { tab: "models", label: "Discover models", sub: "discover" },
+  { tab: "models", label: "Browse the Ollama library", sub: "browse" },
   { tab: "models", label: "Model Comparison", sub: "compare" },
   { tab: "storage", label: "Storage" },
   { tab: "benchmarks", label: "Benchmarks" },

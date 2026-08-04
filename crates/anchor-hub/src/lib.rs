@@ -12,13 +12,17 @@ use rusqlite::Connection;
 
 pub mod bench;
 pub mod db;
+pub mod library;
 pub mod ollama;
 pub mod server;
 pub mod status;
 pub mod updates;
 
 pub use bench::BenchProgress;
-pub use db::{AgentMemory, AgentRun, Conversation, KbChunk, KbDocument, StoredMessage};
+pub use db::{
+    AgentMemory, AgentRun, Conversation, KbChunk, KbDocument, Preset, StoredMessage,
+    DEFAULT_PRESET_ID,
+};
 pub use ollama::{ChatMessage, ChatRequest, GenerateRequest, GenerationStats, PullProgress};
 
 use serde::Serialize;
@@ -265,11 +269,21 @@ impl Registry {
     }
 
     /// Creates a conversation with the given id/title/model at `now_ms`.
-    pub fn create_conversation(&self, id: &str, title: &str, model: &str, now_ms: i64) -> Result<Conversation> {
+    ///
+    /// `preset_id` of `None` leaves it on the default preset.
+    pub fn create_conversation(
+        &self,
+        id: &str,
+        title: &str,
+        model: &str,
+        preset_id: Option<String>,
+        now_ms: i64,
+    ) -> Result<Conversation> {
         let conv = Conversation {
             id: id.to_string(),
             title: title.to_string(),
             model: model.to_string(),
+            preset_id,
             created_ms: now_ms,
             updated_ms: now_ms,
         };
@@ -305,6 +319,72 @@ impl Registry {
     /// Deletes a conversation and all of its messages.
     pub fn delete_conversation(&self, id: &str) -> Result<()> {
         db::delete_conversation(&self.connect()?, id)
+    }
+
+    // --- The public Ollama library: everything installable, not just installed. ---
+
+    /// The full Ollama library listing, served from cache when it's younger than
+    /// `max_age_ms` and re-scraped otherwise.
+    ///
+    /// Three rules, in order, because the source is a website we don't control:
+    /// 1. A fresh cache is used as-is — browsing never waits on the network.
+    /// 2. A fetch that yields **zero** models is treated as a failure, not as an
+    ///    empty library. That's what a redesign looks like, and replacing a good
+    ///    catalog with nothing is the one outcome worse than stale data.
+    /// 3. Any failure falls back to the cache however old it is; only an empty
+    ///    cache surfaces the error.
+    pub async fn library(&self, max_age_ms: i64, now_ms: i64) -> Result<Vec<library::LibraryEntry>> {
+        let (cached, fetched_ms) = db::read_library(&self.connect()?)?;
+        if !cached.is_empty() && fetched_ms.is_some_and(|at| now_ms - at < max_age_ms) {
+            return Ok(cached);
+        }
+
+        match library::fetch_library().await {
+            Ok(fresh) if !fresh.is_empty() => {
+                db::replace_library(&mut self.connect()?, &fresh, now_ms)?;
+                Ok(fresh)
+            }
+            // Parsed to nothing, or the fetch failed: keep what we had.
+            Ok(_) if !cached.is_empty() => Ok(cached),
+            Ok(_) => Err(Error::Http(
+                "couldn't read the Ollama library listing (the page format may have changed)".into(),
+            )),
+            Err(_) if !cached.is_empty() => Ok(cached),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Every pullable tag of one library model. Not cached — it's only fetched
+    /// when a row is expanded, and a stale tag list is worse than a short wait.
+    pub async fn library_tags(&self, name: &str) -> Result<Vec<library::LibraryTag>> {
+        library::fetch_tags(name).await
+    }
+
+    // --- Presets: named generation settings, resolved per conversation. ---
+
+    /// Lists presets, default first.
+    pub fn presets(&self) -> Result<Vec<Preset>> {
+        db::list_presets(&self.connect()?)
+    }
+
+    /// Creates or updates one preset.
+    pub fn save_preset(&self, preset: &Preset) -> Result<()> {
+        db::upsert_preset(&self.connect()?, preset)
+    }
+
+    /// Deletes a preset (the default is protected) and detaches its conversations.
+    pub fn delete_preset(&self, id: &str) -> Result<()> {
+        db::delete_preset(&self.connect()?, id)
+    }
+
+    /// Points a conversation at a preset; `None` returns it to the default.
+    pub fn set_conversation_preset(&self, id: &str, preset_id: Option<&str>) -> Result<()> {
+        db::set_conversation_preset(&self.connect()?, id, preset_id)
+    }
+
+    /// The preset a conversation runs under (its own, else the default).
+    pub fn preset_for_conversation(&self, conversation_id: &str) -> Result<Option<Preset>> {
+        db::preset_for_conversation(&self.connect()?, conversation_id)
     }
 
     /// Stores a finished agent run.

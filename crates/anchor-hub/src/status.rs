@@ -39,7 +39,10 @@ struct PsEntry {
 }
 
 /// A model Ollama currently has loaded, with its resident size if reported.
-#[derive(Debug, Clone)]
+///
+/// Mirrored on the frontend as `RunningModel` in `types.ts` — the residency
+/// readout renders these directly.
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct RunningModel {
     pub name: String,
     pub size_vram: Option<u64>,

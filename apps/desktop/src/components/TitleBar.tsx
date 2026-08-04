@@ -1,5 +1,6 @@
 import { useServerStatus } from "../lib/useServerStatus";
 import { useTheme } from "../lib/useTheme";
+import { ResidencyPill } from "./ResidencyPill";
 import { SearchIcon } from "./icons";
 
 /**
@@ -34,6 +35,9 @@ export function TitleBar({ onOpenPalette }: { onOpenPalette?: () => void }) {
         <span>Search or run a command</span>
         <kbd className="data rounded border border-hair px-1 py-px text-[10px] leading-none">⌘K</kbd>
       </button>
+
+      {/* What's resident in RAM right now, with an eject. */}
+      <ResidencyPill />
 
       {/* Live Ollama reachability — the one always-on status in the app. */}
       <div

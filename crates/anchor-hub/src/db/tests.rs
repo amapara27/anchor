@@ -234,6 +234,7 @@ fn conversation_messages_round_trip_and_delete_cascades() {
         id: "c1".to_string(),
         title: "First chat".to_string(),
         model: "llama3.1:8b".to_string(),
+        preset_id: None,
         created_ms: 1_000,
         updated_ms: 1_000,
     };
@@ -386,4 +387,72 @@ fn kb_chunks_round_trip_embeddings() {
     delete_kb_document(&conn, "d1").unwrap();
     assert!(list_kb_documents(&conn).unwrap().is_empty());
     assert!(list_kb_chunks(&conn).unwrap().is_empty());
+}
+
+#[test]
+fn preset_resolution_falls_back_and_survives_deletion() {
+    let conn = in_memory();
+
+    // A fresh install has exactly the seeded default, and it tunes nothing —
+    // so a conversation on it behaves exactly as it did before presets existed.
+    let seeded = list_presets(&conn).unwrap();
+    assert_eq!(seeded.len(), 1);
+    assert_eq!(seeded[0].id, DEFAULT_PRESET_ID);
+    assert_eq!(seeded[0].temperature, None);
+    assert_eq!(seeded[0].system, None);
+
+    let conv = Conversation {
+        id: "c1".to_string(),
+        title: "Chat".to_string(),
+        model: "llama3.1:8b".to_string(),
+        preset_id: None,
+        created_ms: 1_000,
+        updated_ms: 1_000,
+    };
+    insert_conversation(&conn, &conv).unwrap();
+    // No preset of its own → the default.
+    assert_eq!(
+        preset_for_conversation(&conn, "c1").unwrap().unwrap().id,
+        DEFAULT_PRESET_ID
+    );
+
+    let strict = Preset {
+        id: "p1".to_string(),
+        name: "Strict".to_string(),
+        system: Some("Answer in one sentence.".to_string()),
+        temperature: Some(0.1),
+        num_ctx: Some(8192),
+        top_p: Some(0.8),
+        model: Some("llama3.1:8b".to_string()),
+        created_ms: 2_000,
+    };
+    upsert_preset(&conn, &strict).unwrap();
+    set_conversation_preset(&conn, "c1", Some("p1")).unwrap();
+    assert_eq!(preset_for_conversation(&conn, "c1").unwrap(), Some(strict.clone()));
+    // The default sorts first regardless of creation order.
+    assert_eq!(
+        list_presets(&conn).unwrap().iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
+        [DEFAULT_PRESET_ID, "p1"],
+    );
+
+    // Upsert edits in place rather than duplicating.
+    upsert_preset(&conn, &Preset { temperature: Some(0.9), ..strict }).unwrap();
+    assert_eq!(list_presets(&conn).unwrap().len(), 2);
+    assert_eq!(
+        preset_for_conversation(&conn, "c1").unwrap().unwrap().temperature,
+        Some(0.9)
+    );
+
+    // Deleting a preset detaches its conversations back onto the default —
+    // never leaves one pointing at a row that's gone.
+    delete_preset(&conn, "p1").unwrap();
+    assert_eq!(
+        preset_for_conversation(&conn, "c1").unwrap().unwrap().id,
+        DEFAULT_PRESET_ID
+    );
+    assert_eq!(list_conversations(&conn).unwrap()[0].preset_id, None);
+
+    // The default is load-bearing: it can't be deleted.
+    delete_preset(&conn, DEFAULT_PRESET_ID).unwrap();
+    assert_eq!(list_presets(&conn).unwrap().len(), 1);
 }

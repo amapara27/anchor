@@ -74,51 +74,53 @@ function useModelsState() {
     });
   }, []);
 
+  /**
+   * Pulls a model by Ollama id.
+   *
+   * Takes an id rather than a `LibraryModel` because that's all it ever used,
+   * and because Browse pulls tags (`llama3.1:70b-q2_K`) that aren't in the
+   * catalog and have no `LibraryModel` to hand.
+   */
   const startDownload = useCallback(
-    (model: LibraryModel) => {
-      if (downloads[model.id]?.status === "downloading") return; // already running
-      canceled.current.delete(model.id);
+    (id: string) => {
+      if (downloads[id]?.status === "downloading") return; // already running
+      canceled.current.delete(id);
       setDownloads((d) => ({
         ...d,
-        [model.id]: {
-          modelId: model.id,
-          progress: 0,
-          receivedBytes: 0,
-          status: "downloading",
-        },
+        [id]: { modelId: id, progress: 0, receivedBytes: 0, status: "downloading" },
       }));
 
       const channel = new Channel<PullProgress>();
       channel.onmessage = (msg) => {
-        if (canceled.current.has(model.id)) return;
+        if (canceled.current.has(id)) return;
         setDownloads((d) => {
-          const cur = d[model.id];
+          const cur = d[id];
           if (!cur) return d;
-          return { ...d, [model.id]: applyProgress(cur, msg) };
+          return { ...d, [id]: applyProgress(cur, msg) };
         });
       };
 
-      invoke("download_model", { id: model.id, onEvent: channel })
+      invoke("download_model", { id, onEvent: channel })
         .then(() => {
-          if (canceled.current.has(model.id)) return;
+          if (canceled.current.has(id)) return;
           // Briefly show "done", then refresh from the backend so the model
           // flips to installed with its real on-disk specs.
           setDownloads((d) => {
-            const cur = d[model.id];
+            const cur = d[id];
             if (!cur) return d;
-            return { ...d, [model.id]: { ...cur, progress: 1, status: "done" } };
+            return { ...d, [id]: { ...cur, progress: 1, status: "done" } };
           });
           window.setTimeout(() => {
-            clearDownload(model.id);
+            clearDownload(id);
             load();
           }, 400);
         })
         .catch((e) => {
-          if (canceled.current.has(model.id)) return;
+          if (canceled.current.has(id)) return;
           setDownloads((d) => {
-            const cur = d[model.id];
+            const cur = d[id];
             if (!cur) return d;
-            return { ...d, [model.id]: { ...cur, status: "error", error: String(e) } };
+            return { ...d, [id]: { ...cur, status: "error", error: String(e) } };
           });
         });
     },

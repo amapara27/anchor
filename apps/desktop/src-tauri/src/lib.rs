@@ -14,7 +14,7 @@ use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
     AgentRun, BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats,
-    PullProgress, Registry, StoredMessage,
+    Preset, PullProgress, Registry, StoredMessage,
 };
 use anchor_search::{QueryHistory, SemanticIndex};
 use anchor_workflows::{ResearchConfig, ResearchEvent};
@@ -124,6 +124,39 @@ async fn list_models(app: AppHandle) -> Result<Vec<Model>, String> {
 #[tauri::command]
 fn list_catalog() -> Result<Vec<anchor_search::ModelProfile>, String> {
     anchor_search::load_profiles().map_err(|e| e.to_string())
+}
+
+/// How long the scraped Ollama library listing stays good. Models are published
+/// on a scale of days, and the page is ~700 KB — a day-old list is fine.
+const LIBRARY_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// The full public Ollama library — every model installable from ollama.com,
+/// not just the curated profiles that Discover's semantic search ranks.
+///
+/// Served from a SQLite cache; `refresh: true` forces a re-scrape (the button
+/// in the UI). Needs no Ollama server: this is about what *could* be installed.
+#[tauri::command]
+async fn list_library(
+    app: AppHandle,
+    refresh: Option<bool>,
+) -> Result<Vec<anchor_hub::library::LibraryEntry>, String> {
+    let max_age = if refresh.unwrap_or(false) { 0 } else { LIBRARY_MAX_AGE_MS };
+    registry(&app)?
+        .library(max_age, now_ms())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Every pullable tag of one library model, fetched when a row is expanded.
+#[tauri::command]
+async fn library_tags(
+    app: AppHandle,
+    name: String,
+) -> Result<Vec<anchor_hub::library::LibraryTag>, String> {
+    registry(&app)?
+        .library_tags(&name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Builds a [`QueryHistory`] backed by `search_history.json` in the app's data
@@ -272,6 +305,11 @@ enum ChatEvent {
 /// the roles), tokens stream back over `on_event`, and the assistant message +
 /// stats are persisted on success. Serialized behind `compare_lock` (shared with
 /// compare/research/benchmark) so a turn never competes for RAM with those.
+///
+/// Generation settings come from the conversation's [`Preset`] (falling back to
+/// the default one), read here rather than passed over IPC — so the frontend
+/// can't drift from what's stored, and every caller of a conversation gets the
+/// same settings.
 #[tauri::command]
 async fn run_chat(
     app: AppHandle,
@@ -305,12 +343,31 @@ async fn run_chat(
             },
         )
         .map_err(|e| e.to_string())?;
-    let messages: Vec<ChatMessage> = registry
+    let mut messages: Vec<ChatMessage> = registry
         .messages_for(&conversation_id)
         .map_err(|e| e.to_string())?
         .into_iter()
         .map(|m| ChatMessage { role: m.role, content: m.content })
         .collect();
+
+    // Preset resolution is best-effort: a DB hiccup falls back to Ollama's own
+    // defaults rather than failing a turn the user is waiting on.
+    let preset = registry.preset_for_conversation(&conversation_id).ok().flatten();
+
+    // The system turn is prepended per request, never persisted — storing it
+    // would re-prepend a second copy on the next turn, and again on the one
+    // after that.
+    if let Some(system) = preset
+        .as_ref()
+        .and_then(|p| p.system.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        messages.insert(
+            0,
+            ChatMessage { role: "system".into(), content: system.to_string() },
+        );
+    }
 
     let req = ChatRequest {
         model,
@@ -320,8 +377,9 @@ async fn run_chat(
         // collapsed in the UI) while others answer directly. `Some(true)` would
         // error on non-thinking models like llama3.1.
         think: None,
-        num_ctx: None,
-        temperature: None,
+        num_ctx: preset.as_ref().and_then(|p| p.num_ctx),
+        temperature: preset.as_ref().and_then(|p| p.temperature),
+        top_p: preset.as_ref().and_then(|p| p.top_p),
     };
 
     let state = app.state::<ServerState>();
@@ -367,11 +425,47 @@ async fn list_conversations(app: AppHandle) -> Result<Vec<Conversation>, String>
 }
 
 /// Creates an empty conversation for the given model. Title is set from the
-/// first message on the first [`run_chat`].
+/// first message on the first [`run_chat`]; a `None` preset uses the default.
 #[tauri::command]
-async fn create_conversation(app: AppHandle, model: String) -> Result<Conversation, String> {
+async fn create_conversation(
+    app: AppHandle,
+    model: String,
+    preset_id: Option<String>,
+) -> Result<Conversation, String> {
     registry(&app)?
-        .create_conversation(&rand_hex(8)?, "New chat", &model, now_ms())
+        .create_conversation(&rand_hex(8)?, "New chat", &model, preset_id, now_ms())
+        .map_err(|e| e.to_string())
+}
+
+/// Lists generation presets, default first.
+#[tauri::command]
+async fn list_presets(app: AppHandle) -> Result<Vec<Preset>, String> {
+    registry(&app)?.presets().map_err(|e| e.to_string())
+}
+
+/// Creates or updates a preset. The frontend owns preset ids (a new one is
+/// minted there), so this is a plain upsert.
+#[tauri::command]
+async fn save_preset(app: AppHandle, preset: Preset) -> Result<(), String> {
+    registry(&app)?.save_preset(&preset).map_err(|e| e.to_string())
+}
+
+/// Deletes a preset. The default preset is protected — conversations resolve
+/// through it — so deleting it is a no-op rather than an error.
+#[tauri::command]
+async fn delete_preset(app: AppHandle, id: String) -> Result<(), String> {
+    registry(&app)?.delete_preset(&id).map_err(|e| e.to_string())
+}
+
+/// Points a conversation at a preset; `None` returns it to the default.
+#[tauri::command]
+async fn set_conversation_preset(
+    app: AppHandle,
+    id: String,
+    preset_id: Option<String>,
+) -> Result<(), String> {
+    registry(&app)?
+        .set_conversation_preset(&id, preset_id.as_deref())
         .map_err(|e| e.to_string())
 }
 
@@ -417,6 +511,19 @@ const AGENT_RUN_LIMIT: u32 = 200;
 async fn unload_model(app: AppHandle, model: String) -> Result<(), String> {
     let _ = registry(&app)?.unload(&model).await;
     Ok(())
+}
+
+/// Which models Ollama currently has resident, with each one's real resident
+/// size and loaded context length.
+///
+/// Deliberately does *not* call [`ensure_server`]: this backs a repeating poll,
+/// and a status read must never be the thing that starts a server. A down server
+/// simply has nothing loaded, which is exactly an empty list.
+#[tauri::command]
+async fn running_models(app: AppHandle) -> Result<Vec<anchor_hub::status::RunningModel>, String> {
+    Ok(anchor_hub::status::running(&registry(&app)?)
+        .await
+        .unwrap_or_default())
 }
 
 /// Removes a model from Ollama and the cache.
@@ -667,6 +774,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_models,
             list_catalog,
+            list_library,
+            library_tags,
             search_models,
             recent_searches,
             download_model,
@@ -678,6 +787,10 @@ pub fn run() {
             conversation_messages,
             rename_conversation,
             delete_conversation,
+            list_presets,
+            save_preset,
+            delete_preset,
+            set_conversation_preset,
             save_agent_run,
             agent_runs,
             agents::run_batch_processor,
@@ -687,6 +800,7 @@ pub fn run() {
             agents::kb_documents,
             agents::kb_forget_document,
             unload_model,
+            running_models,
             remove_model,
             get_hardware_profile,
             refresh_hardware_profile,
