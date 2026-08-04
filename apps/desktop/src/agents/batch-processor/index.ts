@@ -1,5 +1,5 @@
 import type { AgentEntry } from "../types";
-import { StubPanel } from "../StubPanel";
+import { BatchProcessorPanel } from "./Panel";
 import { BATCH_PROCESSOR_PHASES } from "./phases";
 
 /**
@@ -10,8 +10,8 @@ import { BATCH_PROCESSOR_PHASES } from "./phases";
  */
 const entry: AgentEntry = {
   id: "batch-processor",
-  Panel: ({ onBack }) => StubPanel({ name: "Batch Processor", onBack }),
-  ready: false,
+  Panel: BatchProcessorPanel,
+  ready: true,
   phases: BATCH_PROCESSOR_PHASES,
 };
 
