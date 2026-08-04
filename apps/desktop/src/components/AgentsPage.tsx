@@ -205,7 +205,7 @@ export function AgentsPage() {
         ))}
 
       {tab === "agents" && (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
+        <div className="grid grid-cols-2 gap-3">
           {WORKFLOW_TEMPLATES.map((w) => (
             <div key={w.id} className="card card-interactive flex flex-col gap-3 p-4">
               <div className="flex items-start gap-2.5">
