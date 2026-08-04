@@ -18,18 +18,11 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     tools: ["web_search", "file_reader", "memory"],
   },
   {
-    id: "pdf-qa",
-    name: "PDF Q&A",
-    description: "Load a document and ask questions — answers are grounded in the file's contents.",
+    id: "knowledge-base",
+    name: "Knowledge Base",
+    description: "Builds a searchable memory from your documents and answers from it on demand.",
     model: "qwen2.5:14b",
-    tools: ["file_reader"],
-  },
-  {
-    id: "local-memory-chat",
-    name: "Local Memory Chat",
-    description: "A conversational assistant that remembers prior turns and facts across sessions.",
-    model: "mistral:7b",
-    tools: ["memory"],
+    tools: ["file_reader", "memory"],
   },
   {
     id: "code-reviewer",
@@ -39,18 +32,11 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     tools: ["file_reader"],
   },
   {
-    id: "web-researcher",
-    name: "Web Researcher",
-    description: "Answers questions using live web search with linked sources.",
-    model: "llama3.1:8b",
-    tools: ["web_search"],
-  },
-  {
-    id: "knowledge-base",
-    name: "Knowledge Base",
-    description: "Builds a searchable memory from your documents and answers from it on demand.",
+    id: "batch-processor",
+    name: "Batch Processor",
+    description: "Applies one instruction across a folder of files and returns a row per file.",
     model: "qwen2.5:14b",
-    tools: ["file_reader", "memory"],
+    tools: ["file_reader"],
   },
 ];
 
@@ -58,11 +44,9 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
  *  kept out of `WorkflowTemplate`, which mirrors the Rust type). */
 export const WORKFLOW_CATEGORY: Record<string, string> = {
   "research-assistant": "Research",
-  "pdf-qa": "Docs",
-  "local-memory-chat": "Chat",
-  "code-reviewer": "Code",
-  "web-researcher": "Research",
   "knowledge-base": "RAG",
+  "code-reviewer": "Code",
+  "batch-processor": "Docs",
 };
 
 /** Display label + icon for each tool, used by workflow cards. */

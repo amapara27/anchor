@@ -11,11 +11,9 @@
 use anchor_hub::GenerationStats;
 use serde::Serialize;
 
+pub mod batch_processor;
 pub mod code_reviewer;
 pub mod knowledge_base;
-pub mod memory_chat;
-pub mod pdf_qa;
-pub mod web_researcher;
 
 /// One streamed event from any agent.
 ///

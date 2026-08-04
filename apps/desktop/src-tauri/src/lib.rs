@@ -653,7 +653,7 @@ fn build_semantic_index(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // File picking for the agents that read documents (PDF Q&A, Code
+        // File picking for the agents that read documents (Batch Processor, Code
         // Reviewer, Knowledge Base). `fs` backs the dialog's scope grants.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -680,16 +680,12 @@ pub fn run() {
             delete_conversation,
             save_agent_run,
             agent_runs,
-            agents::run_web_researcher,
-            agents::run_pdf_qa,
+            agents::run_batch_processor,
             agents::run_code_reviewer,
-            agents::run_memory_chat,
             agents::run_knowledge_base,
             agents::kb_ingest,
             agents::kb_documents,
             agents::kb_forget_document,
-            agents::agent_memories,
-            agents::forget_memory,
             unload_model,
             remove_model,
             get_hardware_profile,

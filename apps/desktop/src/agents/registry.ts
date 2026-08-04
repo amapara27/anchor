@@ -7,21 +7,12 @@
  */
 import type { AgentEntry, PhaseMeta } from "./types";
 
+import batchProcessor from "./batch-processor";
 import codeReviewer from "./code-reviewer";
 import knowledgeBase from "./knowledge-base";
-import localMemoryChat from "./local-memory-chat";
-import pdfQa from "./pdf-qa";
 import researchAssistant from "./research-assistant";
-import webResearcher from "./web-researcher";
 
-const ENTRIES: AgentEntry[] = [
-  researchAssistant,
-  webResearcher,
-  pdfQa,
-  codeReviewer,
-  localMemoryChat,
-  knowledgeBase,
-];
+const ENTRIES: AgentEntry[] = [researchAssistant, knowledgeBase, codeReviewer, batchProcessor];
 
 export const AGENTS: Record<string, AgentEntry> = Object.fromEntries(
   ENTRIES.map((a) => [a.id, a]),

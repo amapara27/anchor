@@ -14,5 +14,5 @@ anchor-search = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
-# Text extraction for the shared file tool (PDF Q&A, Code Reviewer, Knowledge Base).
+# Text extraction for the shared file tool (Batch Processor, Code Reviewer, Knowledge Base).
 pdf-extract = "0.12"

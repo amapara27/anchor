@@ -71,7 +71,7 @@ export interface RunOptions {
  * code in the feature and are not worth getting wrong once per agent.
  *
  * @param agentId matches the template id in `lib/workflows.ts`
- * @param command the Tauri command name, e.g. `run_web_researcher`
+ * @param command the Tauri command name, e.g. `run_batch_processor`
  */
 export function useAgent(agentId: string, command: string) {
   const [state, setState] = useState<AgentState>(INITIAL);

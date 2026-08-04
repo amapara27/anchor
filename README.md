@@ -24,8 +24,12 @@ Streaming conversations against any installed model, with reasoning/thinking out
 
 Tool-enabled workflows that run a deterministic pipeline and stream their progress — phase by phase, with sources and intermediate notes visible as they happen. Every run is recorded in a history with its duration, token count, and a per-phase timing trace.
 
-- **Research Assistant** — plans queries, searches the web via Tavily, and synthesizes a cited answer. *Live.*
-- **Web Researcher**, **PDF Q&A**, **Code Reviewer**, **Local Memory Chat**, **Knowledge Base** — *in progress.* Each is being built against a shared agent protocol (`AgentEvent`) and a shared set of tools (document reading, chunking, web search, durable memory).
+- **Research Assistant** — plans queries, searches the web via Tavily, and synthesizes a cited answer.
+- **Knowledge Base** — ingest documents into a local embedded corpus, then ask questions answered from the passages it retrieves, with citations.
+- **Code Reviewer** — point a local model at a codebase, a file, or a diff and get focused findings back.
+- **Batch Processor** — *in progress.* Apply one instruction across many files and get a row per file instead of prose.
+
+Each agent is a deterministic pipeline over a shared event protocol (`AgentEvent`) and a shared tool set — document reading, chunking, web search — rather than an open-ended tool loop. That keeps runs cheap and predictable on local hardware.
 
 ### Models
 
