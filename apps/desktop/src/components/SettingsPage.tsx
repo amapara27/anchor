@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import type { HardwareProfile } from "../types";
+import { DEFAULT_PRESET_ID, type HardwareProfile, type Preset } from "../types";
 import { useModels } from "../lib/useModels";
+import { usePresets } from "../lib/usePresets";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useServerStatus } from "../lib/useServerStatus";
 import { useTheme, type ThemePref } from "../lib/useTheme";
@@ -9,13 +10,14 @@ import { PageHeader, GhostButton } from "./PageHeader";
 import { Toggle } from "./ui/Toggle";
 import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { RefreshIcon, ShieldIcon } from "./icons";
 
 type Section = "appearance" | "inference" | "hardware" | "privacy";
 
 const SECTIONS: { key: Section; label: string }[] = [
   { key: "appearance", label: "Appearance" },
-  { key: "inference", label: "Inference defaults" },
+  { key: "inference", label: "Inference presets" },
   { key: "hardware", label: "Hardware & server" },
   { key: "privacy", label: "Privacy & sharing" },
 ];
@@ -245,65 +247,196 @@ function Swatch({ bg, border, bars, half }: { bg: string; border: string; bars: 
   );
 }
 
+/** Temperature a cleared field starts stepping from, matching Ollama's own default. */
+const TEMP_START = 0.7;
+/** Top of the temperature meter — above ~1.5 output is noise, not variety. */
+const TEMP_MAX = 1.5;
+
+const CTX_CHOICES = [2048, 4096, 8192, 16384, 32768, 65536, 131072];
+const TOP_P_CHOICES = [0.7, 0.8, 0.9, 0.95, 1.0];
+
+/** A `Select` option meaning "send nothing and let the model decide". */
+const UNSET = { value: "", label: "Model default" };
+
 /**
- * Inference defaults. ponytail: localStorage only — `run_chat` doesn't accept
- * options yet, so these describe intent rather than drive generation. Wire them
- * through once the command takes a params struct.
+ * Presets: named bundles of {system prompt, temperature, context, top-p} that
+ * `run_chat` reads straight out of SQLite.
+ *
+ * The app's inference defaults are the preset named Default — one table, one
+ * resolution path, so there's no question of which of the two wins. A null field
+ * is not zero: it means the option is omitted from the request entirely.
  */
 function InferencePanel() {
-  const [temp, setTemp] = useState(0.7);
-  const [ctx, setCtx] = useState("4096");
-  const [topP, setTopP] = useState("0.9");
+  const { presets, loading, save, create, remove } = usePresets();
+  const { models } = useModels();
+  const [editingId, setEditingId] = useState(DEFAULT_PRESET_ID);
+  const [pendingDelete, setPendingDelete] = useState<Preset | null>(null);
 
+  // A deleted preset leaves the editor pointing at nothing — fall back.
+  const preset = presets.find((p) => p.id === editingId) ?? presets[0] ?? null;
+  const isDefault = preset?.id === DEFAULT_PRESET_ID;
+
+  if (loading || !preset) return <section className="card shimmer h-72" aria-hidden />;
+
+  const edit = (patch: Partial<Preset>) => save({ ...preset, ...patch });
+
+  const temp = preset.temperature;
   const hint =
-    temp <= 0.3
-      ? "Deterministic — best for extraction, review and JSON output."
-      : temp >= 1.0
-        ? "Loose — more variety, more drift."
-        : "Balanced — the default for general conversation.";
+    temp == null
+      ? "Unset — the model's own default is used."
+      : temp <= 0.3
+        ? "Deterministic — best for extraction, review and JSON output."
+        : temp >= 1.0
+          ? "Loose — more variety, more drift."
+          : "Balanced — the default for general conversation.";
 
   return (
-    <SectionCard title="Inference defaults" blurb="Applied to new conversations once the backend accepts them.">
-      <div className="flex flex-col gap-2">
+    <SectionCard
+      title="Inference presets"
+      blurb="A preset is applied to every turn in the conversations using it. Default covers everything else."
+    >
+      <div className="flex items-end gap-2.5">
+        <Select
+          label="Editing"
+          className="flex-1"
+          value={preset.id}
+          onChange={setEditingId}
+          options={presets.map((p) => ({ value: p.id, label: p.name }))}
+        />
+        <GhostButton className="h-8" onClick={() => setEditingId(create("New preset").id)}>
+          New
+        </GhostButton>
+        <GhostButton
+          tone="danger"
+          className="h-8"
+          disabled={isDefault}
+          title={isDefault ? "The default preset can't be deleted" : undefined}
+          onClick={() => setPendingDelete(preset)}
+        >
+          Delete
+        </GhostButton>
+      </div>
+
+      {!isDefault && (
+        <label className="flex flex-col gap-1.5">
+          <span className="label-caps">Name</span>
+          <input
+            value={preset.name}
+            onChange={(e) => edit({ name: e.target.value })}
+            className="h-8 rounded-[var(--radius-control)] border border-hair bg-surface px-3 text-[12.5px] text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
+          />
+        </label>
+      )}
+
+      <label className="flex flex-col gap-1.5 border-t border-hair pt-3">
+        <span className="label-caps">System prompt</span>
+        <textarea
+          value={preset.system ?? ""}
+          onChange={(e) => edit({ system: e.target.value.trim() ? e.target.value : null })}
+          rows={3}
+          placeholder="e.g. You are a terse assistant. Answer in at most three sentences."
+          className="scrollbar-slim resize-y rounded-[9px] border border-hair bg-surface px-3 py-2 text-[12.5px] leading-[1.6] text-fg placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
+        />
+        <span className="text-[11.5px] text-fg-subtle">
+          Sent as a system turn ahead of the history. It isn't stored in the conversation.
+        </span>
+      </label>
+
+      <div className="flex flex-col gap-2 border-t border-hair pt-3">
         <div className="flex items-baseline gap-2.5">
           <span className="text-[13px] text-fg">Temperature</span>
-          <span className="data ml-auto text-[13px] text-accent-text">{temp.toFixed(2)}</span>
+          <span className="data ml-auto text-[13px] text-accent-text">
+            {temp == null ? "default" : temp.toFixed(2)}
+          </span>
+          {temp != null && (
+            <button
+              type="button"
+              onClick={() => edit({ temperature: null })}
+              className="cursor-pointer text-[11px] text-fg-subtle underline-offset-2 hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+            >
+              clear
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-2.5">
-          <Stepper label="Decrease temperature" onClick={() => setTemp((t) => Math.max(0, +(t - 0.05).toFixed(2)))}>
+          <Stepper
+            label="Decrease temperature"
+            onClick={() => edit({ temperature: stepTemp(temp, -0.05) })}
+          >
             –
           </Stepper>
-          <Meter fraction={temp / 1.5} height={5} className="flex-1" />
-          <Stepper label="Increase temperature" onClick={() => setTemp((t) => Math.min(1.5, +(t + 0.05).toFixed(2)))}>
+          <Meter fraction={(temp ?? 0) / TEMP_MAX} height={5} className="flex-1" />
+          <Stepper
+            label="Increase temperature"
+            onClick={() => edit({ temperature: stepTemp(temp, 0.05) })}
+          >
             +
           </Stepper>
         </div>
         <span className="text-[11.5px] text-fg-subtle">{hint}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2.5 border-t border-hair pt-3">
+      <div className="grid grid-cols-3 gap-2.5 border-t border-hair pt-3">
         <Select
           label="Context length"
-          value={ctx}
-          onChange={setCtx}
-          options={[2048, 4096, 8192, 16384, 32768].map((n) => ({
-            value: String(n),
-            label: `${n.toLocaleString()} (${formatContext(n)})`,
-          }))}
+          value={preset.num_ctx == null ? "" : String(preset.num_ctx)}
+          onChange={(v) => edit({ num_ctx: v ? Number(v) : null })}
+          options={[
+            UNSET,
+            ...CTX_CHOICES.map((n) => ({
+              value: String(n),
+              label: `${n.toLocaleString()} (${formatContext(n)})`,
+            })),
+          ]}
         />
         <Select
           label="Top-p"
-          value={topP}
-          onChange={setTopP}
-          options={["0.7", "0.8", "0.9", "0.95", "1.0"].map((v) => ({ value: v, label: v }))}
+          value={preset.top_p == null ? "" : String(preset.top_p)}
+          onChange={(v) => edit({ top_p: v ? Number(v) : null })}
+          options={[UNSET, ...TOP_P_CHOICES.map((v) => ({ value: String(v), label: v.toFixed(2) }))]}
+        />
+        <Select
+          label="Intended model"
+          value={preset.model ?? ""}
+          onChange={(v) => edit({ model: v || null })}
+          options={[
+            { value: "", label: "Any model" },
+            ...models
+              .filter((m) => m.status === "installed")
+              .map((m) => ({ value: m.id, label: m.name })),
+          ]}
         />
       </div>
 
       <p className="rounded-[9px] border border-hair bg-inset px-3 py-2.5 text-[11.5px] leading-[1.5] text-fg-subtle">
-        Stored locally and not yet passed to Ollama — <code className="data">run_chat</code> takes no options today.
+        A context larger than the model supports is clamped by Ollama, not by Anchor — the residency readout
+        shows what actually loaded. “Intended model” is a label; it doesn’t restrict where the preset can be used.
       </p>
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Delete preset?"
+        body={
+          pendingDelete
+            ? `“${pendingDelete.name}” will be removed. Conversations using it fall back to Default; their messages are untouched.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDelete) remove(pendingDelete.id);
+          setEditingId(DEFAULT_PRESET_ID);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </SectionCard>
   );
+}
+
+/** Steps temperature, starting from Ollama's own default when it was unset. */
+function stepTemp(current: number | null, delta: number): number {
+  const from = current ?? TEMP_START;
+  return Math.min(TEMP_MAX, Math.max(0, +(from + delta).toFixed(2)));
 }
 
 function Stepper({ children, onClick, label }: { children: React.ReactNode; onClick: () => void; label: string }) {

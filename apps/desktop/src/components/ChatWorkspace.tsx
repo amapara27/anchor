@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Conversation, GenerationStats } from "../types";
+import { DEFAULT_PRESET_ID, type Conversation, type GenerationStats, type Preset } from "../types";
 import { useChat } from "../lib/useChat";
 import { useModels } from "../lib/useModels";
+import { usePresets } from "../lib/usePresets";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { formatContext } from "../lib/format";
 import { DEFAULT_CONTEXT } from "../lib/fit";
 import { ModelSelect } from "./ui/ModelSelect";
+import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ChatMessage } from "./ChatMessage";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
@@ -40,9 +42,12 @@ function groupConversations(list: Conversation[]) {
 export function ChatWorkspace() {
   const { models, loading } = useModels();
   const { profile } = useHardwareProfile();
-  const { conversations, activeId, messages, running, error, select, create, rename, remove, send } = useChat();
+  const { presets } = usePresets();
+  const { conversations, activeId, messages, running, error, select, create, rename, remove, send, setPreset } =
+    useChat();
 
   const [model, setModel] = useState("");
+  const [presetId, setPresetId] = useState(DEFAULT_PRESET_ID);
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -55,11 +60,20 @@ export function ChatWorkspace() {
     setModel(suggested?.id ?? models.find((m) => m.status === "installed")?.id ?? "");
   }, [models, model]);
 
-  // Follow the active conversation's model when switching threads.
+  // Follow the active conversation's model and preset when switching threads.
   const activeConvo = conversations.find((c) => c.id === activeId);
   useEffect(() => {
-    if (activeConvo) setModel(activeConvo.model);
+    if (!activeConvo) return;
+    setModel(activeConvo.model);
+    setPresetId(activeConvo.preset_id ?? DEFAULT_PRESET_ID);
   }, [activeConvo?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A preset switch applies to the open conversation; with none open it's the
+  // one the next `create` starts under.
+  const changePreset = (next: string) => {
+    setPresetId(next);
+    if (activeId) setPreset(activeId, next === DEFAULT_PRESET_ID ? null : next);
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -73,7 +87,7 @@ export function ChatWorkspace() {
     if (!text || running || !model) return;
     setInput("");
     let id = activeId;
-    if (!id) id = (await create(model)).id;
+    if (!id) id = (await create(model, presetId)).id;
     send(id, model, text);
   };
 
@@ -84,7 +98,7 @@ export function ChatWorkspace() {
         <div className="flex flex-col gap-2.5 border-b border-hair px-3 py-3.5">
           <button
             type="button"
-            onClick={() => create(model)}
+            onClick={() => create(model, presetId)}
             disabled={!model}
             className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-lg bg-accent text-[13px] font-semibold text-accent-fg transition-[filter,transform] duration-150 ease-out hover:brightness-110 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-40"
           >
@@ -144,6 +158,9 @@ export function ChatWorkspace() {
           model={model}
           onModelChange={setModel}
           models={models}
+          presets={presets}
+          presetId={presetId}
+          onPresetChange={changePreset}
           profile={profile}
           pickerDisabled={running || loading}
           onRename={(title) => activeConvo && rename(activeConvo.id, title)}
@@ -247,13 +264,16 @@ function ConversationRow({
   );
 }
 
-/** Title (click to rename), model pill, and the live context meter. */
+/** Title (click to rename), model + preset pills, and the live context meter. */
 function ThreadHeader({
   convo,
   messages,
   model,
   onModelChange,
   models,
+  presets,
+  presetId,
+  onPresetChange,
   profile,
   pickerDisabled,
   onRename,
@@ -263,6 +283,9 @@ function ThreadHeader({
   model: string;
   onModelChange: (id: string) => void;
   models: ReturnType<typeof useModels>["models"];
+  presets: Preset[];
+  presetId: string;
+  onPresetChange: (id: string) => void;
   profile: ReturnType<typeof useHardwareProfile>["profile"];
   pickerDisabled: boolean;
   onRename: (title: string) => void;
@@ -286,6 +309,10 @@ function ThreadHeader({
   }, [messages]);
 
   const turns = messages.filter((m) => m.role === "user").length;
+
+  // Measure context against what the preset actually pins, so the meter reflects
+  // the window the model was loaded with rather than a nominal default.
+  const contextLimit = presets.find((p) => p.id === presetId)?.num_ctx ?? DEFAULT_CONTEXT;
 
   return (
     <div className="flex shrink-0 items-center gap-3 border-b border-hair bg-canvas px-5 py-3">
@@ -340,12 +367,23 @@ function ThreadHeader({
         className="shrink-0"
       />
 
+      <Select
+        value={presetId}
+        onChange={onPresetChange}
+        options={presets.map((p) => ({ value: p.id, label: p.name }))}
+        disabled={pickerDisabled}
+        variant="pill"
+        ariaLabel="Inference preset"
+        className="w-[128px] shrink-0"
+        menuWidth={200}
+      />
+
       {contextTokens != null && (
         <div className="flex shrink-0 flex-col items-end gap-1 px-1">
           <span className="data text-[11px] text-fg-muted">
-            context {contextTokens.toLocaleString()} / {formatContext(DEFAULT_CONTEXT)}
+            context {contextTokens.toLocaleString()} / {formatContext(contextLimit)}
           </span>
-          <Meter fraction={contextTokens / DEFAULT_CONTEXT} color="var(--accent-text)" className="w-24" />
+          <Meter fraction={contextTokens / contextLimit} color="var(--accent-text)" className="w-24" />
         </div>
       )}
     </div>

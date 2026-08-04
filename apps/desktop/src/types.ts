@@ -290,9 +290,34 @@ export interface Conversation {
   id: string;
   title: string;
   model: string;
+  /** The preset it runs under; null falls back to `DEFAULT_PRESET_ID`. */
+  preset_id: string | null;
   created_ms: number;
   updated_ms: number;
 }
+
+/**
+ * A named bundle of generation settings. Mirrors `anchor_hub::Preset`.
+ *
+ * Every tuning field is nullable, and null means "leave it to Ollama" — the
+ * settings panel edits the seeded `default` row, so the app's inference defaults
+ * and its presets are the same thing.
+ */
+export interface Preset {
+  id: string;
+  name: string;
+  /** Prepended as a system turn at request time; never stored as a message. */
+  system: string | null;
+  temperature: number | null;
+  num_ctx: number | null;
+  top_p: number | null;
+  /** The model this preset was written for, when it's model-specific. */
+  model: string | null;
+  created_ms: number;
+}
+
+/** Id of the preset every conversation falls back to. Mirrors `anchor_hub::DEFAULT_PRESET_ID`. */
+export const DEFAULT_PRESET_ID = "default";
 
 /** One stored chat turn. Mirrors `anchor_hub::StoredMessage`. */
 export interface ChatMessage {

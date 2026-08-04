@@ -49,8 +49,11 @@ export function useChat() {
   }, []);
 
   const create = useCallback(
-    async (model: string) => {
-      const convo = await invoke<Conversation>("create_conversation", { model });
+    async (model: string, presetId?: string | null) => {
+      const convo = await invoke<Conversation>("create_conversation", {
+        model,
+        presetId: presetId ?? null,
+      });
       setConversations((c) => [convo, ...c]);
       runId.current++;
       setActiveId(convo.id);
@@ -60,6 +63,12 @@ export function useChat() {
     },
     [],
   );
+
+  /** Points a conversation at a preset. Takes effect on its next turn. */
+  const setPreset = useCallback((id: string, presetId: string | null) => {
+    setConversations((c) => c.map((x) => (x.id === id ? { ...x, preset_id: presetId } : x)));
+    invoke("set_conversation_preset", { id, presetId }).catch(() => {});
+  }, []);
 
   const rename = useCallback((id: string, title: string) => {
     setConversations((c) => c.map((x) => (x.id === id ? { ...x, title } : x)));
@@ -146,5 +155,17 @@ export function useChat() {
   // keep_alive:300 to evict the old one. Add an explicit switch-unload if it bites.
   useEffect(() => () => unload(), [unload]);
 
-  return { conversations, activeId, messages, running, error, select, create, rename, remove, send };
+  return {
+    conversations,
+    activeId,
+    messages,
+    running,
+    error,
+    select,
+    create,
+    rename,
+    remove,
+    send,
+    setPreset,
+  };
 }
