@@ -6,24 +6,45 @@
 // part of the normal build gate — run it when the KV formula changes, or when a
 // new architecture shows up that the formula hasn't been proven against.
 //
-// Method: differential measurement. A model's resident size is weights + KV +
-// compute buffers, and only the middle term is under test. Loading the *same*
-// model at two context lengths and subtracting cancels the other two, leaving
-// pure KV — so this measures the thing we're actually predicting instead of a
-// total that could be right for the wrong reasons.
+// Two methods, preferring the exact one:
+//
+// 1. LOG (exact). llama.cpp prints what it allocated —
+//      llama_kv_cache: size = 512.00 MiB (32768 cells, 4 layers, ...)
+//    one line per cache (global and windowed are separate). Summing them is the
+//    real number, so this compares absolutely rather than by difference.
+//
+// 2. DIFFERENTIAL (fallback, when the log isn't readable). Resident size is
+//    weights + KV + compute buffers; loading the same model at two contexts and
+//    subtracting cancels the other two. Weaker, because it assumes the weights
+//    term is stable across loads — on gemma4 it is NOT (llama.cpp re-splits
+//    weights between Metal and CPU based on free VRAM, moving /api/ps `size` by
+//    ~6 GiB), and that noise once hid a 512 MiB KV term completely.
 import type { ArchMeta } from "../types";
 import { computeBufferBytes, kvCacheBytes, metadataKvBytesPerToken } from "./kv.ts";
 
 // This is the one Node-only file under `src/`, which is otherwise typed for the
 // DOM. Declaring the handful of globals it needs keeps it inside `tsc --noEmit`
-// without pulling @types/node in for four usages.
+// without pulling @types/node in for a few usages.
 declare const process: {
   env: Record<string, string | undefined>;
   argv: string[];
   exit(code: number): never;
 };
 
+// Specifier held in a variable so tsc doesn't try to resolve node:fs (no
+// @types/node here, and this is the only file that wants it).
+const NODE_FS = "node:fs";
+const fs: {
+  statSync(p: string): { size: number };
+  readFileSync(p: string): { subarray(from: number): { toString(enc: string): string } };
+} = await import(NODE_FS);
+
 const HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
+/**
+ * Ollama's server log. The macOS app writes here; `ollama serve` run by hand
+ * writes to its own stdout, so point OLLAMA_LOG at wherever that was captured.
+ */
+const LOG = process.env.OLLAMA_LOG ?? `${process.env.HOME}/.ollama/logs/server.log`;
 /** Predicted-vs-measured tolerance. Beyond this the formula is missing a term. */
 const TOLERANCE = 0.1;
 /**
@@ -70,11 +91,60 @@ function archFrom(info: Record<string, unknown>): ArchMeta {
     key_length_swa: num("attention.key_length_swa"),
     value_length_swa: num("attention.value_length_swa"),
     kv_lora_rank: num("attention.kv_lora_rank"),
+    rope_dimension_count: num("rope.dimension_count"),
+    shared_kv_layers: num("attention.shared_kv_layers"),
   };
 }
 
-/** Loads `model` at `num_ctx` and reports what Ollama actually did. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Current end of the log, or null when it isn't readable. */
+function logOffset(): number | null {
+  try {
+    return fs.statSync(LOG).size;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Total KV bytes llama.cpp reported allocating since `offset`, or null if the
+ * log carries no allocation lines (a reused/cached load prints none).
+ *
+ * Reading from a byte offset rather than grepping the whole file is what ties
+ * the lines to *this* load — the file accumulates every load ever made.
+ */
+function kvBytesFromLog(offset: number): number | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(LOG).subarray(offset).toString("utf8");
+  } catch {
+    return null;
+  }
+  const re = /llama_kv_cache:\s*size\s*=\s*([\d.]+) MiB \(\s*(\d+) cells,\s*(\d+) layers/g;
+  let total: number | null = null;
+  for (const m of text.matchAll(re)) total = (total ?? 0) + parseFloat(m[1]) * MIB;
+  return total;
+}
+
+/** The model's `/api/ps` row, or undefined if it isn't resident. */
+async function psEntry(model: string) {
+  const ps = await api("/api/ps");
+  return ps.models?.find((m: any) => m.name === model || m.model === model);
+}
+
+/**
+ * Loads `model` at `num_ctx` and reports what Ollama actually did.
+ *
+ * `/api/ps` is polled until `size` repeats, because a read taken the instant
+ * `/api/generate` returns catches allocation mid-flight. The unload is awaited
+ * for the same reason — a fire-and-forget eviction overlaps the next load.
+ *
+ * `kvBytes` is llama.cpp's own allocation total for this load, when the log is
+ * readable; that number is exact and needs no differencing.
+ */
 async function residentAt(model: string, num_ctx: number) {
+  const offset = logOffset();
   await api("/api/generate", {
     model,
     prompt: "hi",
@@ -82,12 +152,25 @@ async function residentAt(model: string, num_ctx: number) {
     options: { num_ctx, num_predict: 1 },
     keep_alive: "60s",
   });
-  const ps = await api("/api/ps");
-  const entry = ps.models?.find((m: any) => m.name === model || m.model === model);
+
+  let entry = await psEntry(model);
+  for (let i = 0; i < 10; i++) {
+    await sleep(300);
+    const next = await psEntry(model);
+    if (next && entry && next.size === entry.size) break;
+    entry = next;
+  }
+  if (!entry) throw new Error(`${model} not resident after load`);
+  const measured = {
+    size: entry.size as number,
+    contextLength: entry.context_length as number | undefined,
+    kvBytes: offset === null ? null : kvBytesFromLog(offset),
+  };
+
   // Unload so the next context gets a fresh load rather than a cache hit.
   await api("/api/generate", { model, prompt: "", keep_alive: 0, stream: false });
-  if (!entry) throw new Error(`${model} not resident after load`);
-  return { size: entry.size as number, contextLength: entry.context_length as number | undefined };
+  for (let i = 0; i < 20 && (await psEntry(model)); i++) await sleep(300);
+  return measured;
 }
 
 async function verify(model: string): Promise<boolean> {
@@ -109,22 +192,41 @@ async function verify(model: string): Promise<boolean> {
   const maxCtx = arch.block_count ? (show.model_info?.[`${arch.architecture}.context_length`] ?? 0) : 0;
   const contexts = CONTEXTS.filter((c) => !maxCtx || c <= maxCtx);
 
-  const samples: { ctx: number; size: number }[] = [];
+  const samples: { ctx: number; size: number; kvBytes: number | null }[] = [];
   for (const ctx of contexts) {
-    const { size, contextLength } = await residentAt(model, ctx);
+    const { size, contextLength, kvBytes } = await residentAt(model, ctx);
     // Ollama silently clamps num_ctx it can't honour. A clamped load measures a
     // different context than the one we're predicting, so it isn't a data point.
     if (contextLength !== undefined && contextLength !== ctx) {
       console.log(`    ctx ${ctx}: clamped to ${contextLength}, discarded`);
       continue;
     }
-    samples.push({ ctx, size });
+    samples.push({ ctx, size, kvBytes });
+  }
+
+  // Exact path: llama.cpp told us what it allocated, so compare per context and
+  // skip differencing entirely.
+  if (samples.length > 0 && samples.every((s) => s.kvBytes !== null)) {
+    let ok = true;
+    for (const s of samples) {
+      const predicted = kvCacheBytes(arch, s.ctx, 0).bytes;
+      const error = (s.kvBytes! - predicted) / predicted;
+      const pass = Math.abs(error) <= TOLERANCE;
+      ok &&= pass;
+      console.log(
+        `    ctx ${String(s.ctx).padStart(6)}: kv predicted ${(predicted / MIB).toFixed(1)} MiB, ` +
+          `allocated ${(s.kvBytes! / MIB).toFixed(1)} MiB, ` +
+          `error ${(error * 100).toFixed(1)}%  ${pass ? "PASS" : "FAIL"}   [from server log]`,
+      );
+    }
+    return ok;
   }
 
   if (samples.length < 2) {
     console.log("    SKIP — need two usable context samples");
     return true;
   }
+  console.log(`    (no KV lines in ${LOG} — falling back to differential /api/ps)`);
 
   let ok = true;
   for (let i = 1; i < samples.length; i++) {
@@ -132,14 +234,18 @@ async function verify(model: string): Promise<boolean> {
     const hi = samples[i];
     const measured = hi.size - lo.size;
     // Both context-scaling terms are under test: the KV cache and the compute
-    // buffer. Weights and any fixed overhead cancel in the subtraction.
-    const at = (ctx: number) => kvCacheBytes(arch, ctx, 0).bytes + computeBufferBytes(arch, ctx);
-    const predicted = at(hi.ctx) - at(lo.ctx);
+    // buffer. Weights and any fixed overhead cancel in the subtraction. They're
+    // reported separately so a failure says which term is wrong — reading one
+    // summed number is how the compute-buffer bug survived as long as it did.
+    const dKv = kvCacheBytes(arch, hi.ctx, 0).bytes - kvCacheBytes(arch, lo.ctx, 0).bytes;
+    const dCompute = computeBufferBytes(hi.ctx) - computeBufferBytes(lo.ctx);
+    const predicted = dKv + dCompute;
     const error = predicted === 0 ? (measured === 0 ? 0 : 1) : (measured - predicted) / predicted;
     const pass = Math.abs(error) <= TOLERANCE;
     ok &&= pass;
     console.log(
-      `    ${lo.ctx} → ${hi.ctx}: predicted ${(predicted / MIB).toFixed(1)} MiB, ` +
+      `    ${lo.ctx} → ${hi.ctx}: predicted ${(predicted / MIB).toFixed(1)} MiB ` +
+        `(kv ${(dKv / MIB).toFixed(1)} + compute ${(dCompute / MIB).toFixed(1)}), ` +
         `measured ${(measured / MIB).toFixed(1)} MiB, ` +
         `error ${(error * 100).toFixed(1)}%  ${pass ? "PASS" : "FAIL"}`,
     );
@@ -155,7 +261,10 @@ const models: string[] =
 let allOk = true;
 for (const m of models) {
   try {
-    allOk &&= await verify(m);
+    // Not `allOk &&= await verify(m)`: that short-circuits once a model fails,
+    // silently leaving every later model untested.
+    const ok = await verify(m);
+    allOk = allOk && ok;
   } catch (e) {
     console.log(`\n=== ${m}\n    ERROR ${(e as Error).message}`);
     allOk = false;

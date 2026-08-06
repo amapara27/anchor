@@ -441,6 +441,8 @@ fn details_from_info(info: &serde_json::Map<String, serde_json::Value>) -> ShowD
         key_length_swa: info_u64(info, a, "attention.key_length_swa"),
         value_length_swa: info_u64(info, a, "attention.value_length_swa"),
         kv_lora_rank: info_u64(info, a, "attention.kv_lora_rank"),
+        rope_dimension_count: info_u64(info, a, "rope.dimension_count"),
+        shared_kv_layers: info_u64(info, a, "attention.shared_kv_layers"),
         architecture,
     };
 

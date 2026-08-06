@@ -30,3 +30,6 @@ apps/desktop/src-tauri/gen
 CLAUDE.md
 SKILL.md
 .mcp.json
+
+# Local QA sweep notes
+QA-FINDINGS.md

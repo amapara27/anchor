@@ -56,6 +56,10 @@ export interface ArchMeta {
   value_length_swa: number | null;
   /** Latent-attention rank; its presence marks an MLA model. */
   kv_lora_rank: number | null;
+  /** RoPE dimensions. Only used on MLA models, where it is `qk_rope_head_dim`. */
+  rope_dimension_count: number | null;
+  /** Layers reusing another layer's KV cache; subtract from `block_count`. */
+  shared_kv_layers: number | null;
 }
 
 /**

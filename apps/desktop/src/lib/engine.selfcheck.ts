@@ -30,6 +30,8 @@ function arch(fields: Partial<ArchMeta>): ArchMeta {
     key_length_swa: null,
     value_length_swa: null,
     kv_lora_rank: null,
+    rope_dimension_count: null,
+    shared_kv_layers: null,
     ...fields,
   };
 }
@@ -63,16 +65,25 @@ const LLAMA32_1B = arch({
   value_length: 64,
 });
 assert(metadataKvBytesPerToken(LLAMA32_1B) === 32 * KIB, "llama3.2:1b = 32 KiB/token");
-// Compute buffer: n_batch(512) × 4 bytes × (n_head + 1) per context token. On
-// this model it is more than twice the KV cache — omitting it, as the old fit
-// math did, understates long-context memory by over half.
-assert(computeBufferBytes(LLAMA32_1B, 1) === 67584, "llama3.2:1b compute buffer = 66 KiB/token");
+// Compute buffer: the attention mask, n_batch(512) × 4 bytes per context token,
+// and nothing else. These two assertions previously encoded a 33x over-estimate
+// (an attention-scores term that flash attention makes nonexistent), which is
+// exactly why the build gate stayed green while kv.verify.ts failed.
+assert(computeBufferBytes(1) === 2048, "compute buffer = 2 KiB/token");
+assert(computeBufferBytes(32768) === 64 * 1024 * 1024, "compute buffer = 64 MiB at 32k");
 assert(
-  computeBufferBytes(LLAMA32_1B, 32768) > kvCacheBytes(LLAMA32_1B, 32768, 1).bytes * 2,
-  "compute buffer dominates KV on a small model",
+  computeBufferBytes(32768) < kvCacheBytes(LLAMA32_1B, 32768, 1).bytes,
+  "compute buffer is small beside KV even on a 1B model",
 );
 
-// Windowed layers stop growing past the window, so KV is sublinear in context.
+// Windowed layers stop growing past the window, so KV is sublinear in context —
+// but the global layers keep scaling, and only the *cached* layers count.
+// Ground truth is llama.cpp's own allocation at n_ctx=32768:
+//   llama_kv_cache: size = 512.00 MiB (32768 cells,  4 layers)  ← global
+//   llama_kv_cache: size =  40.00 MiB ( 1024 cells, 20 layers)  ← windowed
+// 42 blocks − 18 shared = 24 cached, split 4:20. An earlier pass read gemma4 as
+// having *zero* global layers (from differenced /api/ps, which is ~6 GiB noisy
+// on this model) and under-predicted 32k by 12.5×.
 const GEMMA4 = arch({
   architecture: "gemma4",
   block_count: 42,
@@ -83,11 +94,23 @@ const GEMMA4 = arch({
   key_length_swa: 256,
   value_length_swa: 256,
   sliding_window: 512,
+  shared_kv_layers: 18,
 });
-const g8k = kvCacheBytes(GEMMA4, 8192, 4).bytes;
-const g32k = kvCacheBytes(GEMMA4, 32768, 4).bytes;
-assert(g32k === g8k, "gemma4 KV is flat past the window (measured: zero growth)");
+const MIB = 1024 * 1024;
+assert(kvCacheBytes(GEMMA4, 32768, 4).bytes === 552 * MIB, "gemma4 @32k = 512 MiB global + 40 MiB local");
+assert(kvCacheBytes(GEMMA4, 8192, 4).bytes === 168 * MIB, "gemma4 @8k = 128 MiB global + 40 MiB local");
 assert(kvCacheBytes(GEMMA4, 8192, 4).source === "metadata", "gemma4 uses metadata");
+// The windowed term is capped, so growth past the window is global-only: the
+// 24576 extra tokens cost 4 layers × 2 heads × 1024 × 2 = 16 KiB/token.
+assert(
+  kvCacheBytes(GEMMA4, 32768, 4).bytes - kvCacheBytes(GEMMA4, 8192, 4).bytes === 24576 * 16 * KIB,
+  "gemma4 growth past the window is the 4 global layers only",
+);
+// Shared layers are not optional bookkeeping: ignoring them inflates KV by 75%.
+assert(
+  kvCacheBytes({ ...GEMMA4, shared_kv_layers: null }, 32768, 4).bytes > kvCacheBytes(GEMMA4, 32768, 4).bytes,
+  "counting shared layers over-reports",
+);
 
 // Degradation: no metadata, an unknown windowed arch, and MLA all fall back to
 // the bucket and say so, rather than returning a confident wrong number.
@@ -98,9 +121,21 @@ assert(
     "estimated",
   "unknown windowed arch ⇒ estimated",
 );
+// MLA (DeepSeek-V3): one compressed latent + the RoPE half, per layer. The
+// dense per-head formula would say 6144 KiB/token and the params bucket 320 KiB.
+// UNVERIFIED against a live server — no MLA model is installed to measure.
+const DEEPSEEK_V3 = arch({
+  block_count: 61,
+  head_count_kv: 128,
+  key_length: 192,
+  value_length: 128,
+  kv_lora_rank: 512,
+  rope_dimension_count: 64,
+});
+assert(metadataKvBytesPerToken(DEEPSEEK_V3) === 61 * (512 + 64) * 2, "DeepSeek-V3 MLA ≈ 69 KiB/token");
 assert(
-  metadataKvBytesPerToken(arch({ block_count: 61, head_count_kv: 128, key_length: 192, value_length: 128, kv_lora_rank: 512 })) === null,
-  "MLA model ⇒ null rather than a wrong number",
+  metadataKvBytesPerToken({ ...DEEPSEEK_V3, rope_dimension_count: null }) === null,
+  "MLA without the rope dim ⇒ null rather than a wrong number",
 );
 // Ollama serialises array-valued metadata as JSON null, so a present-but-null
 // head_count_kv (qwen3.5) must degrade, not throw.

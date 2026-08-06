@@ -54,10 +54,11 @@ function weightsGiB(params_b: number, quant: QuantId, size_bytes?: number | null
  * Estimate whether a model fits, and expose the math behind it. Recompute live
  * as the context slider / quant selector change (this is pure and cheap).
  *
- * Pass `model` whenever it's known: with the architecture metadata the KV and
- * compute-buffer terms are exact (verified byte-for-byte by `kv.verify.ts`),
- * and without it they fall back to a parameter-count bucket. `FitResult.kvSource`
- * says which happened, and the UI must label an estimate as one.
+ * Pass `model` whenever it's known: with the architecture metadata the KV term
+ * is exact (verified byte-for-byte by `kv.verify.ts`), and without it it falls
+ * back to a parameter-count bucket. `FitResult.kvSource` says which happened,
+ * and the UI must label an estimate as one. The compute-buffer term needs no
+ * metadata at all.
  */
 export function estimateFit(
   params_b: number,
@@ -70,9 +71,10 @@ export function estimateFit(
   const weightsGB = weightsGiB(params_b, quant, model?.size_bytes);
   const kv = kvCacheBytes(model?.arch, contextLength, params_b);
   const kvCacheGB = kv.bytes / GIB;
-  // Grows with context just like the KV cache, and on small models it is the
-  // larger of the two — it can't be folded into a fixed reserve.
-  const computeBufferGB = computeBufferBytes(model?.arch, contextLength) / GIB;
+  // The attention mask. Grows with context like the KV cache but far slower —
+  // ~64 MiB at 32k — so it's a rounding error next to the OS reserve. Kept
+  // separate because the breakdown UI shows it, not because it moves a verdict.
+  const computeBufferGB = computeBufferBytes(contextLength) / GIB;
   const osReserveGB = Math.max(2, 0.15 * availableGB);
   const totalNeededGB = weightsGB + kvCacheGB + computeBufferGB + osReserveGB;
   const headroomGB = availableGB - totalNeededGB;

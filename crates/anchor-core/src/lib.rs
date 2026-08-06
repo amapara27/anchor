@@ -93,10 +93,23 @@ pub struct ArchMeta {
     #[serde(default)]
     pub value_length_swa: Option<u64>,
     /// Latent-attention rank (`{arch}.attention.kv_lora_rank`). Present on MLA
-    /// models (DeepSeek), whose KV cache the standard formula does not describe
-    /// — its presence marks the result as an estimate rather than exact.
+    /// models (DeepSeek), whose KV cache is sized per layer from this plus
+    /// `rope_dimension_count` rather than per head.
     #[serde(default)]
     pub kv_lora_rank: Option<u64>,
+    /// RoPE dimensions (`{arch}.rope.dimension_count`). Only consumed on MLA
+    /// models, where llama.cpp writes `qk_rope_head_dim` here — that half of
+    /// the head is cached uncompressed alongside the latent.
+    #[serde(default)]
+    pub rope_dimension_count: Option<u64>,
+    /// Layers that reuse another layer's KV cache instead of holding their own
+    /// (`{arch}.attention.shared_kv_layers`). Gemma 4 shares 18 of 42, so only
+    /// 24 layers are actually cached — counting all `block_count` layers
+    /// over-reports, and applying the global/local split to the wrong
+    /// denominator under-reports. Verified against llama.cpp's own
+    /// `llama_kv_cache:` allocation lines.
+    #[serde(default)]
+    pub shared_kv_layers: Option<u64>,
 }
 
 impl ArchMeta {
