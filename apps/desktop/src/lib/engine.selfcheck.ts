@@ -7,6 +7,7 @@ import type { ArchMeta } from "../types.ts";
 import { estimateFit, fitContext } from "./fit.ts";
 import { computeBufferBytes, kvCacheBytes, metadataKvBytesPerToken } from "./kv.ts";
 import { QUANTS, quantMeta } from "./quant.ts";
+import { parseContext, parseSize, parseTagParams } from "./format.ts";
 import { estimateTokPerSec, resolveTokPerSec } from "./tokps.ts";
 import { hardwareHint } from "./hint.ts";
 
@@ -29,8 +30,6 @@ function arch(fields: Partial<ArchMeta>): ArchMeta {
     sliding_window: null,
     key_length_swa: null,
     value_length_swa: null,
-    kv_lora_rank: null,
-    rope_dimension_count: null,
     shared_kv_layers: null,
     ...fields,
   };
@@ -48,8 +47,28 @@ const LLAMA31_8B = arch({ block_count: 32, head_count_kv: 8, key_length: 128, va
 assert(metadataKvBytesPerToken(LLAMA31_8B) === 128 * KIB, "Llama-3.1 8B = 128 KiB/token");
 
 // MHA: head_count_kv equals the full head count. A params bucket says 80 KiB.
-const PHI3_MINI = arch({ block_count: 32, head_count_kv: 32, key_length: 96, value_length: 96 });
+// phi3:mini carries no explicit key/value lengths, so the head dim comes from
+// embedding_length / head_count = 96, and it declares a 262144 sliding window
+// against a 131072 maximum context — a window that can never bind. Verified:
+// `size = 3072.00 MiB (8192 cells, 32 layers)`, one cache, no SWA split.
+const PHI3_MINI = arch({
+  architecture: "phi3",
+  block_count: 32,
+  head_count: 32,
+  head_count_kv: 32,
+  embedding_length: 3072,
+  sliding_window: 262144,
+});
 assert(metadataKvBytesPerToken(PHI3_MINI) === 384 * KIB, "Phi-3 mini (MHA) = 384 KiB/token");
+assert(
+  kvCacheBytes(PHI3_MINI, 8192, 3.8).bytes === 8192 * 384 * KIB,
+  "a window wider than the context is dense, not windowed",
+);
+// The regression this guards: phi3 is not in GLOBAL_LAYER_FRACTION, so before
+// the dense shortcut its unreachable window sent it to the parameter bucket —
+// 48 KiB/token against 384 measured, 8x under on a model that wants 12 GiB of
+// KV at 32k.
+assert(kvCacheBytes(PHI3_MINI, 8192, 3.8).source === "metadata", "phi3 uses metadata, not a bucket");
 
 // Small GQA model: KV barely shrinks with parameter count. A bucket says 48 KiB.
 const QWEN3_1_7B = arch({ block_count: 28, head_count_kv: 8, key_length: 128, value_length: 128 });
@@ -65,12 +84,14 @@ const LLAMA32_1B = arch({
   value_length: 64,
 });
 assert(metadataKvBytesPerToken(LLAMA32_1B) === 32 * KIB, "llama3.2:1b = 32 KiB/token");
-// Compute buffer: the attention mask, n_batch(512) × 4 bytes per context token,
+// Compute buffer: the attention mask, n_batch(1024) × 4 bytes per context token,
 // and nothing else. These two assertions previously encoded a 33x over-estimate
 // (an attention-scores term that flash attention makes nonexistent), which is
-// exactly why the build gate stayed green while kv.verify.ts failed.
-assert(computeBufferBytes(1) === 2048, "compute buffer = 2 KiB/token");
-assert(computeBufferBytes(32768) === 64 * 1024 * 1024, "compute buffer = 64 MiB at 32k");
+// exactly why the build gate stayed green while kv.verify.ts failed. The slope
+// is measured: llama3.2:1b's compute buffers total 160.04 MiB at 8k and 256.04
+// at 32k, i.e. exactly 4096 bytes per extra token.
+assert(computeBufferBytes(1) === 4096, "compute buffer = 4 KiB/token");
+assert(computeBufferBytes(32768) === 128 * 1024 * 1024, "compute buffer = 128 MiB at 32k");
 assert(
   computeBufferBytes(32768) < kvCacheBytes(LLAMA32_1B, 32768, 1).bytes,
   "compute buffer is small beside KV even on a 1B model",
@@ -97,8 +118,12 @@ const GEMMA4 = arch({
   shared_kv_layers: 18,
 });
 const MIB = 1024 * 1024;
-assert(kvCacheBytes(GEMMA4, 32768, 4).bytes === 552 * MIB, "gemma4 @32k = 512 MiB global + 40 MiB local");
-assert(kvCacheBytes(GEMMA4, 8192, 4).bytes === 168 * MIB, "gemma4 @8k = 128 MiB global + 40 MiB local");
+// Predicted 572/188 against 552/168 measured: the windowed term assumes the
+// larger n_batch (1024) and this load got 512, so the 20 local layers are each
+// billed 512 spare cells. That gap is the whole of the difference and is the
+// deliberate over-predict documented on DEFAULT_BATCH.
+assert(kvCacheBytes(GEMMA4, 32768, 4).bytes === 572 * MIB, "gemma4 @32k = 512 MiB global + 60 MiB local");
+assert(kvCacheBytes(GEMMA4, 8192, 4).bytes === 188 * MIB, "gemma4 @8k = 128 MiB global + 60 MiB local");
 assert(kvCacheBytes(GEMMA4, 8192, 4).source === "metadata", "gemma4 uses metadata");
 // The windowed term is capped, so growth past the window is global-only: the
 // 24576 extra tokens cost 4 layers × 2 heads × 1024 × 2 = 16 KiB/token.
@@ -112,6 +137,38 @@ assert(
   "counting shared layers over-reports",
 );
 
+// The other two windowed ratios, both byte-exact against llama.cpp. gemma2
+// alternates 1:1 (13 of 26 global) and gemma3 runs 5:1 (5 of 34) — note 34/6 is
+// 5.67, so this is the case that proves the split floors rather than rounds.
+const GEMMA2_2B = arch({
+  architecture: "gemma2",
+  block_count: 26,
+  head_count: 8,
+  head_count_kv: 4,
+  key_length: 256,
+  value_length: 256,
+  sliding_window: 4096,
+});
+assert(kvCacheBytes(GEMMA2_2B, 8192, 2.6).bytes === 676 * MIB, "gemma2:2b @8k = 416 global + 260 local");
+
+const GEMMA3_4B = arch({
+  architecture: "gemma3",
+  block_count: 34,
+  head_count: 8,
+  head_count_kv: 4,
+  key_length: 256,
+  value_length: 256,
+  sliding_window: 1024,
+});
+assert(kvCacheBytes(GEMMA3_4B, 8192, 4.3).bytes === 392 * MIB, "gemma3:4b @8k = 160 global + 232 local");
+assert(kvCacheBytes(GEMMA3_4B, 32768, 4.3).bytes === 872 * MIB, "gemma3:4b @32k = 640 global + 232 local");
+// Rounding instead of flooring would bill 6 global layers here, which is
+// 32768 × 4 KiB = 128 MiB of context that llama.cpp never allocates.
+assert(
+  kvCacheBytes(GEMMA3_4B, 32768, 4.3).bytes < kvCacheBytes({ ...GEMMA3_4B, block_count: 36 }, 32768, 4.3).bytes,
+  "a 36-layer gemma3 gets a 6th global layer, a 34-layer one does not",
+);
+
 // Degradation: no metadata, an unknown windowed arch, and MLA all fall back to
 // the bucket and say so, rather than returning a confident wrong number.
 assert(kvCacheBytes(null, 4096, 8).source === "estimated", "no metadata ⇒ estimated");
@@ -121,28 +178,53 @@ assert(
     "estimated",
   "unknown windowed arch ⇒ estimated",
 );
-// MLA (DeepSeek-V3): one compressed latent + the RoPE half, per layer. The
-// dense per-head formula would say 6144 KiB/token and the params bucket 320 KiB.
-// UNVERIFIED against a live server — no MLA model is installed to measure.
-const DEEPSEEK_V3 = arch({
-  block_count: 61,
-  head_count_kv: 128,
+// MLA (deepseek2) takes the ordinary dense path, because llama.cpp caches the
+// decompressed per-head K/V rather than the compressed latent. Measured on
+// deepseek-v2:16b: `size = 8640.00 MiB (32768 cells, 27 layers)`, exactly
+// 27 × 16 × (192 + 128) × 2 per token. An earlier pass computed the latent form
+// (`block_count × (kv_lora_rank + rope_dim) × 2`) and came out 8.9x LOW on a
+// model that wants 8.6 GiB of KV at 32k. Asymmetric key and value dims are the
+// only thing MLA needs from this code.
+const DEEPSEEK_V2 = arch({
+  architecture: "deepseek2",
+  block_count: 27,
+  head_count: 16,
+  head_count_kv: 16,
   key_length: 192,
   value_length: 128,
-  kv_lora_rank: 512,
-  rope_dimension_count: 64,
 });
-assert(metadataKvBytesPerToken(DEEPSEEK_V3) === 61 * (512 + 64) * 2, "DeepSeek-V3 MLA ≈ 69 KiB/token");
-assert(
-  metadataKvBytesPerToken({ ...DEEPSEEK_V3, rope_dimension_count: null }) === null,
-  "MLA without the rope dim ⇒ null rather than a wrong number",
-);
+assert(metadataKvBytesPerToken(DEEPSEEK_V2) === 270 * KIB, "DeepSeek-V2 = 270 KiB/token");
+assert(kvCacheBytes(DEEPSEEK_V2, 32768, 15.7).bytes === 8640 * MIB, "deepseek-v2 @32k = 8640 MiB");
 // Ollama serialises array-valued metadata as JSON null, so a present-but-null
 // head_count_kv (qwen3.5) must degrade, not throw.
 assert(
   metadataKvBytesPerToken(arch({ block_count: 32, head_count_kv: null, key_length: 256, value_length: 256 })) === null,
   "null head_count_kv ⇒ estimated",
 );
+
+// --- Library-listing parsers -----------------------------------------------
+// The ollama.com listing publishes display strings only, so browse-all's fit
+// verdict is built entirely out of what these recover. A silent null here means
+// a tag renders no verdict; a wrong number means it renders a false one.
+
+assert(parseSize("4.9GB") === 4.9 * 1024 ** 3, "GB size parses");
+assert(parseSize("637MB") === 637 * 1024 ** 2, "MB size parses");
+assert(parseSize("1.2 TB") === 1.2 * 1024 ** 4, "spaced TB size parses");
+assert(parseSize("unknown") === null, "unfamiliar size ⇒ null, not NaN");
+
+assert(parseTagParams("llama3.1:8b") === 8, "tag params: 8b");
+assert(parseTagParams("phi3.5:3.8b") === 3.8, "tag params: fractional");
+assert(parseTagParams("smollm2:135m") === 0.135, "tag params: millions → billions");
+// MoE: every expert is resident, so memory follows experts × size, not the
+// marketing total. 8x7b is 56 here, not the 47 the model card advertises.
+assert(parseTagParams("mixtral:8x7b") === 56, "tag params: MoE counts all experts");
+assert(parseTagParams("nomic-embed-text") === null, "untagged id ⇒ null");
+assert(parseTagParams("llama3.2-vision:11b") === 11, "hyphenated name doesn't break the split");
+
+assert(parseContext("128K") === 131072, "context 128K");
+assert(parseContext("4K") === 4096, "context 4K");
+assert(parseContext("1M") === 1048576, "context 1M");
+assert(parseContext("") === null, "empty context ⇒ null");
 
 // --- Fit -------------------------------------------------------------------
 

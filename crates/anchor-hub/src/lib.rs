@@ -5,6 +5,7 @@
 //! works when Ollama is offline, and drives pulls/removals. This crate is free of
 //! any Tauri/UI dependency so it stays testable and reusable from a future CLI.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anchor_core::Model;
@@ -12,6 +13,7 @@ use rusqlite::Connection;
 
 pub mod bench;
 pub mod db;
+pub mod gguf;
 pub mod library;
 pub mod ollama;
 pub mod server;
@@ -191,19 +193,59 @@ impl Registry {
     /// with `/api/show` metadata (context window, publisher, and the
     /// architecture fields behind KV sizing — all best-effort), and replaces the
     /// cache. Returns the freshly synced models.
+    ///
+    /// Enrichment is skipped for models already cached at the same
+    /// `modified_at`. GGUF metadata is immutable for a given blob, and Ollama
+    /// moves `modified_at` when a tag is re-pulled — the only way the bytes
+    /// behind a stable id can change. Without this the UI paid one `/api/show`
+    /// per installed model on every mount, every pull and every manual reload.
     pub async fn sync(&self) -> Result<Vec<Model>> {
         let mut models = ollama::list_local_models(&self.host).await?;
+
+        // A cache read failure is not fatal: fall back to enriching everything.
+        let cached: HashMap<String, Model> = self
+            .cached_models()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| (m.id.clone(), m))
+            .collect();
+        let reusable = |m: &Model| -> Option<&Model> {
+            let hit = cached.get(&m.id)?;
+            // Only skip the fetch when the answer is already complete: a cached
+            // row whose own enrichment failed must be retried, not carried.
+            let fresh = hit.modified_at == m.modified_at && m.modified_at.is_some();
+            (fresh && hit.arch.is_some()).then_some(hit)
+        };
+
         // Enrichment is best-effort and concurrent: a failing `/api/show` for one
         // model must neither sink nor serialize the whole sync.
-        let details = futures_util::future::join_all(
-            models.iter().map(|m| ollama::show_details(&self.host, &m.id)),
-        )
+        let details = futures_util::future::join_all(models.iter().map(|m| {
+            let stale = reusable(m).is_none();
+            async move {
+                match stale {
+                    true => Some(ollama::show_details(&self.host, &m.id).await),
+                    false => None,
+                }
+            }
+        }))
         .await;
+
         for (model, detail) in models.iter_mut().zip(details) {
-            if let Ok(d) = detail {
-                model.context_tokens = d.context_tokens;
-                model.publisher = d.publisher;
-                model.arch = (!d.arch.is_empty()).then_some(d.arch);
+            match detail {
+                Some(Ok(d)) => {
+                    model.context_tokens = d.context_tokens;
+                    model.publisher = d.publisher;
+                    model.arch = (!d.arch.is_empty()).then_some(d.arch);
+                }
+                Some(Err(_)) => {}
+                // Unchanged since the last sync — carry the cached enrichment
+                // forward, since `replace_all` rewrites the whole table.
+                None => {
+                    let hit = &cached[&model.id];
+                    model.context_tokens = hit.context_tokens;
+                    model.publisher = hit.publisher.clone();
+                    model.arch = hit.arch.clone();
+                }
             }
         }
         // No `.await` is held across this connection, so it stays `Send`-safe.
@@ -352,6 +394,35 @@ impl Registry {
             Err(_) if !cached.is_empty() => Ok(cached),
             Err(e) => Err(e),
         }
+    }
+
+    /// Architecture metadata for a tag that may not be installed, so browsing
+    /// can size its KV cache exactly instead of guessing from parameter count.
+    ///
+    /// Reads the model's GGUF header from the registry — about a megabyte, never
+    /// the weights — and caches the answer against the manifest `digest` the
+    /// listing already carries. A digest is immutable, so a hit is good forever;
+    /// a tag re-pointed at a new build simply misses and re-reads.
+    ///
+    /// An unreadable header is cached as `None` rather than left absent, so a
+    /// model Anchor cannot parse is not re-fetched on every visit. `Ok(None)`
+    /// therefore means "looked, and there is no answer", not "didn't look".
+    pub async fn tag_arch(
+        &self,
+        tag: &str,
+        digest: &str,
+        now_ms: i64,
+    ) -> Result<Option<anchor_core::ArchMeta>> {
+        if let Some(hit) = db::read_tag_arch(&self.connect()?, tag, digest)? {
+            return Ok(hit);
+        }
+        // A failed *fetch* is transient (offline, rate limit) and must not be
+        // cached — only a successful read that yielded nothing usable is.
+        let info = gguf::fetch_model_info(tag).await?;
+        let arch = ollama::details_from_info(&info).arch;
+        let arch = (!arch.is_empty()).then_some(arch);
+        db::write_tag_arch(&self.connect()?, tag, digest, arch.as_ref(), now_ms)?;
+        Ok(arch)
     }
 
     /// Every pullable tag of one library model. Not cached — it's only fetched
@@ -581,5 +652,105 @@ mod tests {
         // Already-qualified URLs pass through (incl. https / trimmed whitespace).
         assert_eq!(normalize_host(Some(" http://host:9 ")), "http://host:9");
         assert_eq!(normalize_host(Some("https://remote:443")), "https://remote:443");
+    }
+
+    /// A second sync must not re-fetch `/api/show` for unchanged models.
+    ///
+    /// Proved without mocking the HTTP layer: stamp a sentinel into the cached
+    /// `publisher`, then sync again. `/api/show` would overwrite it with the
+    /// model's real publisher, so the sentinel surviving means the fetch was
+    /// genuinely skipped and the cached enrichment carried forward instead.
+    ///
+    ///   cargo test -p anchor-hub -- --ignored --nocapture reuses_cached
+    #[tokio::test]
+    #[ignore = "needs a live Ollama server with at least one model installed"]
+    async fn sync_reuses_cached_arch_for_unchanged_models() {
+        let dir = std::env::temp_dir().join(format!("anchor-sync-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("registry.db");
+        let registry = Registry::open(&db).unwrap();
+
+        let first = registry.sync().await.expect("first sync");
+        let target = first
+            .iter()
+            .find(|m| m.arch.is_some() && m.modified_at.is_some())
+            .expect("at least one enriched model installed")
+            .clone();
+
+        // Stamp the sentinel directly into the cache.
+        let mut cached = registry.cached_models().unwrap();
+        for m in cached.iter_mut() {
+            m.publisher = Some("SENTINEL".into());
+        }
+        let mut conn = Connection::open(&db).unwrap();
+        db::replace_all(&mut conn, &cached).unwrap();
+        drop(conn);
+
+        let second = registry.sync().await.expect("second sync");
+        let after = second.iter().find(|m| m.id == target.id).unwrap();
+
+        assert_eq!(
+            after.publisher.as_deref(),
+            Some("SENTINEL"),
+            "{}: /api/show was re-fetched for an unchanged model",
+            target.id
+        );
+        assert_eq!(after.arch, target.arch, "cached arch must survive the reuse path");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `tag_arch` reads a browsable model's header once, then serves the cache —
+    /// and re-reads when the tag is re-pointed at a different build.
+    ///
+    /// The cache is proved the same way as the sync path: overwrite the stored
+    /// value with a sentinel and confirm the next call returns *that*, which it
+    /// only can if it never went back to the network.
+    ///
+    ///   cargo test -p anchor-hub -- --ignored --nocapture tag_arch_is_cached
+    #[tokio::test]
+    #[ignore = "fetches a GGUF header from registry.ollama.ai"]
+    async fn tag_arch_is_cached_per_digest() {
+        let dir = std::env::temp_dir().join(format!("anchor-tagarch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = Registry::open(dir.join("registry.db")).unwrap();
+
+        // gemma2:2b is also installed here, so the figures are cross-checkable
+        // against /api/show — see catalog_arch_matches_live_metadata.
+        let first = registry
+            .tag_arch("gemma2:2b", "digest-one", 1_000)
+            .await
+            .expect("header read")
+            .expect("gemma2 has usable metadata");
+        assert_eq!(first.block_count, Some(26));
+        assert_eq!(first.head_count_kv, Some(4));
+        assert_eq!(first.sliding_window, Some(4096));
+
+        let sentinel = anchor_core::ArchMeta { block_count: Some(999), ..first.clone() };
+        db::write_tag_arch(
+            &Connection::open(dir.join("registry.db")).unwrap(),
+            "gemma2:2b",
+            "digest-one",
+            Some(&sentinel),
+            1_000,
+        )
+        .unwrap();
+
+        let cached = registry.tag_arch("gemma2:2b", "digest-one", 2_000).await.unwrap();
+        assert_eq!(
+            cached.and_then(|a| a.block_count),
+            Some(999),
+            "second call went back to the network instead of the cache"
+        );
+
+        // A re-pointed tag must not serve the old build's architecture.
+        let repointed = registry.tag_arch("gemma2:2b", "digest-two", 3_000).await.unwrap();
+        assert_eq!(
+            repointed.and_then(|a| a.block_count),
+            Some(26),
+            "a changed digest must invalidate the cached header"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

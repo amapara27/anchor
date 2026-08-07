@@ -299,3 +299,38 @@ fn chat_body_sends_a_system_turn_ahead_of_history() {
     assert_eq!(body["messages"][0]["content"], "Be terse.");
     assert_eq!(body["messages"][1]["role"], "user");
 }
+
+/// The bundled catalog and the live `/api/show` reader must agree.
+///
+/// `tools/generate-arch.mjs` extracts architecture fields from raw GGUF bytes
+/// pulled off the registry; `details_from_info` extracts them from Ollama's
+/// parsed `model_info` map. Two independent implementations of one extraction,
+/// so every model that is both catalogued and installed pins them together —
+/// without this they are free to drift, and a drifted catalog would present a
+/// wrong KV figure with no "estimated" label to warn anyone.
+///
+/// Ignored by default: needs a live server, and only covers whichever catalog
+/// models happen to be installed.
+///   cargo test -p anchor-hub -- --ignored --nocapture catalog_arch
+#[tokio::test]
+#[ignore = "needs a live Ollama server with catalog models installed"]
+async fn catalog_arch_matches_live_metadata() {
+    let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".into());
+    let installed = super::list_local_models(&host).await.expect("ollama reachable");
+    let profiles = anchor_search::load_profiles().expect("catalog parses");
+
+    let mut checked = 0;
+    for p in &profiles {
+        if !installed.iter().any(|m| m.id == p.id) {
+            continue;
+        }
+        let catalog = p.arch.as_ref().unwrap_or_else(|| {
+            panic!("{} is installed but carries no catalog arch", p.id);
+        });
+        let live = super::show_details(&host, &p.id).await.expect("show_details").arch;
+        assert_eq!(catalog, &live, "{}: catalog arch disagrees with /api/show", p.id);
+        checked += 1;
+        println!("  ok  {} matches /api/show", p.id);
+    }
+    assert!(checked > 0, "no catalog model installed — nothing was verified");
+}

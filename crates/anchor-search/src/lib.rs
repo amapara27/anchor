@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use anchor_core::ArchMeta;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use serde::{Deserialize, Serialize};
 
@@ -73,8 +74,16 @@ pub struct ModelProfile {
     /// real on-disk size from Ollama overrides this once installed. Kept in GB
     /// (not bytes) so the JSON stays human-authorable; the frontend converts.
     pub download_gb: f32,
-    /// Catalog estimate of the RAM/VRAM in gigabytes needed to run comfortably.
-    pub min_memory_gb: f32,
+    /// GGUF architecture fields, read from the model's real header by
+    /// `tools/generate-arch.mjs` and shipped with the catalog.
+    ///
+    /// Exists because `/api/show` only answers for *installed* models, so
+    /// without this an uninstalled model's KV cache falls back to a
+    /// parameter-count bucket — wrong by up to 8x on MHA, in the optimistic
+    /// direction. `None` when the generator couldn't read a model's header;
+    /// that degrades to the bucket, which the UI labels as an estimate.
+    #[serde(default)]
+    pub arch: Option<ArchMeta>,
     /// One-line summary shown in the UI.
     pub blurb: String,
     /// Short task tags, e.g. `["Code review", "Refactoring"]`.

@@ -18,7 +18,6 @@ function profileToSpec(p: ModelProfile): ModelSpec {
     quant: p.quant,
     context_tokens: p.context_tokens,
     download_bytes: p.download_gb * GB,
-    min_memory_bytes: p.min_memory_gb * GB,
     blurb: p.blurb,
     use_cases: p.use_cases,
     publisher: p.publisher,
@@ -54,8 +53,9 @@ export function buildLibrary(installed: Model[], catalog: ModelProfile[]): Libra
       context_tokens: live?.context_tokens ?? null,
       modified_at: live?.modified_at ?? null,
       publisher: live?.publisher ?? null,
-      // Only installed models have GGUF metadata; the catalog can't supply it.
-      arch: live?.arch ?? null,
+      // Live metadata when installed, otherwise the catalog's own — shipped by
+      // tools/generate-arch.mjs, so an available model still gets exact KV math.
+      arch: live?.arch ?? entry.arch ?? null,
       // Prefer real specs from Ollama over the catalog estimates when installed.
       spec: live ? enrichSpec(spec, live) : spec,
       tags: [],
@@ -111,7 +111,6 @@ function placeholderSpec(m: Model): ModelSpec {
     quant: m.quantization ?? "unknown",
     context_tokens: m.context_tokens ?? 0,
     download_bytes: m.size_bytes ?? 0,
-    min_memory_bytes: m.size_bytes ? m.size_bytes * 1.5 : 0,
     publisher: m.publisher ?? "Local",
     blurb: "Installed locally via Ollama.",
     use_cases: [],

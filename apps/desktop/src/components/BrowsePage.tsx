@@ -1,7 +1,12 @@
-import { useMemo, useState } from "react";
-import type { LibraryEntry } from "../types";
+import { useCallback, useMemo, useState } from "react";
+import type { ArchMeta, LibraryEntry } from "../types";
 import { useLibrary } from "../lib/useLibrary";
 import { useModels } from "../lib/useModels";
+import { useHardwareProfile } from "../lib/useHardwareProfile";
+import { useTagArch } from "../lib/useTagArch";
+import { hardwareHint, type HardwareHint } from "../lib/hint";
+import { DEFAULT_CONTEXT } from "../lib/fit";
+import { parseContext, parseSize, parseTagParams } from "../lib/format";
 import { PageHeader, GhostButton } from "./PageHeader";
 import { ProgressTrack } from "./DownloadProgressBar";
 import { CheckIcon, ChevronDownIcon, DownloadIcon, RefreshIcon, SearchIcon, WarningIcon } from "./icons";
@@ -60,6 +65,8 @@ function formatPulls(n: number): string {
 export function BrowsePage() {
   const { entries, status, error, tags, loadingTags, reload, loadTags } = useLibrary();
   const { models, downloads, startDownload } = useModels();
+  const { profile } = useHardwareProfile();
+  const { arch: resolvedArch, resolving, resolve } = useTagArch();
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("popular");
@@ -71,6 +78,19 @@ export function BrowsePage() {
   const installed = useMemo(
     () => new Set(models.filter((m) => m.status === "installed").map((m) => m.id)),
     [models],
+  );
+
+  // GGUF metadata Anchor already holds, keyed by the tag the listing shows.
+  // Covers the curated catalog (shipped by tools/generate-arch.mjs) and anything
+  // installed; every other tag falls back to a labelled estimate.
+  const archByTag = useMemo(
+    () => new Map(models.filter((m) => m.arch).map((m) => [m.id, m.arch!])),
+    [models],
+  );
+  // A tag the user explicitly resolved wins, then whatever Anchor already had.
+  const archFor = useCallback(
+    (tag: string) => resolvedArch[tag] ?? archByTag.get(tag) ?? null,
+    [resolvedArch, archByTag],
   );
 
   const visible = useMemo(() => {
@@ -204,6 +224,10 @@ export function BrowsePage() {
                 installed={installed}
                 downloads={downloads}
                 onPull={startDownload}
+                archFor={archFor}
+                hardware={profile}
+                onResolve={resolve}
+                resolving={resolving}
               />
             ))}
             {visible.length === 0 && (
@@ -226,6 +250,112 @@ export function BrowsePage() {
   );
 }
 
+/**
+ * Whether one published tag fits this Mac.
+ *
+ * The listing gives size and context as display strings and no parameter count
+ * at all, so everything here is parsed back out of what the page shows. Judged
+ * at Ollama's default context, like every other fit surface — the question on
+ * this screen is "can I run this at all", not "at what window".
+ *
+ * `arch` is present only for tags Anchor already has GGUF metadata for: the
+ * curated catalog and anything installed. Everything else gets the labelled
+ * parameter-count estimate, where weights dominate the answer anyway — a 70B is
+ * out of reach on 16 GB whatever its KV cache does.
+ */
+function tagFit(
+  t: { tag: string; size: string; context: string },
+  arch: ArchMeta | null,
+  hardware: { memory_bytes?: number | null } | null,
+): HardwareHint | null {
+  const params_b = parseTagParams(t.tag);
+  const sizeBytes = parseSize(t.size);
+  // Without a parameter count there is no fallback term at all, and without a
+  // size there is no weights term — either way, say nothing rather than guess.
+  if (!params_b || !sizeBytes) return null;
+  return hardwareHint(
+    {
+      id: t.tag,
+      params_b,
+      quant: "Q4_K_M",
+      contextTokens: parseContext(t.context) ?? DEFAULT_CONTEXT,
+      arch,
+      sizeBytes,
+    },
+    hardware,
+  );
+}
+
+/**
+ * The fit verdict for a tag row, sharing its cell with the modality label.
+ *
+ * Three states, and the middle one is the point of this control:
+ * - **exact** — Anchor has the model's GGUF metadata (catalog, installed, or
+ *   already resolved), so the verdict is computed from its real architecture.
+ * - **estimated** — marked `~` and clickable. The parameter-count bucket behind
+ *   it can be several-fold wrong on an architecture Anchor has never read, so it
+ *   offers to go and read one rather than quietly presenting a guess.
+ * - **unknown** — the listing didn't publish enough to say anything; shows the
+ *   modality alone rather than an empty cell.
+ */
+function TagFit({
+  fit,
+  modality,
+  onResolve,
+  resolving,
+}: {
+  fit: HardwareHint | null;
+  modality: string;
+  onResolve: () => void;
+  resolving: boolean;
+}) {
+  if (!fit || fit.tier === "unknown") {
+    return <span className="truncate text-[11px] text-fg-subtle">{modality}</span>;
+  }
+  const dot =
+    fit.tier === "ok" ? (
+      <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
+    ) : (
+      <WarningIcon className={`size-3 shrink-0 ${fit.tone}`} />
+    );
+
+  if (fit.fit.kvSource !== "estimated") {
+    return (
+      <span
+        className="flex min-w-0 items-center gap-1.5 text-[11px]"
+        title={`Computed from this model's architecture — ${modality}`}
+      >
+        {dot}
+        <span className={`truncate font-medium ${fit.tone}`}>{fit.label}</span>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onResolve}
+      disabled={resolving}
+      title={
+        resolving
+          ? "Reading the model's header…"
+          : `Estimated from parameter count. Click to read this model's real architecture (~1 MB, not the weights) — ${modality}`
+      }
+      className="flex min-w-0 cursor-pointer items-center gap-1.5 text-left text-[11px] transition-opacity duration-150 ease-out hover:opacity-80 disabled:cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+    >
+      {dot}
+      <span className={`truncate font-medium ${fit.tone}`}>
+        {resolving ? "…" : `~${fit.label}`}
+      </span>
+      {!resolving && (
+        <span className="shrink-0 text-[10px] text-fg-subtle underline decoration-dotted underline-offset-2">
+          check
+        </span>
+      )}
+    </button>
+  );
+}
+
 /** One library model: summary line, and its tag list once expanded. */
 function BrowseRow({
   entry,
@@ -236,6 +366,10 @@ function BrowseRow({
   installed,
   downloads,
   onPull,
+  archFor,
+  hardware,
+  onResolve,
+  resolving,
 }: {
   entry: LibraryEntry;
   open: boolean;
@@ -245,6 +379,12 @@ function BrowseRow({
   installed: Set<string>;
   downloads: ReturnType<typeof useModels>["downloads"];
   onPull: (id: string) => void;
+  /** GGUF metadata for tags we already know, so their fit is exact not bucketed. */
+  archFor: (tag: string) => ArchMeta | null;
+  hardware: { memory_bytes?: number | null; chip?: string | null } | null;
+  /** Reads one tag's real architecture from the registry, on request. */
+  onResolve: (tag: string, digest: string) => void;
+  resolving: Record<string, boolean>;
 }) {
   return (
     <div>
@@ -304,17 +444,23 @@ function BrowseRow({
           {tags?.map((t) => {
             const download = downloads[t.tag];
             const have = installed.has(t.tag);
+            const fit = tagFit(t, archFor(t.tag), hardware);
             return (
               <div
                 key={t.tag}
-                className="grid grid-cols-[minmax(0,1fr)_72px_64px_92px_104px] items-center gap-3 border-b border-hair py-2 last:border-b-0"
+                className="grid grid-cols-[minmax(0,1fr)_72px_56px_minmax(0,132px)_104px] items-center gap-3 border-b border-hair py-2 last:border-b-0"
               >
                 <span className="data min-w-0 truncate text-[12px] text-fg" title={t.tag}>
                   {t.tag}
                 </span>
                 <span className="data text-right text-[11px] text-fg-muted">{t.size}</span>
                 <span className="data text-right text-[11px] text-fg-muted">{t.context}</span>
-                <span className="truncate text-[11px] text-fg-subtle">{t.modality}</span>
+                <TagFit
+                  fit={fit}
+                  modality={t.modality}
+                  onResolve={() => onResolve(t.tag, t.digest)}
+                  resolving={!!resolving[t.tag]}
+                />
                 {have ? (
                   <span className="flex items-center justify-end gap-1.5 text-[11px] text-ok">
                     <CheckIcon className="size-3" /> installed

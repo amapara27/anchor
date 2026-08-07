@@ -122,6 +122,7 @@ name = "anchor-hub"
 version = "0.1.0"
 dependencies = [
  "anchor-core",
+ "anchor-search",
  "futures-util",
  "reqwest 0.13.4",
  "rusqlite",
@@ -135,6 +136,7 @@ dependencies = [
 name = "anchor-search"
 version = "0.1.0"
 dependencies = [
+ "anchor-core",
  "fastembed",
  "serde",
  "serde_json",

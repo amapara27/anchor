@@ -26,11 +26,21 @@ import type { ArchMeta } from "../types";
 const F16_BYTES = 2;
 
 /**
- * Ollama's default batch size (`num_batch`), which sets the compute buffer's
- * width. Not exposed in any API response, so it's mirrored here.
- * ponytail: bump if Ollama's default changes; kv.verify.ts catches it.
+ * Ollama's batch size (`num_batch`). Sets both the compute buffer's width and
+ * the padding on a sliding-window cache, and is exposed by no API response.
+ *
+ * Not actually a constant: Ollama passes `-b 1024` when the model has room and
+ * drops to `-b 512` under memory pressure. Measured — llama3.2:1b, gemma2:2b and
+ * gemma3:4b got 1024; phi3:mini, deepseek-v2 and gemma4:e4b (all with multi-GiB
+ * KV caches) got 512. Nothing in `/api/show` predicts which one a load will get.
+ *
+ * 1024 is the larger, so both terms over-predict rather than under-predict on
+ * the constrained models — the safe direction for a fit check, and worth at most
+ * ~64 MiB either way.
+ * ponytail: read `llama_context: n_batch` from the server log if that ceiling
+ * ever stops being small enough to ignore.
  */
-const DEFAULT_BATCH = 512;
+const DEFAULT_BATCH = 1024;
 
 /**
  * How a memory figure was arrived at:
@@ -53,11 +63,15 @@ export interface KvEstimate {
  * Ollama serialises array metadata as JSON null — so it never reaches us and has
  * to be known per architecture.
  *
- * `gemma4`'s 1/6 is confirmed against llama.cpp's own allocation lines, which
- * report `512 MiB (32768 cells, 4 layers)` global + `40 MiB (1024 cells, 20
- * layers)` local — i.e. 4:20 out of the 24 cached layers, the same 5:1 pattern
- * Gemma 3 publishes. The Gemma 2/3 ratios are from their published 1:1 and 5:1
- * patterns and have not been measured here.
+ * All three gemma entries are confirmed against llama.cpp's own allocation
+ * lines, which name the layer counts outright:
+ *
+ *   gemma2:2b   416 MiB ( 8192 cells, 13 layers) + 260 MiB (5120 cells, 13)
+ *   gemma3:4b   160 MiB ( 8192 cells,  5 layers) + 232 MiB (2048 cells, 29)
+ *   gemma4:e4b  512 MiB (32768 cells,  4 layers) +  40 MiB (1024 cells, 20)
+ *
+ * `gemma3n` is the only unmeasured entry, carried over from Gemma 3's published
+ * 5:1 pattern.
  *
  * Do NOT re-derive these by differencing `/api/ps` size. gemma4's resident
  * figure swings ~6 GiB between loads because llama.cpp splits weights across
@@ -109,14 +123,12 @@ function headDims(a: ArchMeta): { k: number; v: number } | null {
  */
 export function metadataKvBytesPerToken(a: ArchMeta | null | undefined): number | null {
   if (!a) return null;
-  // MLA (DeepSeek) caches one compressed latent plus the RoPE half per *layer*,
-  // not per head — head_count_kv is deliberately absent from this branch. The
-  // dense formula below would say 320 KiB/token for a 671B where the real
-  // figure is 61 × (512 + 64) × 2 ≈ 69 KiB.
-  if (a.kv_lora_rank) {
-    if (!a.block_count || !a.rope_dimension_count) return null;
-    return a.block_count * (a.kv_lora_rank + a.rope_dimension_count) * F16_BYTES;
-  }
+  // MLA (deepseek2) needs no special case: llama.cpp caches the *decompressed*
+  // per-head K/V, not the compressed latent, so the dense formula below is
+  // already exact. Measured on deepseek-v2:16b — 27 × 16 × (192 + 128) × 2 =
+  // 270 KiB/token, matching `size = 8640.00 MiB (32768 cells, 27 layers)`.
+  // ponytail: llama.cpp prints n_embd_head_k_mla and does have a compressed
+  // path; if Ollama ever enables it this drops ~8.9x and needs kv_lora_rank.
   const dims = headDims(a);
   const layers = kvLayerCount(a);
   if (!layers || !a.head_count_kv || !dims) return null;
@@ -148,13 +160,17 @@ export function estimateKvBytesPerToken(params_b: number): number {
  * flash attention by default and it never materialises that matrix, so the term
  * over-predicted by 33x — 2.06 GiB against a real 64 MiB at 32k on llama3.2:1b.
  *
- * Measured: llama3.2:1b grows 34 KiB/token total, of which the KV cache is
- * exactly 32 KiB, leaving 2 KiB = `512 × 4`. gemma4 grows ~1 KiB/token, so this
- * is an upper bound on a term that tops out around 64 MiB.
+ * Measured directly from llama.cpp's `compute buffer size` lines on llama3.2:1b
+ * at n_batch=1024: 160.04 MiB at 8k and 256.04 MiB at 32k, a slope of exactly
+ * 4096 bytes/token = `n_batch × 4`. The ~128 MiB intercept is context-
+ * independent graph overhead and belongs to the fixed reserve, not here.
  *
  * Architecture-independent, hence no `ArchMeta`: whether the scores buffer
- * exists is a property of the kernel Ollama chose, not of the model.
- * ponytail: revisit if Ollama ever ships with flash attention off by default.
+ * exists is a property of the kernel Ollama chose, not of the model. The log
+ * says which — `llama_context: flash_attn = auto` resolving to
+ * `resolve_fused_ops: Flash Attention enabled` is the case modelled here.
+ * ponytail: revisit if Ollama ever ships with flash attention off by default;
+ * kv.verify.ts warns when a load reports it disabled.
  */
 export function computeBufferBytes(contextLength: number): number {
   return contextLength * DEFAULT_BATCH * 4;
@@ -180,6 +196,19 @@ export function kvCacheBytes(
   if (!arch.sliding_window) {
     return { bytes: contextLength * perToken, source: "metadata" };
   }
+  // A window at least as wide as the context never binds — every layer holds the
+  // full context, which is plain dense attention. phi3 declares a 262144-token
+  // window against a 131072 maximum, so it is never windowed in practice; before
+  // this check it fell through to the parameter bucket and under-reported by 8x
+  // (48 KiB/token guessed against 384 KiB/token measured).
+  //
+  // This is also what the windowed branch below would compute for a known arch
+  // in the same regime, since min(ctx, window + batch) is then ctx and the two
+  // layer groups sum back to `layers`. It runs first only to rescue the archs
+  // that branch has no fraction for.
+  if (contextLength <= arch.sliding_window) {
+    return { bytes: contextLength * perToken, source: "metadata" };
+  }
 
   // Windowed model: we need to know how many layers escape the window.
   const globalFraction = arch.architecture
@@ -199,7 +228,10 @@ export function kvCacheBytes(
     arch.head_count_kv! * (d.k + d.v) * F16_BYTES;
 
   const layers = kvLayerCount(arch)!;
-  const globalLayers = Math.round(layers * globalFraction);
+  // Floor, not round: the pattern is "every Nth layer is global", so a partial
+  // trailing cycle contributes no global layer. gemma3:4b has 34 layers at 1/6
+  // and llama.cpp allocates 5 global — round() would say 6.
+  const globalLayers = Math.floor(layers * globalFraction);
   const localLayers = layers - globalLayers;
   // llama.cpp sizes a windowed cache at the window plus one batch, so it can
   // hold the batch being processed alongside the tokens still in scope: gemma4

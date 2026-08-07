@@ -48,6 +48,16 @@ const LOG = process.env.OLLAMA_LOG ?? `${process.env.HOME}/.ollama/logs/server.l
 /** Predicted-vs-measured tolerance. Beyond this the formula is missing a term. */
 const TOLERANCE = 0.1;
 /**
+ * Absolute slack allowed alongside TOLERANCE.
+ *
+ * `n_batch` is 512 or 1024 depending on how much memory the load had (see
+ * `DEFAULT_BATCH`), and it pads every windowed cache. So an otherwise-exact
+ * formula can still miss by `localLayers × perLayerToken × 512` — 40 MiB on
+ * gemma4, 58 MiB on gemma3. At short context that windowed term is most of a
+ * small total, so a percentage alone reads it as a failure.
+ */
+const SLACK_BYTES = 64 * 1024 ** 2;
+/**
  * Contexts to sample; consecutive pairs give the deltas we compare.
  *
  * Starts at 8k deliberately. Below roughly 4k llama.cpp holds a minimum compute
@@ -90,8 +100,6 @@ function archFrom(info: Record<string, unknown>): ArchMeta {
     sliding_window: num("attention.sliding_window"),
     key_length_swa: num("attention.key_length_swa"),
     value_length_swa: num("attention.value_length_swa"),
-    kv_lora_rank: num("attention.kv_lora_rank"),
-    rope_dimension_count: num("rope.dimension_count"),
     shared_kv_layers: num("attention.shared_kv_layers"),
   };
 }
@@ -108,23 +116,40 @@ function logOffset(): number | null {
 }
 
 /**
- * Total KV bytes llama.cpp reported allocating since `offset`, or null if the
- * log carries no allocation lines (a reused/cached load prints none).
- *
- * Reading from a byte offset rather than grepping the whole file is what ties
- * the lines to *this* load — the file accumulates every load ever made.
+ * Everything the server logged since `offset`, or null if unreadable. Reading
+ * from a byte offset rather than grepping the whole file is what ties the lines
+ * to *this* load — the file accumulates every load ever made.
  */
-function kvBytesFromLog(offset: number): number | null {
-  let text: string;
+function logSince(offset: number): string | null {
   try {
-    text = fs.readFileSync(LOG).subarray(offset).toString("utf8");
+    return fs.readFileSync(LOG).subarray(offset).toString("utf8");
   } catch {
     return null;
   }
+}
+
+/**
+ * Total KV bytes llama.cpp reported allocating, or null if the slice carries no
+ * allocation lines (a reused/cached load prints none). Windowed models print one
+ * line per cache — global and SWA are separate — so these are summed.
+ */
+function kvBytesFromLog(text: string): number | null {
   const re = /llama_kv_cache:\s*size\s*=\s*([\d.]+) MiB \(\s*(\d+) cells,\s*(\d+) layers/g;
   let total: number | null = null;
   for (const m of text.matchAll(re)) total = (total ?? 0) + parseFloat(m[1]) * MIB;
   return total;
+}
+
+/**
+ * Whether llama.cpp resolved `--flash-attn auto` to on. `computeBufferBytes`
+ * models the mask alone, which is only right with flash attention; without it
+ * llama.cpp also materialises an `n_batch × n_head × ctx` scores buffer and that
+ * term is ~33x larger. Null when the slice says nothing either way.
+ */
+function flashAttnFromLog(text: string): boolean | null {
+  if (/Flash Attention enabled/.test(text)) return true;
+  if (/flash[_ ]attn\w*\s*=\s*(0|false|disabled)/i.test(text)) return false;
+  return null;
 }
 
 /** The model's `/api/ps` row, or undefined if it isn't resident. */
@@ -161,10 +186,12 @@ async function residentAt(model: string, num_ctx: number) {
     entry = next;
   }
   if (!entry) throw new Error(`${model} not resident after load`);
+  const text = offset === null ? null : logSince(offset);
   const measured = {
     size: entry.size as number,
     contextLength: entry.context_length as number | undefined,
-    kvBytes: offset === null ? null : kvBytesFromLog(offset),
+    kvBytes: text === null ? null : kvBytesFromLog(text),
+    flashAttn: text === null ? null : flashAttnFromLog(text),
   };
 
   // Unload so the next context gets a fresh load rather than a cache hit.
@@ -193,8 +220,10 @@ async function verify(model: string): Promise<boolean> {
   const contexts = CONTEXTS.filter((c) => !maxCtx || c <= maxCtx);
 
   const samples: { ctx: number; size: number; kvBytes: number | null }[] = [];
+  let flashAttn: boolean | null = null;
   for (const ctx of contexts) {
-    const { size, contextLength, kvBytes } = await residentAt(model, ctx);
+    const { size, contextLength, kvBytes, flashAttn: fa } = await residentAt(model, ctx);
+    if (fa !== null) flashAttn = fa;
     // Ollama silently clamps num_ctx it can't honour. A clamped load measures a
     // different context than the one we're predicting, so it isn't a data point.
     if (contextLength !== undefined && contextLength !== ctx) {
@@ -203,6 +232,12 @@ async function verify(model: string): Promise<boolean> {
     }
     samples.push({ ctx, size, kvBytes });
   }
+  // The compute-buffer term assumes flash attention. If a load ever reports it
+  // off, that term is ~33x too small and the KV numbers below say nothing about
+  // it either way.
+  if (flashAttn === false) {
+    console.log("    WARNING: flash attention OFF — computeBufferBytes under-predicts ~33x");
+  }
 
   // Exact path: llama.cpp told us what it allocated, so compare per context and
   // skip differencing entirely.
@@ -210,8 +245,9 @@ async function verify(model: string): Promise<boolean> {
     let ok = true;
     for (const s of samples) {
       const predicted = kvCacheBytes(arch, s.ctx, 0).bytes;
-      const error = (s.kvBytes! - predicted) / predicted;
-      const pass = Math.abs(error) <= TOLERANCE;
+      const delta = s.kvBytes! - predicted;
+      const error = delta / predicted;
+      const pass = Math.abs(error) <= TOLERANCE || Math.abs(delta) <= SLACK_BYTES;
       ok &&= pass;
       console.log(
         `    ctx ${String(s.ctx).padStart(6)}: kv predicted ${(predicted / MIB).toFixed(1)} MiB, ` +

@@ -54,10 +54,6 @@ export interface ArchMeta {
   key_length_swa: number | null;
   /** Per-head value dimension on windowed layers, when it differs. */
   value_length_swa: number | null;
-  /** Latent-attention rank; its presence marks an MLA model. */
-  kv_lora_rank: number | null;
-  /** RoPE dimensions. Only used on MLA models, where it is `qk_rope_head_dim`. */
-  rope_dimension_count: number | null;
   /** Layers reusing another layer's KV cache; subtract from `block_count`. */
   shared_kv_layers: number | null;
 }
@@ -179,8 +175,6 @@ export interface ModelSpec {
   context_tokens: number;
   /** Download size in bytes (catalog estimate when not yet installed). */
   download_bytes: number;
-  /** Minimum RAM/VRAM in bytes to run comfortably. */
-  min_memory_bytes: number;
   /** One-line description of what the model is good at. */
   blurb: string;
   /** Suggested use cases, shown as chips on the model card. */
@@ -206,8 +200,12 @@ export interface ModelProfile {
   quant: Quant;
   /** Catalog estimate of download size in gigabytes (binary, GiB). */
   download_gb: number;
-  /** Catalog estimate of RAM/VRAM in gigabytes to run comfortably. */
-  min_memory_gb: number;
+  /**
+   * GGUF architecture fields, shipped with the catalog by
+   * `tools/generate-arch.mjs`. Present for available models too, which is what
+   * lets an uninstalled model get exact KV math instead of a size bucket.
+   */
+  arch: ArchMeta | null;
   blurb: string;
   use_cases: string[];
   /** Authored description used for semantic search (not shown directly). */

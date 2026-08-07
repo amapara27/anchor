@@ -1,6 +1,7 @@
 import type { DownloadState, HardwareProfile, LibraryModel, ScoredModel } from "../types";
 import { formatContext, formatParams } from "../lib/format";
 import { hardwareHint, type HardwareHint } from "../lib/hint";
+import { fitContext } from "../lib/fit";
 import { StatusBadge } from "./StatusBadge";
 import { SpecPill } from "./SpecPill";
 import { StatCard } from "./ui/StatCard";
@@ -87,18 +88,23 @@ export function SearchResultCard({
   const isDownloading = download != null;
 
   // Prefer the installed model's real GGUF metadata and on-disk size; fall back
-  // to the catalog figures for anything not downloaded yet.
+  // to the catalog figures for anything not downloaded yet. The catalog now
+  // carries architecture metadata of its own, so an available model gets the
+  // same exact KV math as an installed one rather than a size bucket.
   const hint = hardwareHint(
     {
       id: profile.id,
       params_b: profile.params_b,
       quant: profile.quant,
       contextTokens: profile.context_tokens,
-      arch: libraryModel?.arch,
+      arch: libraryModel?.arch ?? profile.arch,
       sizeBytes: libraryModel?.size_bytes,
     },
     hardware,
   );
+  // The context the fit was judged at — named on the stat so the number isn't
+  // read as a figure for the model's full advertised window.
+  const judgedContext = fitContext(profile.context_tokens);
 
   // The "why": the authored profile prose. The keyword tail (after "Keywords:")
   // is rendered as chips below, so strip it here. Kept as a single text slot so a
@@ -130,7 +136,13 @@ export function SearchResultCard({
 
         <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
           <StatCard recessed label="Size" value={`${profile.download_gb.toFixed(1)}`} sub="GB download" compact />
-          <StatCard recessed label="Req. RAM" value={`${profile.min_memory_gb.toFixed(0)}`} sub="GB minimum" compact />
+          <StatCard
+            recessed
+            label="Req. RAM"
+            value={`${hint.fit.breakdown.totalNeededGB.toFixed(1)}`}
+            sub={`GB at ${formatContext(judgedContext)}`}
+            compact
+          />
           <StatCard recessed label="Quant" value={profile.quant} compact />
           <StatCard recessed label="Context" value={formatContext(profile.context_tokens)} compact />
         </div>

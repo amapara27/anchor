@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -233,6 +233,58 @@ const V7: &str = "
     );
 ";
 
+/// Architecture metadata for models that are *not* installed, read from the
+/// registry by [`gguf`](crate::gguf) so a browsable tag can be sized exactly.
+///
+/// Keyed on the tag, but stamped with the manifest `digest`: a tag can be
+/// re-pointed at a different build, and the GGUF behind the new one may have a
+/// different architecture entirely. Comparing digests is what makes this cache
+/// safe to keep forever — the bytes behind a digest never change.
+///
+/// `arch` is nullable on purpose. A model whose header can't be read is worth
+/// remembering as unreadable, so browsing doesn't retry it on every render.
+const V8: &str = "
+    CREATE TABLE IF NOT EXISTS tag_arch (
+        tag        TEXT PRIMARY KEY,
+        digest     TEXT NOT NULL,
+        arch       TEXT,
+        fetched_ms INTEGER NOT NULL
+    );
+";
+
+/// Reads cached architecture metadata for `tag`, if it was recorded against
+/// this exact `digest`.
+///
+/// The outer `Option` is "have we looked?"; the inner is "did it work?". A
+/// recorded failure is a hit, not a miss.
+pub fn read_tag_arch(conn: &Connection, tag: &str, digest: &str) -> Result<Option<Option<ArchMeta>>> {
+    let mut stmt = conn.prepare("SELECT arch FROM tag_arch WHERE tag = ?1 AND digest = ?2")?;
+    let mut rows = stmt.query(rusqlite::params![tag, digest])?;
+    match rows.next()? {
+        Some(row) => {
+            let raw: Option<String> = row.get(0)?;
+            Ok(Some(arch_from_json(raw.as_deref())))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Records what reading `tag`'s header produced, replacing any older digest.
+pub fn write_tag_arch(
+    conn: &Connection,
+    tag: &str,
+    digest: &str,
+    arch: Option<&ArchMeta>,
+    now_ms: i64,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO tag_arch (tag, digest, arch, fetched_ms) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(tag) DO UPDATE SET digest = ?2, arch = ?3, fetched_ms = ?4",
+        rusqlite::params![tag, digest, arch_to_json(arch), now_ms],
+    )?;
+    Ok(())
+}
+
 /// Brings the database up to [`SCHEMA_VERSION`]. Idempotent.
 ///
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
@@ -263,6 +315,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 7 {
         tx.execute_batch(V7)?;
+    }
+    if version < 8 {
+        tx.execute_batch(V8)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;

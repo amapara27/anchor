@@ -414,7 +414,7 @@ pub async fn show_details(host: &str, id: &str) -> Result<ShowDetails> {
 ///
 /// Split out so it can be tested against real wire payloads without a live
 /// server, and so the tests exercise the shipped extraction rather than a copy.
-fn details_from_info(info: &serde_json::Map<String, serde_json::Value>) -> ShowDetails {
+pub(crate) fn details_from_info(info: &serde_json::Map<String, serde_json::Value>) -> ShowDetails {
     let architecture = info
         .get("general.architecture")
         .and_then(|v| v.as_str())
@@ -440,8 +440,6 @@ fn details_from_info(info: &serde_json::Map<String, serde_json::Value>) -> ShowD
         sliding_window: info_u64(info, a, "attention.sliding_window"),
         key_length_swa: info_u64(info, a, "attention.key_length_swa"),
         value_length_swa: info_u64(info, a, "attention.value_length_swa"),
-        kv_lora_rank: info_u64(info, a, "attention.kv_lora_rank"),
-        rope_dimension_count: info_u64(info, a, "rope.dimension_count"),
         shared_kv_layers: info_u64(info, a, "attention.shared_kv_layers"),
         architecture,
     };

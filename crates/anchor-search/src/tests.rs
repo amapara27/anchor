@@ -22,6 +22,38 @@ fn load_profiles_parses_catalog() {
     }
 }
 
+/// Every catalog entry carries the architecture metadata that `tools/
+/// generate-arch.mjs` writes, and each one is internally consistent.
+///
+/// An entry may legitimately be `None` (the generator couldn't read that
+/// model's header), which degrades to a labelled size-bucket estimate. What
+/// must never happen is a *populated* entry that can't support exact KV math —
+/// that would present a guess as a measurement.
+#[test]
+fn catalog_carries_usable_arch_metadata() {
+    let profiles = load_profiles().expect("catalog parses");
+    let with_arch = profiles.iter().filter(|p| p.arch.is_some()).count();
+    assert!(
+        with_arch * 10 >= profiles.len() * 9,
+        "expected nearly every catalog entry to carry arch metadata, got {with_arch}/{}",
+        profiles.len()
+    );
+
+    for p in profiles.iter() {
+        let Some(a) = &p.arch else { continue };
+        assert!(a.architecture.is_some(), "{} has arch with no architecture", p.id);
+        assert!(a.block_count.unwrap_or(0) > 0, "{} has no block_count", p.id);
+        // KV sizing needs a per-head dimension: either the explicit key/value
+        // lengths or enough to derive them as embedding_length / head_count.
+        // Models with no KV heads at all (embedding models) are exempt.
+        if a.head_count_kv.is_some() {
+            let explicit = a.key_length.is_some() && a.value_length.is_some();
+            let derivable = a.embedding_length.is_some() && a.head_count.is_some();
+            assert!(explicit || derivable, "{} can't resolve a head dimension", p.id);
+        }
+    }
+}
+
 /// `embedding_text` includes the fields a query is most likely to match on.
 #[test]
 fn embedding_text_includes_profile_and_use_cases() {

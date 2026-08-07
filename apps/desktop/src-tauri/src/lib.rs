@@ -159,6 +159,24 @@ async fn library_tags(
         .map_err(|e| e.to_string())
 }
 
+/// Architecture metadata for a browsable tag, so its memory fit can be computed
+/// exactly rather than guessed from parameter count.
+///
+/// Reads the model's GGUF header from the Ollama registry (~1 MB, never the
+/// weights) and caches it against `digest` forever. `Ok(None)` means the header
+/// was read but carried nothing usable — the UI keeps its labelled estimate.
+#[tauri::command]
+async fn tag_arch(
+    app: AppHandle,
+    tag: String,
+    digest: String,
+) -> Result<Option<anchor_core::ArchMeta>, String> {
+    registry(&app)?
+        .tag_arch(&tag, &digest, now_ms())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Builds a [`QueryHistory`] backed by `search_history.json` in the app's data
 /// directory (the rolling log of the user's recent searches).
 fn history(app: &AppHandle) -> Result<QueryHistory, String> {
@@ -776,6 +794,7 @@ pub fn run() {
             list_catalog,
             list_library,
             library_tags,
+            tag_arch,
             search_models,
             recent_searches,
             download_model,

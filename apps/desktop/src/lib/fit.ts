@@ -55,10 +55,14 @@ function weightsGiB(params_b: number, quant: QuantId, size_bytes?: number | null
  * as the context slider / quant selector change (this is pure and cheap).
  *
  * Pass `model` whenever it's known: with the architecture metadata the KV term
- * is exact (verified byte-for-byte by `kv.verify.ts`), and without it it falls
- * back to a parameter-count bucket. `FitResult.kvSource` says which happened,
- * and the UI must label an estimate as one. The compute-buffer term needs no
- * metadata at all.
+ * is exact, and without it it falls back to a parameter-count bucket.
+ * `FitResult.kvSource` says which happened, and the UI must label an estimate as
+ * one. The compute-buffer term needs no metadata at all.
+ *
+ * "Exact" is verified byte-for-byte by `kv.verify.ts` against llama.cpp's own
+ * allocation lines on llama3.2:1b (GQA), phi3:mini (MHA), deepseek-v2 (MLA), and
+ * gemma2/gemma3/gemma4 (sliding window). Architectures outside that set are
+ * exact only insofar as they reuse those code paths.
  */
 export function estimateFit(
   params_b: number,
@@ -72,7 +76,7 @@ export function estimateFit(
   const kv = kvCacheBytes(model?.arch, contextLength, params_b);
   const kvCacheGB = kv.bytes / GIB;
   // The attention mask. Grows with context like the KV cache but far slower —
-  // ~64 MiB at 32k — so it's a rounding error next to the OS reserve. Kept
+  // ~128 MiB at 32k — so it's a rounding error next to the OS reserve. Kept
   // separate because the breakdown UI shows it, not because it moves a verdict.
   const computeBufferGB = computeBufferBytes(contextLength) / GIB;
   const osReserveGB = Math.max(2, 0.15 * availableGB);

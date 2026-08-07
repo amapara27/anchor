@@ -8,7 +8,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 4.7,
-    "min_memory_gb": 8,
     "blurb": "Well-rounded general-purpose model with a long context window.",
     "use_cases": [
       "General chat",
@@ -18,7 +17,20 @@
     "profile": "A well-rounded general-purpose chat assistant with a 128K context window. Keywords: everyday chat, instruction following, summarize long documents and articles, draft and rewrite text, answer questions, brainstorm. The safe default choice when you are unsure which model to pick.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "llama3.2:3b",
@@ -29,8 +41,7 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 2,
-    "min_memory_gb": 4,
-    "blurb": "Compact and fast — a good default on memory-constrained machines.",
+    "blurb": "Compact and fast \u2014 a good default on memory-constrained machines.",
     "use_cases": [
       "Low memory",
       "Fast chat",
@@ -39,7 +50,20 @@
     "profile": "A compact, fast 3B chat model that runs on a low-memory laptop. Keywords: small footprint, limited RAM, runs offline on a laptop, low latency, fast everyday assistant, quick drafting, short summaries, simple question answering. Choose it when speed and small size matter more than maximum quality.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 28,
+      "head_count": 24,
+      "head_count_kv": 8,
+      "embedding_length": 3072,
+      "key_length": 128,
+      "value_length": 128,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "llama3.2:1b",
@@ -50,7 +74,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 1.3,
-    "min_memory_gb": 2,
     "blurb": "Tiny model for edge and ultra-low-latency use.",
     "use_cases": [
       "Edge",
@@ -60,7 +83,20 @@
     "profile": "A tiny 1B model for edge devices and the lowest-memory machines. Keywords: minimal RAM, runs on a small laptop or phone, ultra-low latency, fast autocomplete, intent routing, keyword extraction, simple text transforms. Not for complex reasoning.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 16,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 2048,
+      "key_length": 64,
+      "value_length": 64,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "llama3.3:70b",
@@ -71,7 +107,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 43,
-    "min_memory_gb": 64,
     "blurb": "Frontier-class open model rivaling much larger systems.",
     "use_cases": [
       "Complex reasoning",
@@ -82,7 +117,20 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 80,
+      "head_count": 64,
+      "head_count_kv": 8,
+      "embedding_length": 8192,
+      "key_length": 128,
+      "value_length": 128,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "qwen2.5:7b",
@@ -93,7 +141,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 4.7,
-    "min_memory_gb": 8,
     "blurb": "Strong, efficient all-rounder with excellent multilingual support.",
     "use_cases": [
       "Multilingual",
@@ -103,7 +150,20 @@
     "profile": "A strong, efficient 7B all-rounder with excellent multilingual ability and reliable JSON output. Keywords: general assistant, translation and multilingual chat, extract structured data into JSON, parse and transform text, generate structured responses for downstream tools, everyday reasoning on modest hardware.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 28,
+      "head_count": 28,
+      "head_count_kv": 4,
+      "embedding_length": 3584,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "qwen2.5:14b",
@@ -114,7 +174,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 9,
-    "min_memory_gb": 16,
     "blurb": "Strong multilingual and reasoning performance for its size.",
     "use_cases": [
       "Reasoning",
@@ -125,7 +184,20 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 48,
+      "head_count": 40,
+      "head_count_kv": 8,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "qwen2.5:32b",
@@ -136,7 +208,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 20,
-    "min_memory_gb": 32,
     "blurb": "High-quality reasoning approaching larger frontier models.",
     "use_cases": [
       "Complex reasoning",
@@ -147,7 +218,20 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 64,
+      "head_count": 40,
+      "head_count_kv": 8,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "qwen2.5-coder:7b",
@@ -158,7 +242,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 4.7,
-    "min_memory_gb": 8,
     "blurb": "Code-specialized model tuned for completion and review.",
     "use_cases": [
       "Coding",
@@ -168,7 +251,20 @@
     "profile": "A code-specialized 7B model for software development in Python, JavaScript, TypeScript, Go, Rust, SQL, and more. Keywords: write and debug code, web scraping and web crawling, parse HTML and JSON, build scrapers and automation scripts, extract structured data from web pages and APIs, code review, refactoring, generate unit tests. A local coding assistant and pair programmer.",
     "capabilities": [
       "code"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 28,
+      "head_count": 28,
+      "head_count_kv": 4,
+      "embedding_length": 3584,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "qwen2.5-coder:32b",
@@ -179,7 +275,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 20,
-    "min_memory_gb": 32,
     "blurb": "Top-tier open coding model for serious development work.",
     "use_cases": [
       "Coding",
@@ -189,7 +284,20 @@
     "profile": "A top-tier 32B coding model, among the best for local software development. Keywords: generate substantial code, design and reason about software architecture, complex debugging, large multi-file refactors, code review, autonomous coding agent. For developers with 32GB+ of memory.",
     "capabilities": [
       "code"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 64,
+      "head_count": 40,
+      "head_count_kv": 8,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "mistral:7b",
@@ -200,7 +308,6 @@
     "context_tokens": 32768,
     "quant": "Q4_K_M",
     "download_gb": 4.1,
-    "min_memory_gb": 8,
     "blurb": "Fast, capable workhorse that punches above its weight.",
     "use_cases": [
       "Fast chat",
@@ -210,7 +317,20 @@
     "profile": "A fast, efficient 7B workhorse that punches above its weight. Keywords: fast general-purpose chat, everyday assistant, information extraction, summarization, function and tool calling, low-latency backbone for apps and agents on everyday hardware.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "mistral-nemo:12b",
@@ -221,7 +341,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 7.1,
-    "min_memory_gb": 12,
     "blurb": "12B model with a long context and strong tool use.",
     "use_cases": [
       "Long context",
@@ -231,7 +350,20 @@
     "profile": "A 12B model with a long 128K context and strong function calling, built with NVIDIA. Keywords: process long documents, multilingual tasks, tool-using agents, reason over large inputs while staying efficient to run.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 40,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 5120,
+      "key_length": 128,
+      "value_length": 128,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "mixtral:8x7b",
@@ -242,7 +374,6 @@
     "context_tokens": 32768,
     "quant": "Q4_K_M",
     "download_gb": 26,
-    "min_memory_gb": 48,
     "blurb": "Sparse mixture-of-experts; high quality but memory-hungry.",
     "use_cases": [
       "Reasoning",
@@ -253,7 +384,20 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "phi3.5:3.8b",
@@ -264,7 +408,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 2.2,
-    "min_memory_gb": 4,
     "blurb": "Small model with surprisingly strong reasoning for its footprint.",
     "use_cases": [
       "Low memory",
@@ -275,7 +418,20 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "phi3",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 32,
+      "embedding_length": 3072,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": 262144,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "phi4:14b",
@@ -286,7 +442,6 @@
     "context_tokens": 16384,
     "quant": "Q4_K_M",
     "download_gb": 9.1,
-    "min_memory_gb": 16,
     "blurb": "Reasoning-focused 14B that excels at math and logic.",
     "use_cases": [
       "Math",
@@ -297,7 +452,20 @@
     "capabilities": [
       "reasoning",
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "phi3",
+      "block_count": 40,
+      "head_count": 40,
+      "head_count_kv": 10,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": 131072,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "gemma2:2b",
@@ -308,7 +476,6 @@
     "context_tokens": 8192,
     "quant": "Q4_K_M",
     "download_gb": 1.6,
-    "min_memory_gb": 4,
     "blurb": "Tiny, efficient open model from Google's Gemini lineage.",
     "use_cases": [
       "Low memory",
@@ -318,7 +485,20 @@
     "profile": "A tiny, efficient 2B open model from Google's Gemini lineage. Keywords: runs on minimal RAM, fast on-device chat, quick drafting, classification, lightweight assistant features where a very small, responsive model is preferred.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "gemma2",
+      "block_count": 26,
+      "head_count": 8,
+      "head_count_kv": 4,
+      "embedding_length": 2304,
+      "key_length": 256,
+      "value_length": 256,
+      "sliding_window": 4096,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "gemma2:9b",
@@ -329,7 +509,6 @@
     "context_tokens": 8192,
     "quant": "Q4_K_M",
     "download_gb": 5.4,
-    "min_memory_gb": 12,
     "blurb": "Balanced open model from the Gemini research lineage.",
     "use_cases": [
       "General chat",
@@ -339,7 +518,20 @@
     "profile": "A balanced 9B open model from Google's Gemini lineage. Keywords: general-purpose chat, polished writing and editing, question answering, summarization. A good quality-to-size tradeoff on mainstream hardware.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "gemma2",
+      "block_count": 42,
+      "head_count": 16,
+      "head_count_kv": 8,
+      "embedding_length": 3584,
+      "key_length": 256,
+      "value_length": 256,
+      "sliding_window": 4096,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "gemma2:27b",
@@ -350,7 +542,6 @@
     "context_tokens": 8192,
     "quant": "Q4_K_M",
     "download_gb": 16,
-    "min_memory_gb": 32,
     "blurb": "Larger Gemma for higher-quality writing and reasoning.",
     "use_cases": [
       "Writing",
@@ -361,7 +552,20 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "gemma2",
+      "block_count": 46,
+      "head_count": 32,
+      "head_count_kv": 16,
+      "embedding_length": 4608,
+      "key_length": 128,
+      "value_length": 128,
+      "sliding_window": 4096,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "deepseek-r1:7b",
@@ -372,7 +576,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 4.7,
-    "min_memory_gb": 8,
     "blurb": "Reasoning-focused distill that shows its chain of thought.",
     "use_cases": [
       "Reasoning",
@@ -383,7 +586,20 @@
     "capabilities": [
       "reasoning",
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 28,
+      "head_count": 28,
+      "head_count_kv": 4,
+      "embedding_length": 3584,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "deepseek-r1:14b",
@@ -394,7 +610,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 9,
-    "min_memory_gb": 16,
     "blurb": "Stronger reasoning distill for harder problems.",
     "use_cases": [
       "Reasoning",
@@ -405,7 +620,20 @@
     "capabilities": [
       "reasoning",
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 48,
+      "head_count": 40,
+      "head_count_kv": 8,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "deepseek-r1:32b",
@@ -416,7 +644,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 20,
-    "min_memory_gb": 32,
     "blurb": "High-end reasoning distill approaching frontier problem-solving.",
     "use_cases": [
       "Complex reasoning",
@@ -427,7 +654,20 @@
     "capabilities": [
       "reasoning",
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "qwen2",
+      "block_count": 64,
+      "head_count": 40,
+      "head_count_kv": 8,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "deepseek-coder-v2:16b",
@@ -438,7 +678,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 8.9,
-    "min_memory_gb": 16,
     "blurb": "Mixture-of-experts coder with broad language coverage.",
     "use_cases": [
       "Coding",
@@ -448,7 +687,20 @@
     "profile": "A mixture-of-experts coding model (16B) with broad programming-language coverage and a long context. Keywords: write and debug code, code generation and completion, repository-scale understanding, fast local coding assistant for Python and many other languages.",
     "capabilities": [
       "code"
-    ]
+    ],
+    "arch": {
+      "architecture": "deepseek2",
+      "block_count": 27,
+      "head_count": 16,
+      "head_count_kv": 16,
+      "embedding_length": 2048,
+      "key_length": 192,
+      "value_length": 128,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "codellama:13b",
@@ -459,7 +711,6 @@
     "context_tokens": 16384,
     "quant": "Q4_K_M",
     "download_gb": 7.4,
-    "min_memory_gb": 12,
     "blurb": "Llama-based code model for generation and infilling.",
     "use_cases": [
       "Coding",
@@ -469,7 +720,20 @@
     "profile": "A Llama-based 13B code model for programming. Keywords: write and debug code, fill-in-the-middle completion, write functions from descriptions, IDE and editor integration, general coding assistance in Python, C++, Java, and more.",
     "capabilities": [
       "code"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 40,
+      "head_count": 40,
+      "head_count_kv": 40,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "codegemma:7b",
@@ -480,7 +744,6 @@
     "context_tokens": 8192,
     "quant": "Q4_K_M",
     "download_gb": 5,
-    "min_memory_gb": 8,
     "blurb": "Google's code model for completion and generation.",
     "use_cases": [
       "Coding",
@@ -490,7 +753,20 @@
     "profile": "Google's 7B code model built on Gemma. Keywords: code completion and fill-in-the-middle, generate short functions and snippets, lightweight coding assistance and autocomplete inside editors.",
     "capabilities": [
       "code"
-    ]
+    ],
+    "arch": {
+      "architecture": "gemma",
+      "block_count": 28,
+      "head_count": 16,
+      "head_count_kv": 16,
+      "embedding_length": 3072,
+      "key_length": 256,
+      "value_length": 256,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "starcoder2:7b",
@@ -501,7 +777,6 @@
     "context_tokens": 16384,
     "quant": "Q4_K_M",
     "download_gb": 4,
-    "min_memory_gb": 8,
     "blurb": "Open code model trained on a broad permissive corpus.",
     "use_cases": [
       "Coding",
@@ -511,7 +786,20 @@
     "profile": "An open 7B code model from BigCode trained on hundreds of programming languages with a permissive license. Keywords: code completion, fill-in-the-middle, multi-language programming assistance where license transparency matters.",
     "capabilities": [
       "code"
-    ]
+    ],
+    "arch": {
+      "architecture": "starcoder2",
+      "block_count": 32,
+      "head_count": 36,
+      "head_count_kv": 4,
+      "embedding_length": 4608,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "llava:7b",
@@ -522,7 +810,6 @@
     "context_tokens": 4096,
     "quant": "Q4_K_M",
     "download_gb": 4.7,
-    "min_memory_gb": 8,
     "blurb": "Multimodal model that understands images and text.",
     "use_cases": [
       "Image understanding",
@@ -532,7 +819,20 @@
     "profile": "A multimodal 7B vision-language model that accepts images. Keywords: describe and caption an image, answer questions about a picture, read a screenshot or chart, visual question answering. Runs on everyday hardware.",
     "capabilities": [
       "vision"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "llava:13b",
@@ -543,7 +843,6 @@
     "context_tokens": 4096,
     "quant": "Q4_K_M",
     "download_gb": 8,
-    "min_memory_gb": 12,
     "blurb": "Larger multimodal model for richer image understanding.",
     "use_cases": [
       "Image understanding",
@@ -553,7 +852,20 @@
     "profile": "A larger 13B vision-language model for richer image understanding. Keywords: detailed image description, analyze a screenshot or document image, visual reasoning, visual question answering at higher quality than the 7B.",
     "capabilities": [
       "vision"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 40,
+      "head_count": 40,
+      "head_count_kv": 40,
+      "embedding_length": 5120,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "llama3.2-vision:11b",
@@ -564,7 +876,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 7.9,
-    "min_memory_gb": 12,
     "blurb": "Meta's multimodal model for image reasoning and OCR-like tasks.",
     "use_cases": [
       "Image reasoning",
@@ -574,7 +885,20 @@
     "profile": "Meta's 11B multimodal model that reasons over images and text with a long context. Keywords: describe what is in an image or screenshot, understand documents and scanned pages, interpret charts and diagrams, image-grounded question answering.",
     "capabilities": [
       "vision"
-    ]
+    ],
+    "arch": {
+      "architecture": "mllama",
+      "block_count": 40,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "command-r:35b",
@@ -585,7 +909,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 20,
-    "min_memory_gb": 32,
     "blurb": "Built for retrieval-augmented generation and tool use.",
     "use_cases": [
       "RAG",
@@ -595,7 +918,20 @@
     "profile": "A 35B model purpose-built for retrieval-augmented generation (RAG) and tool use, with strong grounding and citations over long contexts. Keywords: build a local knowledge base over your files, document Q&A and chat with your documents, answer with citations, multi-step tool-using agents, enterprise retrieval workflows. This is the model that generates grounded answers from retrieved files.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "command-r",
+      "block_count": 40,
+      "head_count": 64,
+      "head_count_kv": 8,
+      "embedding_length": 8192,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "command-r-plus:104b",
@@ -606,7 +942,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 59,
-    "min_memory_gb": 80,
     "blurb": "Cohere's flagship for advanced RAG and agentic tool use.",
     "use_cases": [
       "Advanced RAG",
@@ -616,7 +951,20 @@
     "profile": "Cohere's flagship 104B model for advanced retrieval-augmented generation and agentic tool use. Keywords: high-accuracy knowledge base and document Q&A with citations over your files, complex multi-step tool-using agents, demanding enterprise retrieval. Needs substantial memory (80GB+).",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "command-r",
+      "block_count": 64,
+      "head_count": 96,
+      "head_count_kv": 8,
+      "embedding_length": 12288,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "nomic-embed-text",
@@ -627,7 +975,6 @@
     "context_tokens": 8192,
     "quant": "F16",
     "download_gb": 0.27,
-    "min_memory_gb": 2,
     "blurb": "High-quality text embeddings for local semantic search.",
     "use_cases": [
       "Text embeddings",
@@ -637,7 +984,20 @@
     "profile": "An embedding model that converts text into numeric embedding vectors. It does NOT chat, generate text, or answer questions. Keywords: compute text embeddings, generate vectors for semantic search, populate a vector database, nearest-neighbor similarity, clustering, deduplication. Use it to encode and index text; pair it with a separate chat model to produce answers.",
     "capabilities": [
       "embedding"
-    ]
+    ],
+    "arch": {
+      "architecture": "nomic-bert",
+      "block_count": 12,
+      "head_count": 12,
+      "head_count_kv": null,
+      "embedding_length": 768,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "mxbai-embed-large",
@@ -648,7 +1008,6 @@
     "context_tokens": 512,
     "quant": "F16",
     "download_gb": 0.67,
-    "min_memory_gb": 2,
     "blurb": "State-of-the-art open embedding model for retrieval.",
     "use_cases": [
       "Text embeddings",
@@ -658,7 +1017,20 @@
     "profile": "A high-accuracy open embedding model that turns text into vectors. It does NOT generate text or hold conversations. Keywords: top-quality text embeddings, semantic search ranking, encode text for a vector database, rerank candidate results, similarity and clustering where embedding precision is the priority.",
     "capabilities": [
       "embedding"
-    ]
+    ],
+    "arch": {
+      "architecture": "bert",
+      "block_count": 24,
+      "head_count": 16,
+      "head_count_kv": null,
+      "embedding_length": 1024,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "all-minilm:22m",
@@ -669,7 +1041,6 @@
     "context_tokens": 256,
     "quant": "F16",
     "download_gb": 0.05,
-    "min_memory_gb": 1,
     "blurb": "Tiny, fast embedding model for lightweight search.",
     "use_cases": [
       "Text embeddings",
@@ -679,7 +1050,20 @@
     "profile": "A tiny, very fast embedding model that encodes text into compact vectors. It does NOT chat or generate text. Keywords: lightweight text embeddings, on-device vector similarity, fast semantic search, quick clustering where speed and small size outweigh embedding accuracy.",
     "capabilities": [
       "embedding"
-    ]
+    ],
+    "arch": {
+      "architecture": "bert",
+      "block_count": 6,
+      "head_count": 12,
+      "head_count_kv": null,
+      "embedding_length": 384,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "tinyllama:1.1b",
@@ -690,7 +1074,6 @@
     "context_tokens": 2048,
     "quant": "Q4_K_M",
     "download_gb": 0.64,
-    "min_memory_gb": 2,
     "blurb": "Very small chat model for experimentation and edge use.",
     "use_cases": [
       "Low memory",
@@ -700,7 +1083,20 @@
     "profile": "A very small 1.1B chat model. Keywords: runs on minimal RAM, ultra-low-resource and edge deployment, experimentation and learning, prototyping, simple drafting where footprint and speed matter far more than answer quality.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 22,
+      "head_count": 32,
+      "head_count_kv": 4,
+      "embedding_length": 2048,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "smollm2:1.7b",
@@ -711,7 +1107,6 @@
     "context_tokens": 8192,
     "quant": "Q4_K_M",
     "download_gb": 1.8,
-    "min_memory_gb": 2,
     "blurb": "Small but capable model tuned for instruction following.",
     "use_cases": [
       "Low memory",
@@ -721,7 +1116,20 @@
     "profile": "A small 1.7B model tuned for instruction following, capable for its size. Keywords: runs on a low-memory laptop, on-device assistant, drafting and rewriting, short summarization, lightweight tasks on constrained devices.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 24,
+      "head_count": 32,
+      "head_count_kv": 32,
+      "embedding_length": 2048,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "granite3-dense:8b",
@@ -732,7 +1140,6 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 4.9,
-    "min_memory_gb": 8,
     "blurb": "IBM's enterprise model tuned for tools and RAG.",
     "use_cases": [
       "Function calling",
@@ -742,7 +1149,20 @@
     "profile": "IBM's 8B enterprise model tuned for tool use and business workflows under a permissive license. Keywords: function and tool calling, document Q&A and knowledge bases, summarize business content, agentic enterprise workflows.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "granite",
+      "block_count": 40,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "dolphin-mixtral:8x7b",
@@ -753,7 +1173,6 @@
     "context_tokens": 32768,
     "quant": "Q4_K_M",
     "download_gb": 26,
-    "min_memory_gb": 48,
     "blurb": "Uncensored, instruction-tuned mixture-of-experts.",
     "use_cases": [
       "Uncensored chat",
@@ -763,7 +1182,20 @@
     "profile": "An uncensored, instruction-tuned fine-tune of Mixtral. Keywords: uncensored and unfiltered assistant, open-ended and creative chat, roleplay and storytelling, brainstorming without refusals, a compliant less-restricted model. Memory-hungry like base Mixtral (48GB+).",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "neural-chat:7b",
@@ -774,7 +1206,6 @@
     "context_tokens": 32768,
     "quant": "Q4_K_M",
     "download_gb": 4.1,
-    "min_memory_gb": 8,
     "blurb": "Intel's fine-tuned conversational model.",
     "use_cases": [
       "General chat",
@@ -784,7 +1215,20 @@
     "profile": "Intel's 7B conversational fine-tune based on Mistral. Keywords: friendly general-purpose chat, everyday assistant, question answering, drafting on mainstream hardware.",
     "capabilities": [
       "general"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   },
   {
     "id": "wizardlm2:7b",
@@ -795,7 +1239,6 @@
     "context_tokens": 32768,
     "quant": "Q4_K_M",
     "download_gb": 4.1,
-    "min_memory_gb": 8,
     "blurb": "Instruction-tuned model strong at complex prompts.",
     "use_cases": [
       "Complex instructions",
@@ -806,6 +1249,19 @@
     "capabilities": [
       "general",
       "reasoning"
-    ]
+    ],
+    "arch": {
+      "architecture": "llama",
+      "block_count": 32,
+      "head_count": 32,
+      "head_count_kv": 8,
+      "embedding_length": 4096,
+      "key_length": null,
+      "value_length": null,
+      "sliding_window": null,
+      "key_length_swa": null,
+      "value_length_swa": null,
+      "shared_kv_layers": null
+    }
   }
 ]
