@@ -45,9 +45,9 @@ First-launch profiling of CPU, RAM, and GPU. Apple Silicon is special-cased via 
 
 Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time.
 
-### Not yet real
+### In Progress
 
-Kept honest, since the UI shows them: the **Storage** page's blob figures and housekeeping rules, and the **Community** tab on Benchmarks, are placeholder fixtures — nothing scans blob storage and there is no results server. Settings persists inference options locally but does not yet pass them to Ollama.
+Three areas are designed but unbuilt, and the UI says so in place rather than showing a number nothing computed: the **Storage** page's dedupe/integrity figures, locations and housekeeping rules (no blob scanner), the **Community** tab on Benchmarks (no results server), and the appearance/publishing preference toggles that depended on both. Everything else on those pages — the disk map, the reclaim total, the local suite and the leaderboard — is measured.
 
 ## Architecture
 

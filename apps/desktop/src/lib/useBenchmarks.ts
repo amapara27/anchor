@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { BenchProgress, BenchRun, MatchQuality, ReviewAllowance } from "../types";
+import { recordUse } from "./lastUsed";
 import { saveMeasuredRun } from "./measured";
 
 /** Results grouped by how well the measuring machine matches this one. */
@@ -90,6 +91,7 @@ export function useBenchmarks(modelId: string | null) {
   const run = useCallback(
     (id: string) => {
       const myRun = ++runId.current;
+      recordUse(id); // feeds Storage's last-used column and its stale check
       setRunning(true);
       setError(null);
       setProgress("starting");

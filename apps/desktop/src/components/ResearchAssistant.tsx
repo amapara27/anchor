@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useModels } from "../lib/useModels";
+import { useSecret } from "../lib/secrets";
 import { useResearch, type ResearchState } from "../lib/useResearch";
 import { formatTokSec, tokensPerSecond } from "../lib/format";
 import type { ResearchDepth, ResearchFormat } from "../types";
@@ -12,7 +13,7 @@ import { Button } from "./ui/Button";
 import { Chip } from "./ui/Chip";
 import { ChevronDownIcon, SearchIcon } from "./icons";
 
-/** localStorage key for the user's Tavily API key. */
+/** Keychain item name for the user's Tavily API key. */
 const API_KEY_STORAGE = "anchor.tavilyApiKey";
 /** Suggested default — a solid, widely-installed general research model. */
 const DEFAULT_MODEL = "llama3.1:8b";
@@ -45,7 +46,7 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
   const [audience, setAudience] = useState("");
   const [systemOverride, setSystemOverride] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? "");
+  const [apiKey, setApiKey] = useSecret(API_KEY_STORAGE);
 
   // Default the model once the library loads: prefer the suggested general
   // model, else the first installed one.
@@ -54,12 +55,6 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
     const suggested = models.find((m) => m.id === DEFAULT_MODEL);
     setModel(suggested?.id ?? models.find((m) => m.status === "installed")?.id ?? "");
   }, [models, model]);
-
-  // Persist the Tavily key locally — the user's own key on a single-user desktop
-  // app. ponytail: localStorage over the Tauri keychain; upgrade if it ever syncs.
-  useEffect(() => {
-    if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey);
-  }, [apiKey]);
 
   const canRun =
     model !== "" && focus.trim().length > 0 && apiKey.trim().length > 0 && !running;
@@ -167,7 +162,7 @@ export function ResearchAssistant({ onBack }: { onBack: () => void }) {
           />
           <p className="mt-1.5 text-xs text-fg-subtle">
             Web search uses <span className="text-fg-muted">Tavily</span> — get a free key at
-            tavily.com. Stored locally on this machine.
+            tavily.com. Stored in your macOS Keychain, never sent anywhere but Tavily.
           </p>
         </Field>
 

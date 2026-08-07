@@ -4,11 +4,10 @@ import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
 import { formatBytes } from "../lib/format";
-import { COMMUNITY_FEED, CONTRIBUTION, WANTED_RUNS } from "../lib/fixtures";
 import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { ModelSelect } from "./ui/ModelSelect";
 import { Tabs } from "./ui/Tabs";
-import { Toggle } from "./ui/Toggle";
+import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Meter } from "./ui/SegmentedBar";
 import { LockIcon, ZapIcon } from "./icons";
 
@@ -17,7 +16,7 @@ type BenchTab = "suite" | "leaderboard" | "community";
 const TAB_HINT: Record<BenchTab, string> = {
   suite: "median of three runs, after a warm-up",
   leaderboard: "grouped by how closely each machine matches yours",
-  community: "shared runs for this configuration",
+  community: "no results server yet",
 };
 
 /** Median of the group's decode throughput — what the tier is summarised by. */
@@ -38,7 +37,8 @@ function medianTps(runs: BenchRun[]): number | null {
  * The suite and leaderboard are real (`run_benchmark`, `bench_runs_for_model`);
  * results are grouped by match tier and each group is labelled, so a number from
  * a looser match is never presented as though it came from an identical Mac.
- * The Community tab is `lib/fixtures` — there is no results server yet.
+ * The Community tab has no backend — there is no results server to publish to
+ * or read from — so it says so rather than showing invented runs.
  */
 export function BenchmarksPage() {
   const { models } = useModels();
@@ -46,7 +46,6 @@ export function BenchmarksPage() {
   const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<BenchTab>("suite");
-  const [share, setShare] = useState(false);
 
   const modelId = selected ?? installed[0]?.id ?? null;
   const { groups, progress, running, error, allowance, unlocked, run, unlockReview } = useBenchmarks(modelId);
@@ -60,7 +59,7 @@ export function BenchmarksPage() {
       <PageHeader
         eyebrow="Manage"
         title="Benchmarks"
-        subtitle="A fixed suite, run locally. Compare against machines like yours and publish the run if you want to."
+        subtitle="A fixed suite, run locally. Same prompts, same seed, same token counts every time."
         actions={
           <PrimaryButton onClick={() => modelId && run(modelId)} disabled={!modelId || running}>
             <ZapIcon className="size-3.5" />
@@ -227,76 +226,18 @@ export function BenchmarksPage() {
       )}
 
       {tab === "community" && (
-        <div className="grid grid-cols-[minmax(0,1fr)_322px] items-start gap-3.5">
-          <div className="flex flex-col gap-2.5">
-            <span className="data self-start rounded-full border border-hair px-2.5 py-1 text-[10px] uppercase tracking-[0.06em] text-fg-subtle">
-              sample data · awaiting a results server
-            </span>
-            {COMMUNITY_FEED.map((f) => (
-              <div key={f.id} className="card card-interactive flex flex-col gap-2.5 p-4">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <span className="data flex size-[26px] items-center justify-center rounded-lg border border-hair bg-inset text-[11px] text-fg-muted">
-                    {f.initials}
-                  </span>
-                  <span className="data text-xs font-medium text-fg">{f.handle}</span>
-                  {f.verified && (
-                    <span className="data rounded-full border border-accent-line px-2 py-0.5 text-[9.5px] uppercase tracking-[0.06em] text-accent-text">
-                      verified run
-                    </span>
-                  )}
-                  <span className="data text-[10.5px] text-fg-subtle">{f.match}</span>
-                  <span className="data ml-auto text-[10.5px] text-fg-subtle">{f.when}</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-3.5 rounded-[9px] border border-hair bg-inset px-3 py-2.5">
-                  <Field label="Chip" value={f.chip} />
-                  <Field label="Model" value={f.model} />
-                  <Field label="Decode" value={f.tps} />
-                  <Field label="Peak mem" value={f.mem} />
-                </div>
-                <p className="text-[13px] leading-[1.6] text-fg-muted">{f.note}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="sticky top-0 flex flex-col gap-3">
-            <div className="card flex flex-col gap-3 p-4">
-              <span className="label-caps">Your contribution</span>
-              <div className="grid grid-cols-2 gap-2.5">
-                <Stat value={String(CONTRIBUTION.published)} label="runs published" />
-                <Stat value={String(CONTRIBUTION.upvotes)} label="upvotes received" />
-                <Stat value={CONTRIBUTION.rank} label="contributor rank" accent />
-                <Stat value={String(CONTRIBUTION.firsts)} label="first-for-chip runs" />
-              </div>
-              <div className="flex items-center gap-3 border-t border-hair pt-3">
-                <span className="flex flex-1 flex-col gap-0.5">
-                  <span className="text-[12.5px] text-fg">Publish runs automatically</span>
-                  <span className="text-[11px] leading-[1.45] text-fg-subtle">
-                    Would send chip, memory, model, quant and timings. Never prompts or output.
-                  </span>
-                </span>
-                <Toggle checked={share} onChange={setShare} label="Publish runs automatically" />
-              </div>
-            </div>
-
-            <div className="card flex flex-col gap-2.5 p-4">
-              <span className="label-caps">Wanted runs</span>
-              <p className="text-xs leading-[1.5] text-fg-muted">
-                Configurations with fewer than five results. Yours would be the reference.
-              </p>
-              {WANTED_RUNS.map((w) => (
-                <div
-                  key={w.name}
-                  className="flex items-center gap-2.5 rounded-[9px] border border-hair bg-inset px-2.5 py-2"
-                >
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="data truncate text-[11.5px] text-fg">{w.name}</span>
-                    <span className="data text-[10px] text-fg-subtle">{w.detail}</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <section className="card flex flex-col gap-3 p-5">
+          <span className="label-caps">Community results</span>
+          <NotBuiltYet>
+            Shared runs from machines like yours, so you can tell a slow model from a slow Mac. There is no
+            results server to publish to or read from yet, so nothing here is populated — the Leaderboard tab
+            ranks the runs measured on this machine, which are real.
+          </NotBuiltYet>
+          <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
+            When it lands, a published run carries chip, memory, model, quant and timings — never a prompt or a
+            response — and only after you opt in.
+          </p>
+        </section>
       )}
     </>
   );
@@ -310,24 +251,6 @@ function Metric({ label, value, unit, accent }: { label: string; value: string; 
         {value}
         {unit && <span className="text-xs text-fg-muted">{unit}</span>}
       </span>
-    </span>
-  );
-}
-
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="flex flex-col gap-0.5">
-      <span className="label-caps text-[9.5px]">{label}</span>
-      <span className="data text-xs text-fg">{value}</span>
-    </span>
-  );
-}
-
-function Stat({ value, label, accent }: { value: string; label: string; accent?: boolean }) {
-  return (
-    <span className="flex flex-col gap-0.5">
-      <span className={`data text-xl ${accent ? "text-accent-text" : "text-fg"}`}>{value}</span>
-      <span className="text-[11px] text-fg-subtle">{label}</span>
     </span>
   );
 }

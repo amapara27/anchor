@@ -132,6 +132,10 @@ pub enum Error {
     /// A JSON (de)serialisation failure.
     #[error("malformed response: {0}")]
     Json(#[from] serde_json::Error),
+    /// The user cancelled a long-running operation. Not a failure — callers
+    /// should treat it as a normal terminal state, not surface it as an error.
+    #[error("cancelled")]
+    Cancelled,
 }
 
 /// Convenience alias for registry results.
@@ -184,8 +188,17 @@ impl Registry {
     fn connect(&self) -> Result<Connection> {
         let conn = Connection::open(&self.db_path)?;
         // Waits out a concurrent writer (e.g. a sync racing the tray poll)
-        // instead of failing immediately with SQLITE_BUSY.
-        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // instead of failing immediately with SQLITE_BUSY. Readers never block
+        // here — measured clean at 4 readers against an 8 s write — so this is
+        // purely writer-vs-writer, the realistic case being a `replace_library`
+        // overlapping a chat turn's `append_message`.
+        //
+        // ponytail: past the timeout the loser still fails hard with "database
+        // is locked". WAL does *not* help — it gives writers no concurrency, and
+        // both journal modes measured identical. Retrying the loser is the real
+        // fix; a longer wait covers every write this app actually issues, all of
+        // which are milliseconds.
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
         Ok(conn)
     }
 
@@ -261,13 +274,19 @@ impl Registry {
 
     /// Pulls a model via Ollama, forwarding each progress event to `on_progress`.
     ///
-    /// The cache is refreshed on the next [`sync`](Self::sync); callers typically
-    /// re-list afterwards to pick up the newly installed model.
-    pub async fn pull<F>(&self, id: &str, on_progress: F) -> Result<()>
+    /// Setting `cancel` aborts the pull and returns [`Error::Cancelled`] — see
+    /// [`ollama::pull`]. The cache is refreshed on the next [`sync`](Self::sync);
+    /// callers typically re-list afterwards to pick up the newly installed model.
+    pub async fn pull<F>(
+        &self,
+        id: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_progress: F,
+    ) -> Result<()>
     where
         F: FnMut(PullProgress) + Send,
     {
-        ollama::pull(&self.host, id, on_progress).await
+        ollama::pull(&self.host, id, cancel, on_progress).await
     }
 
     /// Removes a model from Ollama and drops it from the cache.
@@ -573,8 +592,13 @@ impl Registry {
         match self.is_installed(id).await {
             Ok(true) => {}
             Ok(false) => {
+                // Compare has no cancel affordance of its own, so this pull is
+                // never interrupted — the flag is a permanently-false constant.
+                let never = std::sync::atomic::AtomicBool::new(false);
                 let pulled = self
-                    .pull(id, |progress| on_event(CompareEvent::Pull { slot, progress }))
+                    .pull(id, &never, |progress| {
+                        on_event(CompareEvent::Pull { slot, progress })
+                    })
                     .await;
                 if let Err(e) = pulled {
                     on_event(CompareEvent::Failed {

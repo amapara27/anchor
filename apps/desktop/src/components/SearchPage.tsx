@@ -124,7 +124,9 @@ export function SearchPage() {
               <span className="label-caps">Query results</span>
               <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight text-fg">“{query}”</h2>
               {!confident && (
-                <p className="mt-1 text-sm text-fg-muted">No strong match — showing related models.</p>
+                <p className="mt-1 text-sm text-fg-muted">
+                  No close match in the catalog — these are the nearest models, not answers to your query.
+                </p>
               )}
             </div>
             <span className="mono-metric shrink-0 text-xs text-fg-muted">

@@ -11,7 +11,9 @@ export function useServerStatus() {
     setLoading(true);
     invoke<ServerStatus>("get_server_status")
       .then(setStatus)
-      .catch(() => setStatus({ reachable: false, version: null, managed: false }))
+      // The command itself failed, so we know nothing about the host — claim
+      // local so the "not on this Mac" warning can't fire on a read error.
+      .catch(() => setStatus({ reachable: false, version: null, managed: false, host: "", local: true }))
       .finally(() => setLoading(false));
   }, []);
 

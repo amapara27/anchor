@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AgentRunDetail } from "../types";
+import { recordUse } from "../lib/lastUsed";
 import { applyEvent, INITIAL, mark, TERMINAL, tracePhases, type Mark } from "./fold";
 import type { AgentEvent, AgentState } from "./types";
 
@@ -93,6 +94,7 @@ export function useAgent(agentId: string, command: string) {
     (opts: RunOptions) => {
       const myRun = ++runId.current;
       activeModel.current = opts.model;
+      recordUse(opts.model); // feeds Storage's last-used column and its stale check
       setState({ ...INITIAL, phase: opts.firstPhase });
 
       // Run-local record of what gets stored. Kept in the closure rather than in

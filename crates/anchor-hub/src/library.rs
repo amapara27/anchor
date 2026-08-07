@@ -70,9 +70,22 @@ pub async fn fetch_library() -> Result<Vec<LibraryEntry>> {
 }
 
 /// Fetches and parses every tag of one library model.
+///
+/// `name` is pushed as a path segment rather than interpolated, so it is
+/// percent-encoded: `"../../.."` addressed `ollama.com/tags` — a different
+/// endpoint than intended. The base is pinned, so this was never SSRF, just wrong.
 pub async fn fetch_tags(name: &str) -> Result<Vec<LibraryTag>> {
-    let url = format!("{LIBRARY_URL}/{name}/tags");
-    Ok(parse_tags(&get(&url).await?))
+    Ok(parse_tags(&get(tags_url(name).as_str()).await?))
+}
+
+/// The tags URL for one library model, with `name` as a single encoded segment.
+fn tags_url(name: &str) -> reqwest::Url {
+    let mut url = reqwest::Url::parse(LIBRARY_URL).expect("LIBRARY_URL is a valid base");
+    url.path_segments_mut()
+        .expect("https base always has a path")
+        .push(name)
+        .push("tags");
+    url
 }
 
 /// GETs a page as text.

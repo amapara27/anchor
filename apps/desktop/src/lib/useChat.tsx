@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { ChatEvent, ChatMessage, Conversation } from "../types";
+import { recordUse } from "./lastUsed";
 
 /**
  * Owns the chat workspace: the conversation list, the active conversation's
@@ -11,7 +12,7 @@ import type { ChatEvent, ChatMessage, Conversation } from "../types";
  * Mirrors `useResearch`'s Channel + `runId` staleness idiom and its
  * unload-on-unmount so a resident model (keep_alive:300) never strands.
  */
-export function useChat() {
+function useChatState() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -93,6 +94,7 @@ export function useChat() {
       if (running || !content.trim()) return;
       const myRun = ++runId.current;
       activeModel.current = model;
+      recordUse(model); // feeds Storage's last-used column and its stale check
       setRunning(true);
       setError(undefined);
 
@@ -104,6 +106,12 @@ export function useChat() {
         { id: `local-${now}`, role: "user", content, thinking: null, stats_json: null, created_ms: now },
         { id: streamId, role: "assistant", content: "", thinking: null, stats_json: null, created_ms: now + 1 },
       ]);
+
+      // A failed turn persisted nothing, so the optimistic pair has to go with
+      // it — otherwise the thread keeps a user turn and a blank reply that only
+      // vanish on reload.
+      const dropOptimistic = () =>
+        setMessages((m) => m.filter((msg) => msg.id !== streamId && msg.id !== `local-${now}`));
 
       const channel = new Channel<ChatEvent>();
       channel.onmessage = (event) => {
@@ -138,6 +146,7 @@ export function useChat() {
         } else if (event.kind === "failed") {
           setError(event.message);
           setRunning(false);
+          dropOptimistic();
         }
       };
 
@@ -145,14 +154,16 @@ export function useChat() {
         if (runId.current !== myRun) return;
         setError(String(e));
         setRunning(false);
+        dropOptimistic();
       });
     },
     [running, reloadConversations],
   );
 
-  // Leaving chat mid-run must not strand a resident model.
-  // ponytail: unload only on unmount; a mid-session model switch relies on
-  // keep_alive:300 to evict the old one. Add an explicit switch-unload if it bites.
+  // Closing the app must not strand a resident model.
+  // ponytail: unload only on unmount, which is now app teardown rather than a
+  // tab switch — a model left over from either a switch or a model change is
+  // evicted by keep_alive:300, or by hand from the residency pill.
   useEffect(() => () => unload(), [unload]);
 
   return {
@@ -168,4 +179,29 @@ export function useChat() {
     send,
     setPreset,
   };
+}
+
+type ChatValue = ReturnType<typeof useChatState>;
+
+const ChatContext = createContext<ChatValue | null>(null);
+
+/**
+ * Single owner of the chat state, mounted once in `App`.
+ *
+ * It lives above the tab switch for the same reason [`ModelsProvider`] does:
+ * `App` renders each page under `<main key={tab}>`, so a tab switch unmounts the
+ * whole subtree. Held inside `ChatWorkspace`, `activeId` reset to `null` on every
+ * return to Chat and the next message silently started a *new* conversation
+ * instead of continuing the open one.
+ */
+export function ChatProvider({ children }: { children: React.ReactNode }) {
+  const value = useChatState();
+  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+}
+
+/** The shared chat state from the app-level [`ChatProvider`]. */
+export function useChat(): ChatValue {
+  const ctx = useContext(ChatContext);
+  if (!ctx) throw new Error("useChat must be used within a ChatProvider");
+  return ctx;
 }

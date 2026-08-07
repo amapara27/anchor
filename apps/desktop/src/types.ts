@@ -277,6 +277,10 @@ export interface ServerStatus {
   reachable: boolean;
   version: string | null;
   managed: boolean;
+  /** Base URL in use, from `OLLAMA_HOST` or the loopback default. */
+  host: string;
+  /** False when `OLLAMA_HOST` points off this machine — see the Settings warning. */
+  local: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,7 +333,13 @@ export interface RunningModel {
   name: string;
   /** Bytes held in VRAM, when reported. */
   size_vram: number | null;
-  /** Total resident bytes — weights + KV cache + compute buffers. */
+  /**
+   * Resident bytes as `/api/ps` reports them. Documented as the total, but it
+   * tracks the GPU-resident share: a model llama.cpp splits across Metal and CPU
+   * reports only the Metal side, measured ~6 GiB low on gemma4:e4b. On unified
+   * memory the physical RAM is the same either way, so this under-reports rather
+   * than mismeasures — the UI labels it accordingly.
+   */
   size: number | null;
   /** The context length it was actually loaded with (Ollama clamps requests). */
   context_length: number | null;

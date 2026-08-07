@@ -1,6 +1,6 @@
 //! The file-reader tool: get text out of a document, and split it for retrieval.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Chunk size and overlap in characters, not tokens.
 ///
@@ -10,9 +10,44 @@ use std::path::Path;
 pub const CHUNK_CHARS: usize = 1_200;
 const CHUNK_OVERLAP: usize = 150;
 
+/// Whether `path` is a real file rather than a symlink, directory, socket or
+/// device.
+///
+/// `symlink_metadata` does not follow the link, which is the whole point: a
+/// symlink named `notes.txt` passes every extension filter in this crate and
+/// then reads whatever it points at. Every agent funnels through
+/// [`read_document`], so refusing here covers all of them at once.
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+}
+
+/// Resolves `path` and requires it to stay under `root` — a real file the user's
+/// pick actually contains.
+///
+/// The picked root is the trust boundary: paths reach these agents from a native
+/// file picker, so they can legitimately be anywhere on disk, but a *scan* of one
+/// folder must not read out of another. Canonicalizing both sides collapses
+/// `..` segments and resolves any symlinked parent directory, so containment is
+/// decided on real paths rather than on the spelling of the one supplied.
+///
+/// Returns `None` for a symlink, a path that escapes, or anything unresolvable.
+pub fn contained(root: &Path, path: &Path) -> Option<PathBuf> {
+    if !is_regular_file(path) {
+        return None;
+    }
+    let root = root.canonicalize().ok()?;
+    let real = path.canonicalize().ok()?;
+    real.starts_with(&root).then_some(real)
+}
+
 /// Reads a document as plain text. PDFs are extracted; everything else is read
 /// as UTF-8, lossily, so a stray byte in a source file can't fail the run.
+///
+/// Refuses anything that is not a regular file — see [`is_regular_file`].
 pub fn read_document(path: &Path) -> Result<String, String> {
+    if !is_regular_file(path) {
+        return Err("not a readable file".into());
+    }
     let is_pdf = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
@@ -123,6 +158,36 @@ mod tests {
         let text = format!("{} end. {}", "a".repeat(30), "b".repeat(60));
         let chunks = chunk(&text, 40);
         assert!(chunks[0].ends_with("end."), "got {:?}", chunks[0]);
+    }
+
+    /// The escape QA demonstrated: a symlink named like an ordinary document,
+    /// sitting inside a folder the user legitimately picked, whose target sits
+    /// outside it. Both guards must reject it — the read on its own, and the
+    /// containment check the directory scans use.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_into_a_picked_folder_is_refused() {
+        let base = std::env::temp_dir().join(format!("anchor-files-{}", std::process::id()));
+        let picked = base.join("picked");
+        std::fs::create_dir_all(&picked).unwrap();
+        let secret = base.join("secret.txt");
+        std::fs::write(&secret, "DECOY").unwrap();
+        let real = picked.join("notes.txt");
+        std::fs::write(&real, "notes").unwrap();
+        let link = picked.join("linked.txt");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+
+        // The link resolves to a readable file, so only the symlink check catches it.
+        assert!(read_document(&link).is_err());
+        assert!(contained(&picked, &link).is_none());
+        // A `..` traversal has no root to escape from either.
+        assert!(contained(&picked, &picked.join("../secret.txt")).is_none());
+        // The ordinary file in the same folder still works.
+        assert!(read_document(&real).is_ok());
+        assert!(contained(&picked, &real).is_some());
+
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

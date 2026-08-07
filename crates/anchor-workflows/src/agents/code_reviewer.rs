@@ -15,7 +15,7 @@ use anchor_hub::{GenerateRequest, Registry};
 use serde::Deserialize;
 
 use super::{nonempty, AgentEvent};
-use crate::tools::{chunk, read_document};
+use crate::tools::{chunk, contained, read_document};
 
 /// How many files of a codebase get read in full-ish. Five 3k excerpts plus the
 /// tree fits `REVIEW_NUM_CTX` with room for the answer.
@@ -98,8 +98,19 @@ fn resolve(cfg: &CodeReviewerConfig) -> Result<Target, String> {
         (None, Some(diff)) => Ok(Target::Diff(diff.to_string())),
         (Some(path), None) => {
             let path = PathBuf::from(path);
-            let meta = std::fs::metadata(&path).map_err(|e| format!("Can't read {}: {e}", path.display()))?;
-            Ok(if meta.is_dir() { Target::Codebase(path) } else { Target::File(path) })
+            // `symlink_metadata`, not `metadata`: a link is never a review target,
+            // whatever it resolves to.
+            let meta = std::fs::symlink_metadata(&path)
+                .map_err(|e| format!("Can't read {}: {e}", path.display()))?;
+            if meta.is_dir() {
+                return Ok(Target::Codebase(path));
+            }
+            // A directly-named file gets the same extension gate as a walked one,
+            // so an extensionless secret can't be reviewed just by naming it.
+            if !meta.is_file() || !is_code(&path) {
+                return Err(format!("{} isn't a source file Anchor can review.", path.display()));
+            }
+            Ok(Target::File(path))
         }
     }
 }
@@ -135,7 +146,11 @@ fn score(rel: &str, bytes: usize) -> i32 {
 }
 
 /// Walks a project for source files, best-first. Skips dependency and build
-/// directories, dotfiles, and anything past the depth or file cap.
+/// directories, dotfiles, symlinks, anything resolving outside `root`, and
+/// anything past the depth or file cap.
+///
+/// The containment check is what stops a symlink sitting in an ordinary source
+/// tree from pulling a file the user never pointed at into the review.
 fn walk(root: &Path) -> Vec<SourceFile> {
     let mut out: Vec<SourceFile> = Vec::new();
     let mut stack = vec![(root.to_path_buf(), 0usize)];
@@ -157,6 +172,11 @@ fn walk(root: &Path) -> Vec<SourceFile> {
                 continue;
             }
             if !is_code(&path) || out.len() >= WALK_MAX_FILES {
+                continue;
+            }
+            // Gate only — `rel` and the read both keep the walked path, which on
+            // macOS is routinely a prefix of the canonical one (/tmp → /private/tmp).
+            if contained(root, &path).is_none() {
                 continue;
             }
             let bytes = entry.metadata().map(|m| m.len() as usize).unwrap_or(0);

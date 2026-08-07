@@ -2,18 +2,13 @@ import { useMemo, useState } from "react";
 import type { LibraryModel } from "../types";
 import { useModels } from "../lib/useModels";
 import { formatBytes } from "../lib/format";
-import { getLastUsed } from "../lib/lastUsed";
-import { HOUSEKEEPING_RULES, STORAGE_LOCATIONS, STORAGE_SUMMARY } from "../lib/fixtures";
+import { getLastUsed, isStale, STALE_DAYS } from "../lib/lastUsed";
 import { PageHeader, GhostButton } from "./PageHeader";
 import { StatCard } from "./ui/StatCard";
 import { SegmentedBar, type Segment } from "./ui/SegmentedBar";
-import { Toggle } from "./ui/Toggle";
+import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { CheckIcon } from "./icons";
-
-// ponytail: 30 days of no use marks a model stale. Bump if users hoard rarely-run models.
-const STALE_DAYS = 30;
-const STALE_MS = STALE_DAYS * 86_400_000;
 
 /** Palette for the disk map, walked in order per model family. */
 const FAMILY_COLORS = [
@@ -40,32 +35,27 @@ function formatLastUsed(ms: number | null): string {
  * Storage: what the installed weights cost on disk, where they live, and what
  * can be reclaimed.
  *
- * The weights table, disk map and reclaim total are real (`useModels` +
- * `lastUsed`). Dedupe savings, symlink integrity, locations and housekeeping
- * rules come from `lib/fixtures` — nothing in `anchor-hub` scans blobs yet.
+ * Everything shown is real (`useModels` + `lastUsed`). Dedupe savings, symlink
+ * integrity, on-disk locations and housekeeping rules need a blob scanner in
+ * `anchor-hub` that doesn't exist yet, so those sections say so rather than
+ * showing a figure nothing computed.
  */
 export function StoragePage() {
   const { models, error, removeModel } = useModels();
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [pendingRemove, setPendingRemove] = useState<LibraryModel[] | null>(null);
-  const [rules, setRules] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(HOUSEKEEPING_RULES.map((r) => [r.id, r.on])),
-  );
 
   const rows = useMemo(
     () =>
       models
         .filter((m) => m.status === "installed")
-        .map((m) => ({ model: m, lastUsed: getLastUsed(m.id) }))
+        .map((m) => ({ model: m, lastUsed: getLastUsed(m.id), stale: isStale(m.id, m.modified_at) }))
         .sort((a, b) => (b.model.size_bytes ?? 0) - (a.model.size_bytes ?? 0)),
     [models],
   );
 
-  const now = Date.now();
-  const isStale = (lastUsed: number | null) => lastUsed == null || now - lastUsed > STALE_MS;
-
   const totalBytes = rows.reduce((sum, r) => sum + (r.model.size_bytes ?? 0), 0);
-  const staleRows = rows.filter((r) => isStale(r.lastUsed));
+  const staleRows = rows.filter((r) => r.stale);
   const reclaimBytes = staleRows.reduce((sum, r) => sum + (r.model.size_bytes ?? 0), 0);
 
   // Disk map: one segment per model family, largest first.
@@ -118,28 +108,21 @@ export function StoragePage() {
         )}
       </section>
 
-      <div className="grid grid-cols-3 gap-2.5">
+      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5">
         <StatCard
           label="Reclaimable"
           value={formatBytes(reclaimBytes)}
           tone={reclaimBytes > 0 ? "warn" : "default"}
           sub={
             staleRows.length > 0
-              ? `${staleRows.length} models unused for ${STALE_DAYS}+ days`
+              ? `${staleRows.length} ${staleRows.length === 1 ? "model" : "models"} unused for ${STALE_DAYS}+ days`
               : "Everything's been used recently."
           }
         />
-        <StatCard
-          label="Saved by dedupe"
-          value={STORAGE_SUMMARY.savedByDedupe}
-          sub={<SampleNote>{STORAGE_SUMMARY.savedDetail}</SampleNote>}
-        />
-        <StatCard
-          label="Integrity"
-          value={STORAGE_SUMMARY.integrity}
-          tone="warn"
-          sub={<SampleNote>{STORAGE_SUMMARY.integrityDetail}</SampleNote>}
-        />
+        <NotBuiltYet>
+          Dedupe savings and symlink integrity need a blob scanner in <code className="data">anchor-hub</code>.
+          Nothing computes blob digests or shared-blob state yet, so there's no honest number to show here.
+        </NotBuiltYet>
       </div>
 
       <section className="card overflow-hidden">
@@ -185,9 +168,8 @@ export function StoragePage() {
         {rows.length === 0 ? (
           <p className="px-4 py-6 text-sm text-fg-subtle">No models installed.</p>
         ) : (
-          rows.map(({ model, lastUsed }) => {
+          rows.map(({ model, lastUsed, stale }) => {
             const checked = !!selected[model.id];
-            const stale = isStale(lastUsed);
             return (
               <div
                 key={model.id}
@@ -233,35 +215,18 @@ export function StoragePage() {
       <div className="grid grid-cols-2 gap-2.5">
         <section className="card flex flex-col gap-3 p-4">
           <span className="label-caps">Locations</span>
-          <div className="flex flex-col">
-            {STORAGE_LOCATIONS.map((l) => (
-              <div key={l.path} className="flex flex-col gap-1.5 border-b border-hair py-2.5 last:border-b-0">
-                <span className="flex items-center gap-2">
-                  <span className="text-[12.5px] font-medium text-fg">{l.label}</span>
-                  <span className="data ml-auto text-[11px] text-fg-muted">{l.size}</span>
-                </span>
-                <span className="data break-all text-[10.5px] text-fg-subtle">{l.path}</span>
-              </div>
-            ))}
-          </div>
-          <SampleNote>Sizes and dedupe state await a blob scanner.</SampleNote>
+          <NotBuiltYet>
+            Where each blob actually lives, and which are shared between the Ollama and Hugging Face caches.
+            Needs the same scanner — Anchor doesn't walk the stores yet.
+          </NotBuiltYet>
         </section>
 
         <section className="card flex flex-col gap-3 p-4">
           <span className="label-caps">Housekeeping</span>
-          {HOUSEKEEPING_RULES.map((r) => (
-            <div key={r.id} className="flex items-center gap-3 border-b border-hair pb-3 last:border-b-0 last:pb-0">
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-[12.5px] text-fg">{r.label}</span>
-                <span className="text-[11px] leading-[1.45] text-fg-subtle">{r.detail}</span>
-              </span>
-              <Toggle
-                checked={rules[r.id]}
-                onChange={(next) => setRules((prev) => ({ ...prev, [r.id]: next }))}
-                label={r.label}
-              />
-            </div>
-          ))}
+          <NotBuiltYet>
+            Auto-dedupe on pull, stale flagging, and refusing a load that would push you into swap. Removing a
+            model above is the only reclaim Anchor performs today.
+          </NotBuiltYet>
         </section>
       </div>
 
@@ -284,17 +249,5 @@ export function StoragePage() {
         onCancel={() => setPendingRemove(null)}
       />
     </>
-  );
-}
-
-/** Marks a figure that comes from `lib/fixtures` rather than the real system. */
-function SampleNote({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="flex items-center gap-1.5 text-[11px] text-fg-subtle">
-      <span className="data rounded-full border border-hair px-1.5 text-[9px] uppercase tracking-[0.06em]">
-        sample
-      </span>
-      {children}
-    </span>
   );
 }

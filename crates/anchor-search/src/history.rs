@@ -67,7 +67,17 @@ impl QueryHistory {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(&records)?;
-        std::fs::write(&self.path, json)?;
+        // Write-then-rename. This is read-modify-write with no lock, so
+        // concurrent writers still lose entries — but rename is atomic, so a
+        // reader (or a crash) never sees a half-written file, and the loser drops
+        // its own record rather than corrupting everyone's. Losing an entry from
+        // a best-effort log is acceptable; a truncated file is not.
+        //
+        // ponytail: same-directory temp so the rename stays within one
+        // filesystem. Add a lock file if history ever becomes load-bearing.
+        let tmp = self.path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }
 }

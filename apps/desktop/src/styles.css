@@ -1,6 +1,7 @@
 /* Instrument Sans (prose/UI) + JetBrains Mono (data/numerals) — the design-system
-   typefaces. Must precede the Tailwind import so they stay ahead of all emitted rules. */
-@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+   typefaces, bundled locally. Must precede the Tailwind import so they stay ahead
+   of all emitted rules. */
+@import "./fonts.css";
 @import "tailwindcss";
 
 /*

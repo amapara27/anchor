@@ -7,7 +7,7 @@ import { useServerStatus } from "../lib/useServerStatus";
 import { useTheme, type ThemePref } from "../lib/useTheme";
 import { formatBytes, formatContext } from "../lib/format";
 import { PageHeader, GhostButton } from "./PageHeader";
-import { Toggle } from "./ui/Toggle";
+import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
@@ -23,7 +23,6 @@ const SECTIONS: { key: Section; label: string }[] = [
 ];
 
 const VERSION = "v0.1.0";
-const PREFS_KEY = "anchor.prefs";
 
 const SHORTCUTS = [
   { label: "Command palette", keys: "⌘K" },
@@ -34,39 +33,29 @@ const SHORTCUTS = [
   { label: "Toggle appearance", keys: "titlebar" },
 ];
 
-/** Local-only preference rows. ponytail: localStorage until a settings table exists. */
-const APPEARANCE_ROWS = [
-  { id: "compact", label: "Compact density", detail: "Tighter rows in tables and the model library.", on: false },
-  {
-    id: "tokrate",
-    label: "Show tokens per second in chat",
-    detail: "Live throughput readout under each answer.",
-    on: true,
-  },
-];
-
-const PRIVACY_ROWS = [
-  { id: "publish", label: "Publish benchmark runs", detail: "Chip, memory, model, quant and timings only.", on: false },
-  {
-    id: "note",
-    label: "Include a written note with runs",
-    detail: "Your review text is attached to published results.",
-    on: false,
-  },
-  { id: "anon", label: "Anonymous mode", detail: "Publish as a chip class with no handle attached.", on: false },
-];
-
-function readPrefs(): Record<string, boolean> {
-  try {
-    return JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Record<string, boolean>;
-  } catch {
-    return {};
-  }
-}
+/**
+ * Where the user was last looking, kept outside the component.
+ *
+ * `App` renders each page under `<main key={tab}>`, so a tab switch unmounts
+ * this whole subtree. Reset on every remount, "edit a preset → switch to Chat to
+ * test it → come back" silently landed on Appearance and, worse, on the
+ * **Default** preset — the one every conversation without an explicit preset
+ * resolves through. Edits meant for one preset went into Default unnoticed.
+ *
+ * ponytail: two module-scope scalars rather than a context. Nothing else needs
+ * to read them, and lifting them into `App` would thread props through for a
+ * remount detail that belongs to this page.
+ */
+let lastSection: Section = "appearance";
+let lastEditingId = DEFAULT_PRESET_ID;
 
 /** Settings: appearance, inference defaults, host hardware, and privacy. */
 export function SettingsPage() {
-  const [section, setSection] = useState<Section>("appearance");
+  const [section, setSectionState] = useState<Section>(() => lastSection);
+  const setSection = (next: Section) => {
+    lastSection = next;
+    setSectionState(next);
+  };
 
   return (
     <>
@@ -136,35 +125,6 @@ function SectionCard({ title, blurb, children }: { title: string; blurb?: string
   );
 }
 
-/** Toggle rows sharing one localStorage-backed preference map. */
-function PrefRows({ rows }: { rows: typeof APPEARANCE_ROWS }) {
-  const [prefs, setPrefs] = useState<Record<string, boolean>>(readPrefs);
-
-  const set = (id: string, next: boolean) => {
-    const updated = { ...prefs, [id]: next };
-    setPrefs(updated);
-    try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify(updated));
-    } catch {
-      // Storage unavailable — the choice stays in-memory for this session.
-    }
-  };
-
-  return (
-    <>
-      {rows.map((r) => (
-        <div key={r.id} className="flex items-center gap-3 border-t border-hair pt-3">
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="text-[13px] text-fg">{r.label}</span>
-            <span className="text-[11.5px] leading-[1.45] text-fg-subtle">{r.detail}</span>
-          </span>
-          <Toggle checked={prefs[r.id] ?? r.on} onChange={(next) => set(r.id, next)} label={r.label} />
-        </div>
-      ))}
-    </>
-  );
-}
-
 function AppearancePanel() {
   const { pref, setPref } = useTheme();
 
@@ -224,7 +184,10 @@ function AppearancePanel() {
           );
         })}
       </div>
-      <PrefRows rows={APPEARANCE_ROWS} />
+      <NotBuiltYet>
+        Compact density and a live tokens-per-second readout in chat are on the list. Only the theme is wired up
+        today.
+      </NotBuiltYet>
     </SectionCard>
   );
 }
@@ -269,7 +232,11 @@ const UNSET = { value: "", label: "Model default" };
 function InferencePanel() {
   const { presets, loading, save, create, remove } = usePresets();
   const { models } = useModels();
-  const [editingId, setEditingId] = useState(DEFAULT_PRESET_ID);
+  const [editingId, setEditingIdState] = useState(() => lastEditingId);
+  const setEditingId = (next: string) => {
+    lastEditingId = next;
+    setEditingIdState(next);
+  };
   const [pendingDelete, setPendingDelete] = useState<Preset | null>(null);
 
   // A deleted preset leaves the editor pointing at nothing — fall back.
@@ -301,9 +268,9 @@ function InferencePanel() {
           className="flex-1"
           value={preset.id}
           onChange={setEditingId}
-          options={presets.map((p) => ({ value: p.id, label: p.name }))}
+          options={presets.map((p) => ({ value: p.id, label: p.name.trim() || "Untitled preset" }))}
         />
-        <GhostButton className="h-8" onClick={() => setEditingId(create("New preset").id)}>
+        <GhostButton className="h-8" onClick={() => setEditingId(create(nextPresetName(presets)).id)}>
           New
         </GhostButton>
         <GhostButton
@@ -332,7 +299,7 @@ function InferencePanel() {
         <span className="label-caps">System prompt</span>
         <textarea
           value={preset.system ?? ""}
-          onChange={(e) => edit({ system: e.target.value.trim() ? e.target.value : null })}
+          onChange={(e) => edit({ system: e.target.value === "" ? null : e.target.value })}
           rows={3}
           placeholder="e.g. You are a terse assistant. Answer in at most three sentences."
           className="scrollbar-slim resize-y rounded-[9px] border border-hair bg-surface px-3 py-2 text-[12.5px] leading-[1.6] text-fg placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
@@ -365,7 +332,17 @@ function InferencePanel() {
           >
             –
           </Stepper>
-          <Meter fraction={(temp ?? 0) / TEMP_MAX} height={5} className="flex-1" />
+          {/* Unset is drawn at the model's own default, muted — not at zero.
+              An empty bar for both made "unset" and "0.0" look identical, which
+              are opposites (the model decides vs. fully deterministic), and made
+              the – button appear to *raise* the value: stepping down from unset
+              starts at 0.7 and lands on 0.65, so the bar jumped 0% → 43%. */}
+          <Meter
+            fraction={(temp ?? TEMP_START) / TEMP_MAX}
+            color={temp == null ? "var(--hair2)" : "var(--accent)"}
+            height={5}
+            className="flex-1"
+          />
           <Stepper
             label="Increase temperature"
             onClick={() => edit({ temperature: stepTemp(temp, 0.05) })}
@@ -437,6 +414,21 @@ function InferencePanel() {
 function stepTemp(current: number | null, delta: number): number {
   const from = current ?? TEMP_START;
   return Math.min(TEMP_MAX, Math.max(0, +(from + delta).toFixed(2)));
+}
+
+/**
+ * A name no existing preset already has, so the "Editing" select stays readable.
+ *
+ * Every new preset used to be called literally "New preset", which made N of
+ * them indistinguishable in a list that labels by name.
+ */
+function nextPresetName(presets: Preset[]): string {
+  const taken = new Set(presets.map((p) => p.name));
+  if (!taken.has("New preset")) return "New preset";
+  for (let n = 2; ; n++) {
+    const name = `New preset ${n}`;
+    if (!taken.has(name)) return name;
+  }
 }
 
 function Stepper({ children, onClick, label }: { children: React.ReactNode; onClick: () => void; label: string }) {
@@ -522,7 +514,7 @@ function HardwarePanel() {
           </span>
           <span className="data text-[11.5px] text-fg-muted">
             {reachable
-              ? `127.0.0.1:11434${status?.version ? ` · v${status.version}` : ""} · ${status?.managed ? "started by Anchor" : "started outside Anchor"}`
+              ? `${status?.host ?? ""}${status?.version ? ` · v${status.version}` : ""} · ${status?.managed ? "started by Anchor" : "started outside Anchor"}`
               : "Not reachable. Anchor starts it on demand when you use a model."}
           </span>
         </div>
@@ -531,6 +523,20 @@ function HardwarePanel() {
           Refresh
         </GhostButton>
       </div>
+
+      {status && !status.local && (
+        <div className="flex items-start gap-3 rounded-[var(--radius-card)] border border-warn/40 bg-inset px-3.5 py-3">
+          <span className="mt-1 size-[5px] shrink-0 rounded-full bg-warn" aria-hidden />
+          <span className="flex flex-col gap-0.5">
+            <span className="text-[13px] font-semibold text-warn">Inference is not running on this Mac</span>
+            <span className="text-[11.5px] leading-[1.5] text-fg-muted">
+              <code className="data">OLLAMA_HOST</code> points at{" "}
+              <code className="data">{status.host}</code>, so every prompt and response is sent there. Unset it
+              to go back to local-only inference.
+            </span>
+          </span>
+        </div>
+      )}
     </SectionCard>
   );
 }
@@ -568,11 +574,11 @@ function PrivacyPanel() {
           </span>
         </span>
       </div>
-      <PrefRows rows={PRIVACY_ROWS} />
-      <p className="border-t border-hair pt-3 text-[11.5px] leading-[1.5] text-fg-subtle">
-        Publishing is not wired up yet — these preferences are stored locally and take effect once a results
-        server exists.
-      </p>
+      <NotBuiltYet>
+        Publishing controls — what a shared run includes, and whether it carries a handle — arrive with the
+        results server. Nothing is published today, with or without a preference, because there is nowhere to
+        publish to.
+      </NotBuiltYet>
     </SectionCard>
   );
 }

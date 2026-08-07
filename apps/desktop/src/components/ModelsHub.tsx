@@ -3,7 +3,7 @@ import type { ModelsTab } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
-import { getLastUsed } from "../lib/lastUsed";
+import { isStale } from "../lib/lastUsed";
 import { formatBytes, formatContext, formatParams, formatTokSec } from "../lib/format";
 import { DEFAULT_CONTEXT } from "../lib/fit";
 import { hardwareHint } from "../lib/hint";
@@ -21,8 +21,6 @@ interface ModelsHubProps {
   openModel: { id: string; nonce: number } | null;
   initialTab?: ModelsTab;
 }
-
-const STALE_MS = 30 * 86_400_000;
 
 const FIT_TONE: Record<string, { color: string; label: string }> = {
   ok: { color: "var(--ok)", label: "fits" },
@@ -82,12 +80,11 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
         { memory_bytes: totalMemoryBytes, chip },
       );
       const { fit, tps } = hint;
-      const lastUsed = getLastUsed(m.id);
       return {
         model: m,
         fit,
         tps,
-        stale: lastUsed == null || now - lastUsed > STALE_MS,
+        stale: isStale(m.id, m.modified_at, now),
         // Share of memory the model needs — the width of its fit meter.
         load: fit.breakdown.availableGB > 0 ? fit.breakdown.totalNeededGB / fit.breakdown.availableGB : 0,
       };

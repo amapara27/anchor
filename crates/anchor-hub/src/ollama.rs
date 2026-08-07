@@ -492,7 +492,18 @@ where
 }
 
 /// Pulls a model, invoking `on_progress` for each streamed NDJSON event.
-pub async fn pull<F>(host: &str, id: &str, mut on_progress: F) -> Result<()>
+/// Streams a model pull, reporting progress and stopping early if `cancel` is set.
+///
+/// Cancelling drops the response mid-stream, which closes the connection and
+/// makes Ollama abandon the pull — the only abort it offers, since `/api/pull`
+/// has no cancel endpoint. Without this, "Cancel" only stopped the UI watching:
+/// the download ran to completion and the model landed on disk anyway.
+pub async fn pull<F>(
+    host: &str,
+    id: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut on_progress: F,
+) -> Result<()>
 where
     F: FnMut(PullProgress) + Send,
 {
@@ -511,6 +522,11 @@ where
         .error_for_status()?;
 
     for_each_ndjson_line(resp, MAX_PULL_LINE_BYTES, |line| {
+        // Checked per line rather than per byte: Ollama emits progress
+        // continuously, so this lands within a few hundred milliseconds.
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Cancelled);
+        }
         if let Ok(event) = serde_json::from_slice::<PullProgress>(line) {
             // Ollama reports failures as a `{"error": ...}` frame on an
             // HTTP-200 stream, so surface it rather than report success.

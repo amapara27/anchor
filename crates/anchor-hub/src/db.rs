@@ -704,8 +704,12 @@ pub fn append_message(conn: &Connection, conversation_id: &str, m: &StoredMessag
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![m.id, conversation_id, m.role, m.content, m.thinking, m.stats_json, m.created_ms],
     )?;
+    // MAX, not assignment: `updated_ms` orders the conversation rail, and a
+    // message timestamped behind the conversation would move it backwards.
+    // `run_chat` always passes `now_ms()`, so this is one clock skew away rather
+    // than reachable today.
     conn.execute(
-        "UPDATE conversations SET updated_ms = ?2 WHERE id = ?1",
+        "UPDATE conversations SET updated_ms = MAX(updated_ms, ?2) WHERE id = ?1",
         rusqlite::params![conversation_id, m.created_ms],
     )?;
     Ok(())
@@ -861,13 +865,20 @@ pub fn preset_for_conversation(conn: &Connection, conversation_id: &str) -> Resu
 ///
 /// Wholesale replace for the same reason [`replace_all`] does it: the cache is a
 /// mirror, and a model pulled from the library upstream should vanish here too.
-/// Callers must not call this with an empty listing — see
-/// [`Registry::library`](crate::Registry::library).
+/// An empty listing is a no-op rather than a wipe. A scrape that came back empty
+/// means the page changed shape, not that Ollama published nothing — replacing a
+/// good cache with it would zero the table *and* reset `fetched_ms`, so the UI
+/// would show an empty library and immediately re-scrape. The caller
+/// ([`Registry::library`](crate::Registry::library)) also guards this; the check
+/// belongs here so a future caller can't reintroduce the footgun.
 pub fn replace_library(
     conn: &mut Connection,
     entries: &[crate::library::LibraryEntry],
     fetched_ms: i64,
 ) -> Result<()> {
+    if entries.is_empty() {
+        return Ok(());
+    }
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM library_models", [])?;
     {

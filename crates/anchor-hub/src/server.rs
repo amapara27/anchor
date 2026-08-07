@@ -111,11 +111,65 @@ pub async fn ensure_running(host: &str) -> EnsureOutcome {
     if wait_ready(host, STARTUP_TIMEOUT).await {
         EnsureOutcome::Started(child)
     } else {
-        // Don't leak the process we started if it never became healthy.
+        // Don't leak the process we started if it never became healthy. `wait`
+        // reaps it — `kill` alone leaves a zombie for the session's lifetime.
         let mut child = child;
         let _ = child.kill();
+        let _ = child.wait();
         EnsureOutcome::FailedToStart("`ollama serve` did not become ready in time".into())
     }
+}
+
+/// File recording the pid of the `ollama serve` Anchor owns.
+const PID_FILE: &str = "ollama.pid";
+
+/// Records the pid of a server Anchor started, so a later launch can clean it up.
+///
+/// Teardown lives in the app's exit handler, which a panic (the release profile
+/// is `panic = "abort"`) or a force-quit never reaches — leaving a server running
+/// that Anchor believes it doesn't own, and will refuse to stop. Best-effort: a
+/// failed write only costs the reap.
+pub fn record_pid(dir: &std::path::Path, pid: u32) {
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(PID_FILE), pid.to_string());
+}
+
+/// Forgets the recorded pid after a clean shutdown.
+pub fn clear_pid(dir: &std::path::Path) {
+    let _ = std::fs::remove_file(dir.join(PID_FILE));
+}
+
+/// Kills a server left behind by a previous run, if one is still alive.
+///
+/// Verifies the pid is still an `ollama` process before signalling it: pids are
+/// recycled, and killing whatever inherited the number would be far worse than
+/// leaving a stray server. A missing, unparseable, dead or reused pid is a silent
+/// no-op, which is also every case on a normal launch.
+pub fn reap_orphan(dir: &std::path::Path) {
+    let path = dir.join(PID_FILE);
+    let Ok(raw) = std::fs::read_to_string(&path) else { return };
+    let _ = std::fs::remove_file(&path);
+    let Ok(pid) = raw.trim().parse::<u32>() else { return };
+    if !is_ollama_process(pid) {
+        return;
+    }
+    let _ = Command::new("/bin/kill").arg(pid.to_string()).status();
+}
+
+/// Whether `pid` currently belongs to an `ollama` process.
+///
+/// Fixed argv with a numeric argument — nothing here is caller-controlled text.
+fn is_ollama_process(pid: u32) -> bool {
+    Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .is_ok_and(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name == "ollama")
+        })
 }
 
 #[cfg(test)]

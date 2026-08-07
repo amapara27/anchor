@@ -7,6 +7,7 @@
 //! and adapt errors to strings for the IPC boundary.
 
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model};
@@ -37,11 +38,15 @@ mod tray;
 /// - `compare_lock` serializes [`compare_models`] runs so two side-by-side
 ///   comparisons can't load models concurrently and exhaust RAM — the whole
 ///   point of the feature is that only one model is resident at a time.
+/// - `pulls` maps a model id to the flag its in-flight download watches, so
+///   [`cancel_download`] can stop a pull that [`download_model`] is still
+///   awaiting. Entries are removed by the pull that owns them.
 #[derive(Default)]
 struct ServerState {
     child: Mutex<Option<Child>>,
     start_lock: tokio::sync::Mutex<()>,
     compare_lock: tokio::sync::Mutex<()>,
+    pulls: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
 }
 
 /// Holds the semantic-search index built at launch.
@@ -83,10 +88,16 @@ async fn ensure_server(app: &AppHandle) -> Result<(), String> {
     match server::ensure_running(&host).await {
         EnsureOutcome::AlreadyRunning => Ok(()),
         EnsureOutcome::Started(child) => {
+            // Recorded so a crash or force-quit — neither of which reaches the
+            // exit handler — doesn't strand a server the next launch won't own.
+            if let Ok(dir) = app.path().app_data_dir() {
+                server::record_pid(&dir, child.id());
+            }
             // Replace any prior handle; killing a stale one avoids orphans.
             let mut guard = state.child.lock().unwrap();
             if let Some(mut old) = guard.replace(child) {
                 let _ = old.kill();
+                let _ = old.wait(); // reap it; `kill` alone leaves a zombie
             }
             Ok(())
         }
@@ -227,6 +238,10 @@ fn recent_searches(
 }
 
 /// Pulls a model via Ollama, streaming progress events back over `on_event`.
+///
+/// Registers a cancel flag under `id` for the duration, so [`cancel_download`]
+/// can stop the pull server-side. Returns `Err("cancelled")`, which the frontend
+/// treats as a normal terminal state rather than a failure.
 #[tauri::command]
 async fn download_model(
     app: AppHandle,
@@ -235,13 +250,35 @@ async fn download_model(
 ) -> Result<(), String> {
     ensure_server(&app).await?;
     let registry = registry(&app)?;
-    registry
-        .pull(&id, |progress| {
+
+    let cancel = std::sync::Arc::new(AtomicBool::new(false));
+    let state = app.state::<ServerState>();
+    state.pulls.lock().unwrap().insert(id.clone(), cancel.clone());
+
+    let result = registry
+        .pull(&id, &cancel, |progress| {
             // Best-effort: a dropped channel (UI navigated away) shouldn't error.
             let _ = on_event.send(progress);
         })
-        .await
-        .map_err(|e| e.to_string())
+        .await;
+
+    // Owned by this pull, so it goes whichever way the pull ended.
+    state.pulls.lock().unwrap().remove(&id);
+    result.map_err(|e| e.to_string())
+}
+
+/// Stops an in-flight download.
+///
+/// Ollama exposes no cancel endpoint, so this trips the flag the pull's stream
+/// loop checks; dropping the response closes the connection and Ollama abandons
+/// the transfer. Nothing already written to the blob store is removed — a later
+/// pull of the same model resumes from it, which is Ollama's own behaviour.
+/// Unknown or already-finished ids are a no-op.
+#[tauri::command]
+fn cancel_download(app: AppHandle, id: String) {
+    if let Some(flag) = app.state::<ServerState>().pulls.lock().unwrap().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Compares two models against one prompt, streaming progress, tokens, and final
@@ -564,6 +601,41 @@ async fn check_updates(app: AppHandle) -> Result<Vec<(String, bool)>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Keychain service name every Anchor secret is filed under.
+const KEYCHAIN_SERVICE: &str = "com.anchor.desktop";
+
+/// Reads a secret from the macOS Keychain, or `None` if it was never stored.
+///
+/// API keys used to live in `localStorage`, which is an unencrypted SQLite file
+/// any process running as the user can read and which survives deleting the app.
+/// A Keychain item is scoped to Anchor and removed with it.
+#[tauri::command]
+fn get_secret(key: String) -> Result<Option<String>, String> {
+    match keyring::Entry::new(KEYCHAIN_SERVICE, &key) {
+        Ok(entry) => match entry.get_password() {
+            Ok(v) => Ok(Some(v)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        },
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Stores a secret in the macOS Keychain. An empty value deletes the item.
+#[tauri::command]
+fn set_secret(key: String, value: String) -> Result<(), String> {
+    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &key).map_err(|e| e.to_string())?;
+    if value.is_empty() {
+        // Deleting a key that was never set is the normal "cleared an empty
+        // field" path, not an error.
+        return match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        };
+    }
+    entry.set_password(&value).map_err(|e| e.to_string())
+}
+
 /// Builds a [`Profiler`] backed by `hardware.json` in the app's data directory.
 fn profiler(app: &AppHandle) -> Result<Profiler, String> {
     let dir = app
@@ -604,6 +676,29 @@ struct ServerStatus {
     version: Option<String>,
     /// Anchor started (and owns) this server, vs one that was already running.
     managed: bool,
+    /// Base URL actually in use, from `OLLAMA_HOST` or the loopback default.
+    host: String,
+    /// Whether that host is on this machine. `OLLAMA_HOST` is honoured verbatim,
+    /// so it can point at another machine — which sends every prompt and response
+    /// off this Mac, contradicting the promise the rest of the UI makes. False
+    /// here drives an explicit warning rather than silent remote inference.
+    local: bool,
+}
+
+/// Whether a base URL resolves to this machine.
+///
+/// `0.0.0.0` counts: it is a bind address rather than a destination, and a server
+/// listening on it is still the local one — but it is reachable from the network,
+/// which the Settings warning calls out separately.
+fn is_local_host(host: &str) -> bool {
+    let after_scheme = host.split_once("://").map_or(host, |(_, rest)| rest);
+    let authority = after_scheme.split('/').next().unwrap_or("");
+    // A bracketed IPv6 literal ends at `]`; everything else drops a trailing port.
+    let h = match authority.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+    };
+    matches!(h, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1" | "::")
 }
 
 /// Reports whether Ollama is reachable, its version, and whether Anchor owns it.
@@ -620,7 +715,8 @@ async fn get_server_status(app: AppHandle) -> Result<ServerStatus, String> {
         None
     };
     let managed = app.state::<ServerState>().child.lock().unwrap().is_some();
-    Ok(ServerStatus { reachable, version, managed })
+    let local = is_local_host(&host);
+    Ok(ServerStatus { reachable, version, managed, host, local })
 }
 
 /// How many written community reviews a free install may open per week.
@@ -785,6 +881,11 @@ pub fn run() {
         .manage(ServerState::default())
         .manage(SearchState::default())
         .setup(|app| {
+            // Clean up a server a previous run left behind before anything can
+            // reuse it and conclude Anchor doesn't own it.
+            if let Ok(dir) = app.handle().path().app_data_dir() {
+                server::reap_orphan(&dir);
+            }
             build_semantic_index(app.handle().clone());
             tray::init(app.handle())?;
             Ok(())
@@ -798,6 +899,7 @@ pub fn run() {
             search_models,
             recent_searches,
             download_model,
+            cancel_download,
             compare_models,
             run_research,
             run_chat,
@@ -828,7 +930,9 @@ pub fn run() {
             run_benchmark,
             bench_runs_for_model,
             unlock_review,
-            review_allowance
+            review_allowance,
+            get_secret,
+            set_secret
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -842,8 +946,13 @@ pub fn run() {
                 match child {
                     Some(mut child) => {
                         let _ = child.kill();
+                        let _ = child.wait();
                     }
                     None => unload_all_resident(app),
+                }
+                // Shut down cleanly, so the next launch has nothing to reap.
+                if let Ok(dir) = app.path().app_data_dir() {
+                    server::clear_pid(&dir);
                 }
             }
         });
@@ -862,4 +971,38 @@ fn unload_all_resident(app: &AppHandle) {
             let _ = registry.unload(&model.name).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Exercises the real macOS Keychain, so it is `#[ignore]`d — run it with
+    /// `cargo test -p anchor-desktop -- --ignored keychain` after touching
+    /// `get_secret`/`set_secret` or bumping `keyring`. Writes and deletes one
+    /// item under Anchor's own service name.
+    #[test]
+    #[ignore]
+    fn keychain_round_trips_and_clears_a_secret() {
+        let key = "anchor.selftest".to_string();
+        set_secret(key.clone(), "hunter2".into()).expect("write");
+        assert_eq!(get_secret(key.clone()).expect("read"), Some("hunter2".into()));
+        // Empty value deletes; a second delete is a no-op, not an error.
+        set_secret(key.clone(), String::new()).expect("delete");
+        assert_eq!(get_secret(key.clone()).expect("read after delete"), None);
+        set_secret(key, String::new()).expect("delete of a missing item is fine");
+    }
+
+    #[test]
+    fn only_this_machine_counts_as_a_local_host() {
+        assert!(is_local_host("http://127.0.0.1:11434"));
+        assert!(is_local_host("http://localhost:11434"));
+        assert!(is_local_host("http://[::1]:11434"));
+        // A bind-all listener is still the local server.
+        assert!(is_local_host("http://0.0.0.0:11434"));
+        // Anything naming another machine is not, however it is spelled.
+        assert!(!is_local_host("http://192.168.1.40:11434"));
+        assert!(!is_local_host("https://ollama.example.com"));
+        assert!(!is_local_host("http://127.0.0.1.evil.test:11434"));
+    }
 }

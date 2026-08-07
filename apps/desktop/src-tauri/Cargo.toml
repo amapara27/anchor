@@ -22,6 +22,7 @@ anchor-hub = { workspace = true }
 anchor-search = { workspace = true }
 anchor-system = { workspace = true }
 anchor-workflows = { workspace = true }
+keyring = { version = "4.1.6", default-features = false, features = ["apple-native-keyring-store", "v1"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tauri = { version = "2", features = ["tray-icon"] }

@@ -7,6 +7,7 @@ import type {
   ResearchEvent,
   ResearchPhase,
 } from "../types";
+import { recordUse } from "./lastUsed";
 
 /** The agent id every run from this hook is filed under. */
 const AGENT_ID = "research-assistant";
@@ -122,6 +123,7 @@ export function useResearch() {
   const run = useCallback((config: ResearchConfig) => {
     const myRun = ++runId.current;
     activeModel.current = config.model;
+    recordUse(config.model); // feeds Storage's last-used column and its stale check
     setState({ ...INITIAL, phase: "planning" });
 
     // Run-local record of what gets stored. Kept in the closure rather than in

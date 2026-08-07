@@ -9,9 +9,18 @@ const RECENTS_SHOWN = 6;
 /**
  * Below this top cosine score the results are too weak to present as confident
  * "AI matches"; the UI falls back to a "related models" browse instead.
- * ponytail: a single tuned threshold, not a per-capability curve.
+ *
+ * Calibrated against the real corpus rather than guessed: BGE-small puts even
+ * unrelated pairs around 0.62 here — "translate text between languages", which
+ * this catalog has no model for, scored 0.630/0.628/0.623 on three *embedding*
+ * models — while genuine matches land at 0.72+ ("generate embeddings for a RAG
+ * pipeline" → 0.735 all-minilm). The old 0.35 sat below the noise floor, so
+ * every query read as confident, including the ones with nothing to match.
+ *
+ * ponytail: a single tuned threshold, not a per-capability curve. Re-measure it
+ * if the catalog or the embedding model changes.
  */
-const CONFIDENCE_THRESHOLD = 0.35;
+const CONFIDENCE_THRESHOLD = 0.68;
 
 export type SearchStatus = "idle" | "searching" | "ready" | "error";
 

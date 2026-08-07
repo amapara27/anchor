@@ -75,12 +75,17 @@ pub async fn web_search(
     let status = resp.status();
     let body = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        // Tavily error bodies vary (bad key, quota); surface the raw text.
-        return Err(format!(
-            "Tavily search failed (HTTP {}): {}",
-            status.as_u16(),
-            body.trim()
-        ));
+        // Say what the user can act on, from the status alone. The raw body is a
+        // provider-controlled string that reached user-visible run events, and it
+        // has echoed back request detail including the key.
+        let reason = match status.as_u16() {
+            401 | 403 => "that API key was rejected",
+            429 => "rate limit or quota reached",
+            400 => "Tavily rejected the query",
+            500..=599 => "Tavily is having trouble",
+            _ => "unexpected response",
+        };
+        return Err(format!("Tavily search failed — {reason} (HTTP {}).", status.as_u16()));
     }
     let parsed: TavilyResponse =
         serde_json::from_str(&body).map_err(|e| format!("unexpected Tavily response: {e}"))?;

@@ -456,3 +456,56 @@ fn preset_resolution_falls_back_and_survives_deletion() {
     delete_preset(&conn, DEFAULT_PRESET_ID).unwrap();
     assert_eq!(list_presets(&conn).unwrap().len(), 1);
 }
+
+#[test]
+fn append_message_never_moves_updated_ms_backwards() {
+    let conn = in_memory();
+    let conv = Conversation {
+        id: "c1".to_string(),
+        title: "chat".to_string(),
+        model: "llama3.1:8b".to_string(),
+        preset_id: None,
+        created_ms: 1_000,
+        updated_ms: 2_000,
+    };
+    insert_conversation(&conn, &conv).unwrap();
+
+    let stale = StoredMessage {
+        id: "m1".to_string(),
+        role: "user".to_string(),
+        content: "hi".to_string(),
+        thinking: None,
+        stats_json: None,
+        created_ms: 1_500, // behind the conversation — a skewed clock
+    };
+    append_message(&conn, "c1", &stale).unwrap();
+    assert_eq!(list_conversations(&conn).unwrap()[0].updated_ms, 2_000);
+
+    // A newer message still moves it forward.
+    let fresh = StoredMessage { id: "m2".to_string(), created_ms: 2_500, ..stale };
+    append_message(&conn, "c1", &fresh).unwrap();
+    assert_eq!(list_conversations(&conn).unwrap()[0].updated_ms, 2_500);
+}
+
+#[test]
+fn replace_library_refuses_to_wipe_the_cache_with_an_empty_scrape() {
+    let mut conn = in_memory();
+    let entries = vec![crate::library::LibraryEntry {
+        name: "llama3.1".to_string(),
+        description: "a model".to_string(),
+        capabilities: vec!["tools".to_string()],
+        sizes: vec!["8b".to_string()],
+        pulls: 90_000_000,
+        tag_count: 93,
+        updated: "2 months ago".to_string(),
+    }];
+    replace_library(&mut conn, &entries, 5_000).unwrap();
+    assert_eq!(read_library(&conn).unwrap().0.len(), 1);
+
+    // A scrape that came back empty means the page changed, not that the
+    // library is empty — the good cache and its fetch time both survive.
+    replace_library(&mut conn, &[], 9_000).unwrap();
+    let (rows, fetched) = read_library(&conn).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(fetched, Some(5_000));
+}

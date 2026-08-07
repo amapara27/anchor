@@ -42,3 +42,28 @@ async fn wait_ready_times_out_quickly_when_down() {
     // Should give up close to the timeout, not hang.
     assert!(start.elapsed() < Duration::from_secs(3));
 }
+
+#[test]
+fn reaping_ignores_a_missing_stale_or_recycled_pid() {
+    let dir = std::env::temp_dir().join(format!("anchor-pid-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // No pid file at all — the normal launch.
+    reap_orphan(&dir);
+
+    // A pid that is alive but is not ollama: this test process. Reaping must
+    // leave it alone, which it demonstrably does by continuing to run.
+    record_pid(&dir, std::process::id());
+    reap_orphan(&dir);
+    assert!(!dir.join("ollama.pid").exists(), "a consumed pid file is removed");
+
+    // Garbage and a clean shutdown are both silent no-ops.
+    std::fs::write(dir.join("ollama.pid"), "not-a-pid").unwrap();
+    reap_orphan(&dir);
+    record_pid(&dir, 424242);
+    clear_pid(&dir);
+    reap_orphan(&dir);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

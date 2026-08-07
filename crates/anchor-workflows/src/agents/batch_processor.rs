@@ -13,7 +13,7 @@ use anchor_hub::{GenerateRequest, GenerationStats, Registry};
 use serde::Deserialize;
 
 use super::AgentEvent;
-use crate::tools::{chunk, read_document};
+use crate::tools::{chunk, contained, read_document};
 
 /// Hard cap on files in one run. A 5,000-file folder is a mistake, not a batch.
 const MAX_FILES: usize = 200;
@@ -58,6 +58,11 @@ fn is_document(path: &Path) -> bool {
 /// folder is the documents directly inside it, sorted so rows come out in a
 /// predictable order.
 ///
+/// A folder yields only documents the folder really contains: `contained`
+/// rejects symlinks and anything resolving outside it, so a link dropped into an
+/// ordinary batch folder can't smuggle a file from elsewhere into a CSV row. A
+/// directly-picked file gets the same extension gate as a scanned one.
+///
 /// ponytail: one level deep, not recursive. Nested trees need a walk with a
 /// depth cap — add one (see `code_reviewer::walk`) when someone points at a repo.
 fn collect(paths: &[String]) -> Vec<PathBuf> {
@@ -69,9 +74,10 @@ fn collect(paths: &[String]) -> Vec<PathBuf> {
             entries
                 .flatten()
                 .map(|e| e.path())
-                .filter(|p| p.is_file() && is_document(p))
+                .filter(|p| is_document(p))
+                .filter_map(|p| contained(&path, &p))
                 .collect()
-        } else if path.is_file() {
+        } else if path.is_file() && is_document(&path) {
             vec![path]
         } else {
             continue;

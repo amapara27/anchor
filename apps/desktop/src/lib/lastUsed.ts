@@ -26,3 +26,22 @@ export function recordUse(modelId: string): void {
 export function getLastUsed(modelId: string): number | null {
   return readAll()[modelId] ?? null;
 }
+
+// ponytail: 30 days of no use marks a model stale. Bump if users hoard rarely-run models.
+export const STALE_DAYS = 30;
+const STALE_MS = STALE_DAYS * 86_400_000;
+
+/**
+ * Whether a model has gone unused long enough to be worth reclaiming.
+ *
+ * A model with no recorded use is judged on when it was *installed*, not treated
+ * as stale outright: `recordUse` only started covering every run path recently,
+ * and a model pulled this morning has legitimately never been run. Reporting
+ * those as reclaimable is what put models a user relies on behind a one-click
+ * "Select stale" → delete. With neither timestamp known, nothing is claimed.
+ */
+export function isStale(modelId: string, modifiedAt: string | null, now = Date.now()): boolean {
+  const installed = modifiedAt ? Date.parse(modifiedAt) : NaN;
+  const since = getLastUsed(modelId) ?? (Number.isNaN(installed) ? null : installed);
+  return since != null && now - since > STALE_MS;
+}

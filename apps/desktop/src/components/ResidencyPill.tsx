@@ -45,7 +45,7 @@ export function ResidencyPill() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        title={idle ? "No models loaded in memory" : "Models resident in memory"}
+        title={idle ? "No models loaded in memory" : "Models resident in memory (GPU-resident bytes)"}
         className={[
           "flex h-[26px] items-center gap-1.5 rounded-full border border-hair py-[3px] pl-[7px] pr-2.5",
           "transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
@@ -90,7 +90,7 @@ export function ResidencyPill() {
                   {m.name}
                 </span>
                 <span className="data text-[10.5px] text-fg-subtle">
-                  {m.size != null ? formatBytes(m.size) : "size unknown"}
+                  {m.size != null ? `${formatBytes(m.size)} on GPU` : "size unknown"}
                   {m.context_length != null && ` · ${formatContext(m.context_length)} ctx`}
                 </span>
               </span>
@@ -105,7 +105,8 @@ export function ResidencyPill() {
           ))}
 
           <p className="px-2 pb-1 pt-1.5 text-[10.5px] leading-[1.45] text-fg-subtle">
-            Weights are evicted on their own after a few idle minutes. Unloading frees the memory now.
+            Sizes are what Ollama reports as GPU-resident; a model split across CPU and GPU uses more than
+            this. Weights are evicted on their own after a few idle minutes — unloading frees them now.
           </p>
         </div>
       )}

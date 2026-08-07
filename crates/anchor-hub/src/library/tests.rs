@@ -229,3 +229,16 @@ async fn live_library_and_tags_still_parse() {
     assert_eq!(unique.len(), tags.len(), "duplicate tags parsed");
     eprintln!("parsed {} tags; first: {:?}", tags.len(), tags.first());
 }
+
+#[test]
+fn a_hostile_model_name_stays_one_encoded_path_segment() {
+    // The whole point: traversal can't reach a different endpoint.
+    assert_eq!(
+        tags_url("../../..").as_str(),
+        "https://ollama.com/library/..%2F..%2F../tags"
+    );
+    // Slashes and spaces are encoded rather than restructuring the path.
+    assert_eq!(tags_url("a/b").as_str(), "https://ollama.com/library/a%2Fb/tags");
+    // An ordinary name is untouched.
+    assert_eq!(tags_url("llama3.1").as_str(), "https://ollama.com/library/llama3.1/tags");
+}

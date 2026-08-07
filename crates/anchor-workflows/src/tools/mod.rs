@@ -6,7 +6,7 @@
 
 pub mod files;
 
-pub use files::{chunk, read_document};
+pub use files::{chunk, contained, read_document};
 
 // Web search already lives in `search`, which the Research Assistant uses.
 // Re-exported so agents reach every tool through one module.

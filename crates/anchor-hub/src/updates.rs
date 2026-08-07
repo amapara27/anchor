@@ -164,8 +164,28 @@ async fn fetch_remote_digest(client: &reqwest::Client, path: &str, tag: &str) ->
         .map(str::to_owned)
 }
 
+/// Token servers we will fetch a bearer token from.
+///
+/// The `realm` in an auth challenge is attacker-reachable: a MITM or a
+/// compromised registry response names any host it likes, and we would issue the
+/// GET and then present the returned token to the real registry. No secret is
+/// sent to the realm, so the exposure is an arbitrary outbound request plus token
+/// confusion — cheap enough to close outright.
+const TOKEN_HOSTS: &[&str] = &["auth.docker.io", "ollama.ai", "auth.ollama.ai", "registry.ollama.ai"];
+
+/// Whether a realm URL is one of [`TOKEN_HOSTS`], over https.
+///
+/// Matches on the parsed host rather than a prefix, so neither
+/// `https://auth.docker.io.evil.test/` nor `https://evil.test/?x=auth.docker.io`
+/// passes.
+fn realm_allowed(realm: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(realm) else { return false };
+    url.scheme() == "https" && url.host_str().is_some_and(|h| TOKEN_HOSTS.contains(&h))
+}
+
 /// Parses a `WWW-Authenticate: Bearer realm=...,service=...,scope=...` challenge
-/// and fetches an anonymous token from the realm.
+/// and fetches an anonymous token from the realm, which must be a known token
+/// server — see [`realm_allowed`].
 async fn fetch_token(client: &reqwest::Client, challenge: &str) -> Option<String> {
     let params = challenge.strip_prefix("Bearer ")?;
     let mut realm = None;
@@ -180,8 +200,9 @@ async fn fetch_token(client: &reqwest::Client, challenge: &str) -> Option<String
             _ => {}
         }
     }
+    let realm = realm.filter(|r| realm_allowed(r))?;
     let sep = if query.is_empty() { "" } else { "?" };
-    let token_url = format!("{}{sep}{}", realm?, query.join("&"));
+    let token_url = format!("{realm}{sep}{}", query.join("&"));
 
     #[derive(Deserialize)]
     struct Token {
@@ -240,6 +261,20 @@ mod tests {
             parse_name("registry.ollama.ai/library/phi3:mini"),
             Some(("library/phi3".into(), "mini".into())),
         );
+    }
+
+    #[test]
+    fn only_known_token_servers_are_followed() {
+        assert!(realm_allowed("https://auth.docker.io/token"));
+        assert!(realm_allowed("https://ollama.ai/token"));
+        // A registry-supplied realm naming anything else is refused, including
+        // the lookalikes a prefix match would have let through.
+        assert!(!realm_allowed("https://evil.test/token"));
+        assert!(!realm_allowed("https://auth.docker.io.evil.test/token"));
+        assert!(!realm_allowed("https://evil.test/token?r=auth.docker.io"));
+        // Downgrade to plaintext is not a token server either.
+        assert!(!realm_allowed("http://auth.docker.io/token"));
+        assert!(!realm_allowed("not a url"));
     }
 
     #[test]

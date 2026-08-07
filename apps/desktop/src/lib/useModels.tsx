@@ -25,8 +25,12 @@ function useModelsState() {
   const [annotations, setAnnotations] = useState<Record<string, Annotation>>({});
   const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
 
-  // Models the user canceled tracking for: late-arriving pull events are ignored.
+  // Models the user canceled: late-arriving pull events are ignored.
   const canceled = useRef<Set<string>>(new Set());
+  // Pulls this hook has in flight. A ref, not `downloads`, so `startDownload`
+  // keeps a stable identity — with `downloads` in its dep array it changed on
+  // every progress tick and re-rendered every consumer holding it as a prop.
+  const inFlight = useRef<Set<string>>(new Set());
 
   const load = useCallback(() => {
     setLoading(true);
@@ -83,7 +87,8 @@ function useModelsState() {
    */
   const startDownload = useCallback(
     (id: string) => {
-      if (downloads[id]?.status === "downloading") return; // already running
+      if (inFlight.current.has(id)) return; // already running
+      inFlight.current.add(id);
       canceled.current.delete(id);
       setDownloads((d) => ({
         ...d,
@@ -110,29 +115,36 @@ function useModelsState() {
             if (!cur) return d;
             return { ...d, [id]: { ...cur, progress: 1, status: "done" } };
           });
-          window.setTimeout(() => {
-            clearDownload(id);
-            load();
-          }, 400);
+          window.setTimeout(() => clearDownload(id), 400);
         })
         .catch((e) => {
-          if (canceled.current.has(id)) return;
+          // A cancel resolves here as `Err("cancelled")` — a normal terminal
+          // state, not a failure to report.
+          if (canceled.current.has(id) || String(e).includes("cancelled")) return;
           setDownloads((d) => {
             const cur = d[id];
             if (!cur) return d;
             return { ...d, [id]: { ...cur, status: "error", error: String(e) } };
           });
+        })
+        .finally(() => {
+          inFlight.current.delete(id);
+          // Always re-list, whatever the outcome. This used to be skipped for a
+          // canceled id, so a pull that finished before the cancel landed left
+          // the model on disk and invisible until some other refresh.
+          load();
         });
     },
-    [downloads, load, clearDownload],
+    [load, clearDownload],
   );
 
   const cancelDownload = useCallback(
     (modelId: string) => {
-      // Best-effort: stop tracking and clear the UI. The Ollama server may keep
-      // pulling in the background — true server-side abort needs a cancel
-      // command/abort handle (TODO).
+      // Stops the pull server-side: `cancel_download` trips the flag the stream
+      // loop checks, which drops the connection and makes Ollama abandon the
+      // transfer. Partial blobs stay, so re-pulling resumes rather than restarts.
       canceled.current.add(modelId);
+      invoke("cancel_download", { id: modelId }).catch(() => {});
       clearDownload(modelId);
     },
     [clearDownload],
