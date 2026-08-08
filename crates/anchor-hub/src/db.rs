@@ -5,13 +5,16 @@
 //! borrowed [`Connection`] so the [`Registry`](crate::Registry) can open a fresh,
 //! short-lived connection per call (keeping its async methods `Send`).
 
-use anchor_core::{ArchMeta, BenchRun, BenchSource, HwIdentity, MatchQuality, Model, ModelStatus};
+use anchor_core::{
+    ArchMeta, BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity, MatchQuality, Model,
+    ModelStatus,
+};
 use rusqlite::Connection;
 
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -252,6 +255,44 @@ const V8: &str = "
     );
 ";
 
+/// Version 9: the Full benchmark suite — a versioned prompt/context matrix
+/// alongside the original single-prompt `anchor-std` suite, plus per-run
+/// telemetry and the raw samples behind each row's medians.
+///
+/// Every `bench_runs` column added here is nullable, so `anchor-std` rows
+/// (which predate all of it) read back with `NULL` in the new columns rather
+/// than needing a backfill.
+const V9: &str = "
+    ALTER TABLE bench_runs ADD COLUMN prompt_id TEXT;
+    ALTER TABLE bench_runs ADD COLUMN prompt_version INTEGER;
+    ALTER TABLE bench_runs ADD COLUMN ttft_ms_median REAL;
+    ALTER TABLE bench_runs ADD COLUMN thermal_label TEXT;
+    ALTER TABLE bench_runs ADD COLUMN notes TEXT;
+    ALTER TABLE bench_runs ADD COLUMN env_start_json TEXT;
+    ALTER TABLE bench_runs ADD COLUMN env_end_json TEXT;
+    CREATE INDEX IF NOT EXISTS bench_runs_cell
+        ON bench_runs (suite_id, prompt_id, num_ctx, hw_key, model_digest);
+    CREATE TABLE IF NOT EXISTS bench_samples (
+        id                      TEXT NOT NULL PRIMARY KEY,
+        bench_run_id            TEXT NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+        repeat_index            INTEGER NOT NULL,
+        is_warmup               BOOLEAN NOT NULL DEFAULT FALSE,
+        prefill_tps             REAL,
+        decode_tps              REAL,
+        ttft_ms                 REAL,
+        prompt_eval_count       INTEGER,
+        prompt_eval_duration_ns INTEGER,
+        eval_count              INTEGER,
+        eval_duration_ns        INTEGER,
+        total_duration_ns       INTEGER,
+        load_duration_ns        INTEGER,
+        wall_start_ms           BIGINT NOT NULL,
+        created_at              BIGINT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS bench_samples_by_run
+        ON bench_samples (bench_run_id, repeat_index);
+";
+
 /// Reads cached architecture metadata for `tag`, if it was recorded against
 /// this exact `digest`.
 ///
@@ -318,6 +359,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 8 {
         tx.execute_batch(V8)?;
+    }
+    if version < 9 {
+        tx.execute_batch(V9)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -391,21 +435,29 @@ pub fn delete_one(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Inserts or updates one benchmark row, keyed on its deterministic id.
+/// Inserts or updates one benchmark row and its raw samples, keyed on the
+/// row's deterministic id.
 ///
-/// Upsert rather than insert: re-running the same benchmark on the same machine
-/// replaces that machine's number instead of accumulating duplicates.
-pub fn upsert_bench(conn: &Connection, r: &BenchRun) -> Result<()> {
-    conn.execute(
+/// Upsert rather than insert: re-running the same benchmark on the same
+/// machine replaces that machine's number instead of accumulating duplicates.
+/// The samples are deleted and reinserted alongside it in the same
+/// transaction — a stale sample from a previous run must never linger under
+/// an id whose aggregate has moved on.
+pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &[BenchSample]) -> Result<()> {
+    let tx = conn.transaction()?;
+    tx.execute(
         "INSERT INTO bench_runs (
             id, hw_key, chip_key, chip, cpu_cores, gpu_cores, memory_gb, os_version,
             model_name, model_digest, quant, num_ctx, kv_cache_type, flash_attn,
             ollama_version, suite_id, suite_version,
             prefill_tps_median, decode_tps_median, load_ms, peak_rss_bytes, repeats,
-            install_id, rating, review, visible, created_at, updated_at, source, synced_at
+            install_id, rating, review, visible, created_at, updated_at, source, synced_at,
+            prompt_id, prompt_version, ttft_ms_median, thermal_label, notes,
+            env_start_json, env_end_json
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30
+            ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
+            ?31, ?32, ?33, ?34, ?35, ?36, ?37
          )
          ON CONFLICT(id) DO UPDATE SET
             prefill_tps_median = excluded.prefill_tps_median,
@@ -417,7 +469,12 @@ pub fn upsert_bench(conn: &Connection, r: &BenchRun) -> Result<()> {
             review             = excluded.review,
             visible            = excluded.visible,
             updated_at         = excluded.updated_at,
-            synced_at          = excluded.synced_at",
+            synced_at          = excluded.synced_at,
+            ttft_ms_median     = excluded.ttft_ms_median,
+            thermal_label      = excluded.thermal_label,
+            notes              = excluded.notes,
+            env_start_json     = excluded.env_start_json,
+            env_end_json       = excluded.env_end_json",
         rusqlite::params![
             r.id,
             r.hw.hw_key,
@@ -449,8 +506,46 @@ pub fn upsert_bench(conn: &Connection, r: &BenchRun) -> Result<()> {
             r.updated_at,
             bench_source_to_str(r.source),
             r.synced_at,
+            r.prompt_id,
+            r.prompt_version,
+            r.ttft_ms_median,
+            r.thermal_label,
+            r.notes,
+            env_to_json(r.env_start.as_ref()),
+            env_to_json(r.env_end.as_ref()),
         ],
     )?;
+
+    tx.execute("DELETE FROM bench_samples WHERE bench_run_id = ?1", [&r.id])?;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO bench_samples (
+                id, bench_run_id, repeat_index, is_warmup, prefill_tps, decode_tps, ttft_ms,
+                prompt_eval_count, prompt_eval_duration_ns, eval_count, eval_duration_ns,
+                total_duration_ns, load_duration_ns, wall_start_ms, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        )?;
+        for s in samples {
+            stmt.execute(rusqlite::params![
+                s.id,
+                s.bench_run_id,
+                s.repeat_index,
+                s.is_warmup,
+                s.prefill_tps,
+                s.decode_tps,
+                s.ttft_ms,
+                s.prompt_eval_count,
+                s.prompt_eval_duration_ns,
+                s.eval_count,
+                s.eval_duration_ns,
+                s.total_duration_ns,
+                s.load_duration_ns,
+                s.wall_start_ms,
+                s.created_at,
+            ])?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -459,18 +554,31 @@ const BENCH_COLUMNS: &str = "id, hw_key, chip_key, chip, cpu_cores, gpu_cores, m
      model_name, model_digest, quant, num_ctx, kv_cache_type, flash_attn,
      ollama_version, suite_id, suite_version,
      prefill_tps_median, decode_tps_median, load_ms, peak_rss_bytes, repeats,
-     install_id, rating, review, visible, created_at, updated_at, source, synced_at";
+     install_id, rating, review, visible, created_at, updated_at, source, synced_at,
+     prompt_id, prompt_version, ttft_ms_median, thermal_label, notes, env_start_json, env_end_json";
 
-/// Benchmark results for a model, from machines resembling `hw`, best match first.
+/// Benchmark results from machines resembling `hw`, best match first.
 ///
 /// One query rather than three: tiers 1 and 2 are strictly narrower than tier 3,
 /// so the tier is computed as a column and sorted on. Note `IS` rather than `=`
-/// for memory — it is null-safe in SQLite, so a row with unknown memory falls to
-/// the family tier instead of vanishing from the results entirely.
+/// for memory (and for `model_digest`/`prompt_id`/`suite_id`/`num_ctx` when
+/// filtering) — `IS` is null-safe in SQLite, so an unknown/absent value matches
+/// rather than vanishing from the results entirely.
+///
+/// `model_digest: None` ranks every model against every other one (the
+/// leaderboard's cross-model view — meaningful once `suite_id`/`prompt_id`/
+/// `num_ctx` pin the comparison to one apples-to-apples configuration).
+/// `suite_id`/`prompt_id`/`num_ctx` are `None` when the caller wants every
+/// suite mixed together; pass `suite_id: Some("anchor-std")` to see only Quick
+/// results once Full-mode rows exist, so a looser suite is never blended into
+/// a leaderboard the caller expects to be one suite's numbers.
 pub fn bench_runs_for(
     conn: &Connection,
     hw: &HwIdentity,
-    model_digest: &str,
+    model_digest: Option<&str>,
+    suite_id: Option<&str>,
+    prompt_id: Option<&str>,
+    num_ctx: Option<u32>,
 ) -> Result<Vec<BenchRun>> {
     let sql = format!(
         "SELECT {BENCH_COLUMNS},
@@ -479,20 +587,89 @@ pub fn bench_runs_for(
                      ELSE 3
                 END AS match_tier
            FROM bench_runs
-          WHERE visible = TRUE AND chip_key = ?2 AND model_digest = ?4
+          WHERE visible = TRUE AND chip_key = ?2
+            AND (?4 IS NULL OR model_digest = ?4)
+            AND (?5 IS NULL OR suite_id = ?5)
+            AND (?6 IS NULL OR prompt_id IS ?6)
+            AND (?7 IS NULL OR num_ctx = ?7)
           ORDER BY match_tier, decode_tps_median DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
-        rusqlite::params![hw.hw_key, hw.chip_key, hw.memory_gb, model_digest],
+        rusqlite::params![hw.hw_key, hw.chip_key, hw.memory_gb, model_digest, suite_id, prompt_id, num_ctx],
         |row| {
             let mut run = row_to_bench(row)?;
-            run.match_quality = Some(MatchQuality::from_tier(row.get::<_, i64>(30)?));
+            run.match_quality = Some(MatchQuality::from_tier(row.get::<_, i64>(37)?));
             Ok(run)
         },
     )?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+/// Recent benchmark runs on this exact machine, newest first — the History
+/// panel's feed. Distinct from [`bench_runs_for`]: that one ranks by *speed*
+/// across whatever machines match a hardware tier; this one is chronological
+/// and scoped to `hw_key` exactly (never a looser tier — it's "my history",
+/// not "machines like mine"). `model_digest: None` mixes every model
+/// together; `Some(digest)` scopes to one.
+pub fn bench_history(
+    conn: &Connection,
+    hw_key: &str,
+    model_digest: Option<&str>,
+    limit: u32,
+) -> Result<Vec<BenchRun>> {
+    let sql = format!(
+        "SELECT {BENCH_COLUMNS}
+           FROM bench_runs
+          WHERE visible = TRUE AND hw_key = ?1
+            AND (?2 IS NULL OR model_digest = ?2)
+          ORDER BY updated_at DESC
+          LIMIT ?3"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params![hw_key, model_digest, limit], row_to_bench)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// Raw per-repeat samples behind a `BenchRun`'s medians, in repeat order
+/// (warmup first).
+pub fn bench_samples_for(conn: &Connection, bench_run_id: &str) -> Result<Vec<BenchSample>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, bench_run_id, repeat_index, is_warmup, prefill_tps, decode_tps, ttft_ms,
+                prompt_eval_count, prompt_eval_duration_ns, eval_count, eval_duration_ns,
+                total_duration_ns, load_duration_ns, wall_start_ms, created_at
+           FROM bench_samples WHERE bench_run_id = ?1 ORDER BY repeat_index",
+    )?;
+    let rows = stmt.query_map([bench_run_id], |row| {
+        Ok(BenchSample {
+            id: row.get(0)?,
+            bench_run_id: row.get(1)?,
+            repeat_index: row.get(2)?,
+            is_warmup: row.get(3)?,
+            prefill_tps: row.get(4)?,
+            decode_tps: row.get(5)?,
+            ttft_ms: row.get(6)?,
+            prompt_eval_count: row.get(7)?,
+            prompt_eval_duration_ns: row.get(8)?,
+            eval_count: row.get(9)?,
+            eval_duration_ns: row.get(10)?,
+            total_duration_ns: row.get(11)?,
+            load_duration_ns: row.get(12)?,
+            wall_start_ms: row.get(13)?,
+            created_at: row.get(14)?,
+        })
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+/// Updates a run's free-text notes, e.g. after the user edits an
+/// auto-populated anomaly note.
+pub fn update_bench_notes(conn: &Connection, run_id: &str, notes: Option<&str>) -> Result<()> {
+    conn.execute("UPDATE bench_runs SET notes = ?2 WHERE id = ?1", rusqlite::params![run_id, notes])?;
+    Ok(())
 }
 
 fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
@@ -530,6 +707,13 @@ fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
         source: bench_source_from_str(&row.get::<_, String>(28)?),
         synced_at: row.get(29)?,
         match_quality: None,
+        prompt_id: row.get(30)?,
+        prompt_version: row.get(31)?,
+        ttft_ms_median: row.get(32)?,
+        thermal_label: row.get(33)?,
+        notes: row.get(34)?,
+        env_start: env_from_json(row.get::<_, Option<String>>(35)?.as_deref()),
+        env_end: env_from_json(row.get::<_, Option<String>>(36)?.as_deref()),
     })
 }
 
@@ -1209,6 +1393,17 @@ fn arch_to_json(arch: Option<&ArchMeta>) -> Option<String> {
 /// Reads architecture metadata back. Unparseable JSON degrades to `None` (the
 /// caller falls back to an estimate) rather than failing the whole cache read.
 fn arch_from_json(raw: Option<&str>) -> Option<ArchMeta> {
+    raw.and_then(|s| serde_json::from_str(s).ok())
+}
+
+/// Serialises an environmental telemetry snapshot to a single JSON column —
+/// same rationale as [`arch_to_json`]: nothing queries inside it.
+fn env_to_json(env: Option<&EnvTelemetry>) -> Option<String> {
+    env.and_then(|e| serde_json::to_string(e).ok())
+}
+
+/// Reads a telemetry snapshot back. Corrupt JSON degrades to `None`.
+fn env_from_json(raw: Option<&str>) -> Option<EnvTelemetry> {
     raw.and_then(|s| serde_json::from_str(s).ok())
 }
 

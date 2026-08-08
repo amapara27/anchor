@@ -260,6 +260,23 @@ pub enum BenchSource {
     Community,
 }
 
+/// A live snapshot of conditions that can affect a benchmark's numbers.
+///
+/// Unlike [`HardwareProfile`] (static, cached forever), this is taken fresh
+/// around each run — thermal state, power source, and free memory all drift
+/// over the course of a session in ways a benchmark result should carry.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EnvTelemetry {
+    /// `pmset -g therm`'s `CPU_Speed_Limit`, percent. 100 = unthrottled.
+    pub thermal_pressure_pct: Option<u8>,
+    pub on_ac_power: Option<bool>,
+    pub uptime_secs: Option<u64>,
+    pub free_memory_bytes: Option<u64>,
+    /// Models resident *other than* the one under test, at snapshot time —
+    /// what else is competing for RAM.
+    pub resident_model_count: Option<u32>,
+}
+
 /// One benchmark result: a model, a configuration, a machine, and what it did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchRun {
@@ -309,6 +326,28 @@ pub struct BenchRun {
     /// Set by a match query, not stored. `None` on a row read back directly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_quality: Option<MatchQuality>,
+
+    /// Catalog id of the prompt this row measures, e.g. `"short"`,
+    /// `"long_context"`, `"generation_heavy"`. `None` for `anchor-std` rows,
+    /// which don't use the catalog.
+    pub prompt_id: Option<String>,
+    /// Version of the prompt *text*, independent of `suite_version` (which
+    /// versions suite logic — the ctx set, repeat counts, cell structure).
+    /// `None` for `anchor-std` rows.
+    pub prompt_version: Option<u32>,
+    /// Time-to-first-token proxy, in milliseconds: `prompt_eval_duration_ns`,
+    /// median over repeats. On an already-warmed/loaded model, generation
+    /// begins the instant prompt eval finishes, so this needs no wall-clock
+    /// instrumentation of its own.
+    pub ttft_ms_median: Option<f64>,
+    pub env_start: Option<EnvTelemetry>,
+    pub env_end: Option<EnvTelemetry>,
+    /// `"sustained"` | `"throttled"` | `"unknown"`, derived from the thermal
+    /// delta between `env_start` and `env_end`.
+    pub thermal_label: Option<String>,
+    /// Free-text anomaly notes. Auto-populated where derivable (thermal,
+    /// battery), user-editable afterward.
+    pub notes: Option<String>,
 }
 
 impl BenchRun {
@@ -318,6 +357,14 @@ impl BenchRun {
     /// one row, so a re-run overwrites its own previous number rather than
     /// stuffing the ballot box. Left unhashed so it stays greppable in a
     /// `sqlite3` shell.
+    ///
+    /// `prompt` is `(prompt_id, prompt_version)` for a Full-suite cell, `None`
+    /// for the single-prompt `anchor-std` suite — omitting the segment when
+    /// `None` keeps this byte-identical to every id derived before Full mode
+    /// existed, so existing rows keep upserting in place. When `Some`, the
+    /// segment is what keeps sibling cells that share a `num_ctx` (different
+    /// prompts, same context size) from colliding on one row.
+    #[allow(clippy::too_many_arguments)]
     pub fn derive_id(
         install_id: &str,
         hw_key: &str,
@@ -327,11 +374,40 @@ impl BenchRun {
         num_ctx: u32,
         kv_cache_type: &str,
         flash_attn: bool,
+        prompt: Option<(&str, u32)>,
     ) -> String {
-        format!(
+        let base = format!(
             "{install_id}|{hw_key}|{model_digest}|{suite_id}@{suite_version}|{num_ctx}|{kv_cache_type}|{flash_attn}"
-        )
+        );
+        match prompt {
+            Some((id, version)) => format!("{base}|{id}@{version}"),
+            None => base,
+        }
     }
+}
+
+/// One repeat's raw measurement behind a [`BenchRun`]'s medians — including
+/// the discarded warmup. Stored so a methodology change can recompute
+/// medians later instead of only ever having the aggregate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BenchSample {
+    /// `"{bench_run_id}#{repeat_index}"`.
+    pub id: String,
+    pub bench_run_id: String,
+    /// 0 = warmup, 1..=repeats = measured.
+    pub repeat_index: u32,
+    pub is_warmup: bool,
+    pub prefill_tps: Option<f64>,
+    pub decode_tps: Option<f64>,
+    pub ttft_ms: Option<f64>,
+    pub prompt_eval_count: Option<u64>,
+    pub prompt_eval_duration_ns: Option<u64>,
+    pub eval_count: Option<u64>,
+    pub eval_duration_ns: Option<u64>,
+    pub total_duration_ns: Option<u64>,
+    pub load_duration_ns: Option<u64>,
+    pub wall_start_ms: i64,
+    pub created_at: i64,
 }
 
 #[cfg(test)]
@@ -405,5 +481,38 @@ mod tests {
         tiers.sort();
         assert_eq!(tiers[0], MatchQuality::Exact);
         assert_eq!(tiers[2], MatchQuality::SameFamily);
+    }
+
+    #[test]
+    fn derive_id_without_prompt_matches_pre_full_mode_shape() {
+        // Byte-identical to the id every anchor-std row was already stored
+        // under, so introducing Full mode must not orphan existing rows.
+        let id = BenchRun::derive_id(
+            "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-std", 1, 4096, "f16",
+            false, None,
+        );
+        assert_eq!(
+            id,
+            "install-1|apple-m4-10c-10g-16gb|sha256:abcdef|anchor-std@1|4096|f16|false"
+        );
+    }
+
+    #[test]
+    fn derive_id_with_prompt_appends_a_distinct_segment() {
+        let base = BenchRun::derive_id(
+            "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-full", 1, 8192, "f16",
+            false, None,
+        );
+        let short = BenchRun::derive_id(
+            "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-full", 1, 8192, "f16",
+            false, Some(("short", 1)),
+        );
+        let gen_heavy = BenchRun::derive_id(
+            "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-full", 1, 8192, "f16",
+            false, Some(("generation_heavy", 1)),
+        );
+        assert_eq!(short, format!("{base}|short@1"));
+        // Two prompts sharing a num_ctx must not collide on one row.
+        assert_ne!(short, gen_heavy);
     }
 }

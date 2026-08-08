@@ -89,6 +89,17 @@ export function parseContext(context: string): number | null {
 }
 
 /** Throughput label, e.g. 21.04 → "21.0 tok/s". */
+/** "today" / "yesterday" / "3d" / "last week" / "2w" — coarse on purpose, for
+ *  a history feed where the exact minute never matters. */
+export function formatRelativeTime(ms: number, now = Date.now()): string {
+  const days = Math.floor((now - ms) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d`;
+  if (days < 14) return "last week";
+  return `${Math.floor(days / 7)}w`;
+}
+
 export function formatTokSec(n: number | null | undefined): string {
   if (n == null) return "—";
   return `${n.toFixed(1)} tok/s`;

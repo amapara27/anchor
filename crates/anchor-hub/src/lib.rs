@@ -20,7 +20,7 @@ pub mod server;
 pub mod status;
 pub mod updates;
 
-pub use bench::BenchProgress;
+pub use bench::{BenchProgress, RepeatsMode};
 pub use db::{
     AgentMemory, AgentRun, Conversation, KbChunk, KbDocument, Preset, StoredMessage,
     DEFAULT_PRESET_ID,

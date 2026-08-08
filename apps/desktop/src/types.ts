@@ -586,6 +586,17 @@ export type MatchQuality = "exact" | "same_chip_memory" | "same_family";
 /** Where a benchmark row came from. */
 export type BenchSource = "local" | "community";
 
+/** Mirrors `anchor_core::EnvTelemetry` — a live snapshot taken around a run. */
+export interface EnvTelemetry {
+  /** `pmset -g therm`'s CPU_Speed_Limit, percent. 100 = unthrottled. */
+  thermal_pressure_pct: number | null;
+  on_ac_power: boolean | null;
+  uptime_secs: number | null;
+  free_memory_bytes: number | null;
+  /** Models resident other than the one under test. */
+  resident_model_count: number | null;
+}
+
 /** One benchmark result: a model, a configuration, a machine, and what it did. */
 export interface BenchRun {
   id: string;
@@ -618,14 +629,57 @@ export interface BenchRun {
   synced_at: number | null;
   /** Set by a match query; absent on a row read back directly. */
   match_quality?: MatchQuality;
+  /** Catalog id of the Full-suite prompt this row measures, e.g. "short". `null` for anchor-std rows. */
+  prompt_id: string | null;
+  /** Version of the prompt text, independent of `suite_version`. `null` for anchor-std rows. */
+  prompt_version: number | null;
+  /** Time-to-first-token proxy, median over repeats, in milliseconds. */
+  ttft_ms_median: number | null;
+  env_start: EnvTelemetry | null;
+  env_end: EnvTelemetry | null;
+  /** "sustained" | "throttled" | "unknown", derived from the thermal delta across the run. */
+  thermal_label: string | null;
+  /** Free-text anomaly notes, auto-populated where derivable, user-editable. */
+  notes: string | null;
 }
+
+/** Mirrors `anchor_core::BenchSample` — one repeat's raw measurement behind a BenchRun's medians. */
+export interface BenchSample {
+  id: string;
+  bench_run_id: string;
+  /** 0 = warmup, 1..=repeats = measured. */
+  repeat_index: number;
+  is_warmup: boolean;
+  prefill_tps: number | null;
+  decode_tps: number | null;
+  ttft_ms: number | null;
+  prompt_eval_count: number | null;
+  prompt_eval_duration_ns: number | null;
+  eval_count: number | null;
+  eval_duration_ns: number | null;
+  total_duration_ns: number | null;
+  load_duration_ns: number | null;
+  wall_start_ms: number;
+  created_at: number;
+}
+
+/** Which benchmark suite to run. */
+export type BenchSuiteKind = "quick" | "full";
+
+/** Repeats tradeoff for a Full-suite run; ignored for Quick. */
+export type BenchRepeatsMode = "thorough" | "fast";
 
 /** Streamed progress from a running benchmark (`anchor_hub::BenchProgress`). */
 export type BenchProgress =
   | { kind: "status"; message: string }
   | { kind: "run"; index: number; total: number; decode_tps: number }
   | { kind: "done"; run: BenchRun }
-  | { kind: "failed"; message: string };
+  | { kind: "failed"; message: string }
+  | { kind: "cell_started"; prompt_id: string; num_ctx: number; cell_index: number; cell_total: number }
+  | { kind: "cell_done"; run: BenchRun; cell_index: number; cell_total: number }
+  | { kind: "full_done"; runs: BenchRun[] }
+  /** A live instantaneous decode-rate reading, throttled (~90ms), for the running graphic. */
+  | { kind: "sample"; tps: number };
 
 /** State of the rolling weekly written-review allowance. */
 export interface ReviewAllowance {

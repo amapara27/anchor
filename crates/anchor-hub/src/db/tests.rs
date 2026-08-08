@@ -148,24 +148,61 @@ fn bench(id: &str, hw: HwIdentity, tps: f64) -> BenchRun {
         source: BenchSource::Local,
         synced_at: None,
         match_quality: None,
+        prompt_id: None,
+        prompt_version: None,
+        ttft_ms_median: None,
+        env_start: None,
+        env_end: None,
+        thermal_label: None,
+        notes: None,
+    }
+}
+
+fn env(thermal_pct: u8, on_ac: bool) -> EnvTelemetry {
+    EnvTelemetry {
+        thermal_pressure_pct: Some(thermal_pct),
+        on_ac_power: Some(on_ac),
+        uptime_secs: Some(3600),
+        free_memory_bytes: Some(4 * 1024_u64.pow(3)),
+        resident_model_count: Some(0),
+    }
+}
+
+fn sample(bench_run_id: &str, repeat_index: u32, is_warmup: bool, decode_tps: f64) -> BenchSample {
+    BenchSample {
+        id: format!("{bench_run_id}#{repeat_index}"),
+        bench_run_id: bench_run_id.to_string(),
+        repeat_index,
+        is_warmup,
+        prefill_tps: Some(900.0),
+        decode_tps: Some(decode_tps),
+        ttft_ms: Some(50.0),
+        prompt_eval_count: Some(20),
+        prompt_eval_duration_ns: Some(50_000_000),
+        eval_count: Some(128),
+        eval_duration_ns: Some(1_000_000_000),
+        total_duration_ns: Some(1_050_000_000),
+        load_duration_ns: Some(0),
+        wall_start_ms: 1_700_000_000_000,
+        created_at: 1_700_000_000_000,
     }
 }
 
 #[test]
 fn bench_runs_are_returned_best_match_first() {
-    let conn = in_memory();
+    let mut conn = in_memory();
     let mine = hw("apple-m4-pro", 12, 16, 24);
 
     // Deliberately inserted worst-match-first, and with the loosest match having
     // the highest throughput — so ordering can only come from the tier, not from
     // insertion order or speed.
-    upsert_bench(&conn, &bench("family", hw("apple-m4-pro", 14, 20, 48), 99.0)).unwrap();
-    upsert_bench(&conn, &bench("same-mem", hw("apple-m4-pro", 14, 20, 24), 50.0)).unwrap();
-    upsert_bench(&conn, &bench("exact", mine.clone(), 10.0)).unwrap();
+    upsert_bench_with_samples(&mut conn, &bench("family", hw("apple-m4-pro", 14, 20, 48), 99.0), &[]).unwrap();
+    upsert_bench_with_samples(&mut conn, &bench("same-mem", hw("apple-m4-pro", 14, 20, 24), 50.0), &[]).unwrap();
+    upsert_bench_with_samples(&mut conn, &bench("exact", mine.clone(), 10.0), &[]).unwrap();
     // A different chip family must not appear at all.
-    upsert_bench(&conn, &bench("other-chip", hw("apple-m1", 8, 7, 16), 80.0)).unwrap();
+    upsert_bench_with_samples(&mut conn, &bench("other-chip", hw("apple-m1", 8, 7, 16), 80.0), &[]).unwrap();
 
-    let runs = bench_runs_for(&conn, &mine, "sha256:abc").unwrap();
+    let runs = bench_runs_for(&conn, &mine, Some("sha256:abc"), None, None, None).unwrap();
     let ids: Vec<&str> = runs.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, ["exact", "same-mem", "family"]);
     assert_eq!(
@@ -180,12 +217,12 @@ fn bench_runs_are_returned_best_match_first() {
 
 #[test]
 fn bench_runs_round_trip_and_rerun_replaces_rather_than_duplicates() {
-    let conn = in_memory();
+    let mut conn = in_memory();
     let mine = hw("apple-m4", 10, 10, 16);
     let mut run = bench("run-1", mine.clone(), 42.0);
-    upsert_bench(&conn, &run).unwrap();
+    upsert_bench_with_samples(&mut conn, &run, &[]).unwrap();
 
-    let read = bench_runs_for(&conn, &mine, "sha256:abc").unwrap();
+    let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), None, None, None).unwrap();
     assert_eq!(read.len(), 1);
     assert_eq!(read[0].hw, mine);
     assert_eq!(read[0].decode_tps_median, Some(42.0));
@@ -193,10 +230,129 @@ fn bench_runs_round_trip_and_rerun_replaces_rather_than_duplicates() {
 
     // Same machine, same config, new numbers: one row, updated.
     run.decode_tps_median = Some(45.0);
-    upsert_bench(&conn, &run).unwrap();
-    let read = bench_runs_for(&conn, &mine, "sha256:abc").unwrap();
+    upsert_bench_with_samples(&mut conn, &run, &[]).unwrap();
+    let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), None, None, None).unwrap();
     assert_eq!(read.len(), 1, "re-running must not duplicate the row");
     assert_eq!(read[0].decode_tps_median, Some(45.0));
+}
+
+#[test]
+fn bench_run_extended_fields_and_samples_round_trip() {
+    let mut conn = in_memory();
+    let mine = hw("apple-m4", 10, 10, 16);
+    let mut run = bench("full-cell", mine.clone(), 42.0);
+    run.prompt_id = Some("generation_heavy".to_string());
+    run.prompt_version = Some(1);
+    run.suite_id = "anchor-full".to_string();
+    run.ttft_ms_median = Some(48.5);
+    run.thermal_label = Some("sustained".to_string());
+    run.notes = Some("running on battery".to_string());
+    run.env_start = Some(env(100, true));
+    run.env_end = Some(env(85, false));
+
+    let samples = vec![
+        sample("full-cell", 0, true, 40.0),
+        sample("full-cell", 1, false, 41.0),
+        sample("full-cell", 2, false, 42.0),
+        sample("full-cell", 3, false, 43.0),
+    ];
+    upsert_bench_with_samples(&mut conn, &run, &samples).unwrap();
+
+    let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), Some("anchor-full"), Some("generation_heavy"), None)
+        .unwrap();
+    assert_eq!(read.len(), 1);
+    assert_eq!(read[0].prompt_id.as_deref(), Some("generation_heavy"));
+    assert_eq!(read[0].ttft_ms_median, Some(48.5));
+    assert_eq!(read[0].thermal_label.as_deref(), Some("sustained"));
+    assert_eq!(read[0].notes.as_deref(), Some("running on battery"));
+    assert_eq!(read[0].env_start.as_ref().unwrap().thermal_pressure_pct, Some(100));
+    assert_eq!(read[0].env_end.as_ref().unwrap().on_ac_power, Some(false));
+
+    // Suite filter excludes the anchor-std-shaped query.
+    let none = bench_runs_for(&conn, &mine, Some("sha256:abc"), Some("anchor-std"), None, None).unwrap();
+    assert_eq!(none.len(), 0);
+
+    let stored_samples = bench_samples_for(&conn, "full-cell").unwrap();
+    assert_eq!(stored_samples.len(), 4);
+    assert!(stored_samples[0].is_warmup);
+    assert_eq!(stored_samples[3].decode_tps, Some(43.0));
+
+    // Re-upserting with fewer samples must not leave the old ones behind.
+    upsert_bench_with_samples(&mut conn, &run, &samples[..2]).unwrap();
+    assert_eq!(bench_samples_for(&conn, "full-cell").unwrap().len(), 2);
+
+    update_bench_notes(&conn, "full-cell", Some("edited by user")).unwrap();
+    let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), None, None, None).unwrap();
+    assert_eq!(read[0].notes.as_deref(), Some("edited by user"));
+}
+
+#[test]
+fn bench_runs_for_with_no_model_ranks_every_model_on_this_hardware() {
+    let mut conn = in_memory();
+    let mine = hw("apple-m4", 10, 10, 16);
+
+    let mut fast = bench("fast-model", mine.clone(), 90.0);
+    fast.model_name = "qwen2.5:14b".to_string();
+    fast.model_digest = "sha256:fast".to_string();
+    let mut slow = bench("slow-model", mine.clone(), 20.0);
+    slow.model_name = "llama3.1:70b".to_string();
+    slow.model_digest = "sha256:slow".to_string();
+    // A different hardware family must not appear in the ranking at all.
+    let mut other_hw = bench("other-hw-model", hw("apple-m1", 8, 7, 16), 999.0);
+    other_hw.model_name = "phi3:medium".to_string();
+    other_hw.model_digest = "sha256:other".to_string();
+
+    upsert_bench_with_samples(&mut conn, &fast, &[]).unwrap();
+    upsert_bench_with_samples(&mut conn, &slow, &[]).unwrap();
+    upsert_bench_with_samples(&mut conn, &other_hw, &[]).unwrap();
+
+    // No model_digest filter: every model on this machine, ranked by speed —
+    // not a separate leaderboard per model.
+    let ranked = bench_runs_for(&conn, &mine, None, None, None, None).unwrap();
+    let names: Vec<&str> = ranked.iter().map(|r| r.model_name.as_str()).collect();
+    assert_eq!(names, ["qwen2.5:14b", "llama3.1:70b"], "ranked fastest-first, other hardware excluded");
+}
+
+#[test]
+fn bench_history_is_chronological_not_ranked_by_speed() {
+    let mut conn = in_memory();
+    let mine = hw("apple-m4", 10, 10, 16);
+
+    // Deliberately: the oldest run is also the fastest, so chronological
+    // order can only come from updated_at, never from decode_tps_median.
+    let mut oldest = bench("run-oldest", mine.clone(), 99.0);
+    oldest.model_name = "qwen2.5:14b".to_string();
+    oldest.model_digest = "sha256:a".to_string();
+    oldest.created_at = 1_000;
+    oldest.updated_at = 1_000;
+
+    let mut newest = bench("run-newest", mine.clone(), 10.0);
+    newest.model_name = "llama3.1:70b".to_string();
+    newest.model_digest = "sha256:b".to_string();
+    newest.created_at = 3_000;
+    newest.updated_at = 3_000;
+
+    // Same chip family, different exact machine — must not appear at all
+    // (bench_history is scoped to hw_key exactly, never a looser tier).
+    let mut other_machine = bench("run-other-machine", hw("apple-m4", 8, 8, 8), 50.0);
+    other_machine.model_name = "phi3:medium".to_string();
+    other_machine.model_digest = "sha256:c".to_string();
+    other_machine.updated_at = 2_000;
+
+    upsert_bench_with_samples(&mut conn, &oldest, &[]).unwrap();
+    upsert_bench_with_samples(&mut conn, &newest, &[]).unwrap();
+    upsert_bench_with_samples(&mut conn, &other_machine, &[]).unwrap();
+
+    let all = bench_history(&conn, &mine.hw_key, None, 10).unwrap();
+    let names: Vec<&str> = all.iter().map(|r| r.model_name.as_str()).collect();
+    assert_eq!(names, ["llama3.1:70b", "qwen2.5:14b"], "newest first, other machine excluded");
+
+    let scoped = bench_history(&conn, &mine.hw_key, Some("sha256:a"), 10).unwrap();
+    assert_eq!(scoped.len(), 1);
+    assert_eq!(scoped[0].model_name, "qwen2.5:14b");
+
+    let capped = bench_history(&conn, &mine.hw_key, None, 1).unwrap();
+    assert_eq!(capped.len(), 1, "limit is respected");
 }
 
 #[test]

@@ -2,7 +2,9 @@
 // can't rasterize arbitrary styled DOM, and hand-rolling SVG <foreignObject>
 // serialization is exactly what this dep already does. Already installed.
 import { toPng } from "html-to-image";
+import { el } from "./domCard";
 import { formatTokSec } from "./format";
+import { savePng } from "./savePng";
 
 export interface ComparisonExport {
   aName: string;
@@ -22,13 +24,6 @@ function truncate(s: string): string {
   const t = s.trim();
   if (!t) return "(empty response)";
   return t.length > MAX_CHARS ? t.slice(0, MAX_CHARS).trimEnd() + "…" : t;
-}
-
-function el(tag: string, style: Partial<CSSStyleDeclaration>, text?: string): HTMLElement {
-  const node = document.createElement(tag);
-  Object.assign(node.style, style);
-  if (text != null) node.textContent = text;
-  return node;
 }
 
 function column(name: string, output: string): HTMLElement {
@@ -157,16 +152,116 @@ function buildCard(d: ComparisonExport): HTMLElement {
   return card;
 }
 
-/** Render the comparison card off-screen and download it as a PNG. */
+/** Render the comparison card off-screen and save it as a PNG (native dialog). */
 export async function exportComparison(d: ComparisonExport): Promise<void> {
   const node = buildCard(d);
   document.body.appendChild(node);
   try {
     const url = await toPng(node, { pixelRatio: 2, cacheBust: true, backgroundColor: "#0b0c0e" });
-    const link = document.createElement("a");
-    link.download = `anchor-compare-${Date.now()}.png`;
-    link.href = url;
-    link.click();
+    await savePng(url, `anchor-compare-${Date.now()}.png`);
+  } finally {
+    node.remove();
+  }
+}
+
+export interface BenchmarkCardData {
+  modelName: string;
+  quant: string | null;
+  chip: string;
+  memoryGb: number | null;
+  osVersion: string | null;
+  /** Headline number — always the Quick result's decode tok/s. */
+  decodeTps: number;
+  prefillTps: number | null;
+  ttftMs: number | null;
+  /** e.g. "anchor-std v1 · median of 3 runs". */
+  suiteLabel: string;
+}
+
+/** Builds the shareable benchmark card off-screen, same construction as
+ *  `buildCard` above: plain DOM + the app's CSS tokens so it matches theme. */
+function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
+  const card = el("div", {
+    position: "fixed",
+    left: "-9999px",
+    top: "0",
+    width: "560px",
+    boxSizing: "border-box",
+    padding: "28px",
+    background: "var(--color-canvas)",
+    color: "var(--color-fg)",
+    fontFamily: "var(--font-sans)",
+    border: "1px solid var(--hairline)",
+    borderRadius: "12px",
+  });
+
+  const header = el("div", {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: "20px",
+  });
+  header.append(
+    el(
+      "div",
+      { fontFamily: MONO, fontWeight: "600", fontSize: "15px", color: "var(--color-accent-text)", letterSpacing: "0.02em" },
+      "anchor",
+    ),
+    el(
+      "div",
+      { fontFamily: MONO, fontSize: "12px", color: "var(--color-fg-muted)", fontVariantNumeric: "tabular-nums" },
+      [d.chip, d.memoryGb != null && `${d.memoryGb.toFixed(0)} GB`, d.osVersion && `macOS ${d.osVersion}`]
+        .filter(Boolean)
+        .join(" · "),
+    ),
+  );
+
+  const modelLine = el(
+    "div",
+    { fontSize: "13px", color: "var(--color-fg-muted)", marginBottom: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+    [d.modelName, d.quant].filter(Boolean).join(" · "),
+  );
+
+  const headline = el("div", { display: "flex", alignItems: "baseline", gap: "8px", marginBottom: "20px" });
+  headline.append(
+    el("span", { fontFamily: MONO, fontWeight: "700", fontSize: "44px", color: "var(--color-fg)", fontVariantNumeric: "tabular-nums" }, formatTokSec(d.decodeTps)),
+    el("span", { fontSize: "13px", color: "var(--color-fg-muted)" }, "decode"),
+  );
+
+  const secondary = el("div", {
+    display: "flex",
+    gap: "20px",
+    borderTop: "1px solid var(--hairline)",
+    paddingTop: "14px",
+    marginBottom: "14px",
+  });
+  const stat = (label: string, value: string) => {
+    const wrap = el("div", { display: "flex", flexDirection: "column", gap: "3px" });
+    wrap.append(
+      el("span", { fontSize: "10px", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.14em", color: "var(--color-fg-subtle)" }, label),
+      el("span", { fontFamily: MONO, fontSize: "13px", color: "var(--color-fg)", fontVariantNumeric: "tabular-nums" }, value),
+    );
+    return wrap;
+  };
+  secondary.append(
+    stat("Prefill", d.prefillTps != null ? formatTokSec(d.prefillTps) : "—"),
+    stat("TTFT", d.ttftMs != null ? `${d.ttftMs.toFixed(0)} ms` : "—"),
+  );
+
+  const footer = el("div", { fontSize: "10.5px", color: "var(--color-fg-subtle)" }, d.suiteLabel);
+
+  card.append(header, modelLine, headline, secondary, footer);
+  return card;
+}
+
+/** Renders the benchmark card off-screen and returns it as a PNG data URL —
+ *  callers decide what to do with it (in-app preview, save, share) rather
+ *  than this function saving straight to disk. */
+export async function renderBenchmarkCard(d: BenchmarkCardData): Promise<string> {
+  const node = buildBenchmarkCard(d);
+  document.body.appendChild(node);
+  try {
+    return await toPng(node, { pixelRatio: 2, cacheBust: true, backgroundColor: "#0b0c0e" });
   } finally {
     node.remove();
   }

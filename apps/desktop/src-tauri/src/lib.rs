@@ -10,12 +10,12 @@ use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model};
+use anchor_core::{BenchRun, BenchSample, HardwareProfile, HwIdentity, Model};
 use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
     AgentRun, BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats,
-    Preset, PullProgress, Registry, StoredMessage,
+    Preset, PullProgress, Registry, RepeatsMode, StoredMessage,
 };
 use anchor_search::{QueryHistory, SemanticIndex};
 use anchor_workflows::{ResearchConfig, ResearchEvent};
@@ -764,15 +764,49 @@ fn hw_identity(app: &AppHandle) -> Result<HwIdentity, String> {
     Ok(HwIdentity::from_profile(&profile))
 }
 
-/// Runs the standard benchmark suite against a model and stores the result.
+/// Which suite `run_benchmark` runs.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum BenchSuiteKind {
+    /// The single fixed-prompt suite (`anchor-std`), unchanged since before
+    /// Full mode existed.
+    Quick,
+    /// The versioned prompt x context-size matrix (`anchor-full`).
+    Full,
+}
+
+/// Repeats tradeoff for a Full-suite run. Ignored when `suite` is `Quick`
+/// (Quick always runs 3 repeats, as it always has).
+#[derive(serde::Deserialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum BenchRepeatsMode {
+    Thorough,
+    Fast,
+}
+
+impl From<BenchRepeatsMode> for RepeatsMode {
+    fn from(mode: BenchRepeatsMode) -> Self {
+        match mode {
+            BenchRepeatsMode::Thorough => RepeatsMode::Thorough,
+            BenchRepeatsMode::Fast => RepeatsMode::Fast,
+        }
+    }
+}
+
+/// Runs a benchmark suite against a model and stores the result(s).
 ///
 /// Takes `compare_lock` (shared with `compare_models` and `run_research`) so a
 /// benchmark can never run alongside another RAM-heavy generation — a contended
-/// run would measure the contention, not the model.
+/// run would measure the contention, not the model. One command for both
+/// suites rather than two: the server/registry/hw/install-id/lock ceremony
+/// below is identical either way, and the suites already differ through the
+/// `BenchProgress` variants each one streams.
 #[tauri::command]
 async fn run_benchmark(
     app: AppHandle,
     model: String,
+    suite: BenchSuiteKind,
+    repeats: BenchRepeatsMode,
     on_event: Channel<BenchProgress>,
 ) -> Result<(), String> {
     ensure_server(&app).await?;
@@ -782,12 +816,17 @@ async fn run_benchmark(
     let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
 
-    let result = registry
-        .run_benchmark(&model, &hw, &id, |event| {
-            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
-            let _ = on_event.send(event);
-        })
-        .await;
+    let on_progress = |event: BenchProgress| {
+        // Best-effort: a dropped channel (UI navigated away) shouldn't error.
+        let _ = on_event.send(event);
+    };
+    let result = match suite {
+        BenchSuiteKind::Quick => registry.run_benchmark(&model, &hw, &id, on_progress).await.map(|_| ()),
+        BenchSuiteKind::Full => registry
+            .run_full_benchmark(&model, &hw, &id, repeats.into(), on_progress)
+            .await
+            .map(|_| ()),
+    };
     if let Err(e) = result {
         let _ = on_event.send(BenchProgress::Failed {
             message: e.to_string(),
@@ -797,18 +836,72 @@ async fn run_benchmark(
     Ok(())
 }
 
-/// Benchmark results for a model from machines resembling this one, best match
-/// first. Each row carries the tier it matched at so the UI can group them.
+/// Benchmark results from machines resembling this one, best match first.
+/// Each row carries the tier it matched at so the UI can group them.
+///
+/// `model: None` ranks every benchmarked model against every other one — the
+/// leaderboard's cross-model view. Pass `model: Some(id)` to scope to one
+/// model instead (the Suite tab's "how does my machine compare" table).
+/// `suite_id`/`prompt_id`/`num_ctx` filter which rows come back — pass
+/// `suite_id: Some("anchor-std")` to see only Quick results once Full-mode
+/// rows exist, so the two suites' numbers are never blended into one
+/// leaderboard.
 #[tauri::command]
-async fn bench_runs_for_model(app: AppHandle, model: String) -> Result<Vec<BenchRun>, String> {
+async fn bench_runs_for_model(
+    app: AppHandle,
+    model: Option<String>,
+    suite_id: Option<String>,
+    prompt_id: Option<String>,
+    num_ctx: Option<u32>,
+) -> Result<Vec<BenchRun>, String> {
     let registry = registry(&app)?;
     let hw = hw_identity(&app)?;
-    let digest = anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), &model)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("{model} is not installed"))?;
+    let digest = match &model {
+        Some(model) => Some(
+            anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), model)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("{model} is not installed"))?,
+        ),
+        None => None,
+    };
     registry
-        .bench_runs_for(&hw, &digest)
+        .bench_runs_for(&hw, digest.as_deref(), suite_id.as_deref(), prompt_id.as_deref(), num_ctx)
+        .map_err(|e| e.to_string())
+}
+
+/// Raw per-repeat samples behind a stored run's medians.
+#[tauri::command]
+async fn bench_samples_for_run(app: AppHandle, run_id: String) -> Result<Vec<BenchSample>, String> {
+    registry(&app)?.bench_samples_for(&run_id).map_err(|e| e.to_string())
+}
+
+/// Recent benchmark runs on this exact machine, newest first — the History
+/// panel's feed. `model: None` mixes every model together; `Some(id)` scopes
+/// to one. Distinct from `bench_runs_for_model`, which ranks by speed rather
+/// than time.
+#[tauri::command]
+async fn bench_history(app: AppHandle, model: Option<String>, limit: u32) -> Result<Vec<BenchRun>, String> {
+    let registry = registry(&app)?;
+    let hw = hw_identity(&app)?;
+    let digest = match &model {
+        Some(model) => Some(
+            anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), model)
+                .await
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("{model} is not installed"))?,
+        ),
+        None => None,
+    };
+    registry.bench_history(&hw, digest.as_deref(), limit).map_err(|e| e.to_string())
+}
+
+/// Updates a run's free-text notes, e.g. after the user edits an
+/// auto-populated anomaly note.
+#[tauri::command]
+async fn update_bench_notes(app: AppHandle, run_id: String, notes: Option<String>) -> Result<(), String> {
+    registry(&app)?
+        .update_bench_notes(&run_id, notes.as_deref())
         .map_err(|e| e.to_string())
 }
 
@@ -929,6 +1022,9 @@ pub fn run() {
             check_updates,
             run_benchmark,
             bench_runs_for_model,
+            bench_samples_for_run,
+            bench_history,
+            update_bench_notes,
             unlock_review,
             review_allowance,
             get_secret,

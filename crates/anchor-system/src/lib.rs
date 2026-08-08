@@ -18,6 +18,8 @@ use serde::Deserialize;
 
 pub use anchor_core::HardwareProfile;
 
+pub mod telemetry;
+
 /// Errors surfaced by the profiler. Stringified at the Tauri boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

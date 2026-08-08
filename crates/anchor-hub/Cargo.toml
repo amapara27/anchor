@@ -9,13 +9,14 @@ repository.workspace = true
 
 [dependencies]
 anchor-core = { workspace = true }
+anchor-system = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
 thiserror = { workspace = true }
 futures-util = { workspace = true }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "rt"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

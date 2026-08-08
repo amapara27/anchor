@@ -124,6 +124,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-core",
  "anchor-search",
+ "anchor-system",
  "futures-util",
  "reqwest 0.13.4",
  "rusqlite",
