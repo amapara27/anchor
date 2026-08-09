@@ -5,7 +5,6 @@ import { ChatProvider } from "./lib/useChat";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChatWorkspace } from "./components/ChatWorkspace";
-import { AgentsPage } from "./components/AgentsPage";
 import { ModelsHub } from "./components/ModelsHub";
 import { StoragePage } from "./components/StoragePage";
 import { BenchmarksPage } from "./components/BenchmarksPage";
@@ -59,7 +58,6 @@ export default function App() {
             ) : (
               <main key={tab} className="scrollbar-slim animate-fade-in min-w-0 flex-1 overflow-y-auto">
                 <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-[18px] px-7 pb-9 pt-6">
-                  {tab === "agents" && <AgentsPage />}
                   {tab === "storage" && <StoragePage />}
                   {tab === "benchmarks" && <BenchmarksPage />}
                   {tab === "settings" && <SettingsPage />}

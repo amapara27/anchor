@@ -267,7 +267,7 @@ export type SortKey = "name" | "size" | "params";
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
-export type Tab = "chat" | "agents" | "models" | "storage" | "benchmarks" | "settings";
+export type Tab = "chat" | "models" | "storage" | "benchmarks" | "settings";
 
 /** Sub-views inside the Models hub. */
 export type ModelsTab = "installed" | "discover" | "browse" | "compare";
@@ -595,6 +595,25 @@ export interface EnvTelemetry {
   free_memory_bytes: number | null;
   /** Models resident other than the one under test. */
   resident_model_count: number | null;
+}
+
+/** One content-addressed blob under Ollama's `blobs/` dir. Mirrors `anchor_core::StorageBlob`. */
+export interface StorageBlob {
+  digest: string;
+  size_bytes: number;
+}
+
+/**
+ * Result of scanning Ollama's on-disk model store. Mirrors `anchor_core::StorageScan`.
+ * `scan_storage` returns `null` when the store doesn't exist yet.
+ */
+export interface StorageScan {
+  root: string;
+  blobs_bytes: number;
+  manifests_bytes: number;
+  dedup_savings_bytes: number;
+  orphaned_blobs: StorageBlob[];
+  orphaned_bytes: number;
 }
 
 /** One benchmark result: a model, a configuration, a machine, and what it did. */

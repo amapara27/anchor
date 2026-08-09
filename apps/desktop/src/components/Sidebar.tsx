@@ -4,7 +4,7 @@ import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { formatBytes } from "../lib/format";
 import { Meter } from "./ui/SegmentedBar";
-import { BarChartIcon, ChatIcon, CubeIcon, DatabaseIcon, SettingsIcon, TargetIcon } from "./icons";
+import { BarChartIcon, ChatIcon, CubeIcon, DatabaseIcon, SettingsIcon } from "./icons";
 
 interface SidebarProps {
   active: Tab;
@@ -13,14 +13,11 @@ interface SidebarProps {
 
 type NavItem = { tab: Tab; label: string; Icon: typeof ChatIcon };
 
-// Workspace leads with use (chat/agents); Manage is the tooling around it.
+// Workspace leads with use (chat); Manage is the tooling around it.
 const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
   {
     heading: "Workspace",
-    items: [
-      { tab: "chat", label: "Chat", Icon: ChatIcon },
-      { tab: "agents", label: "Agents", Icon: TargetIcon },
-    ],
+    items: [{ tab: "chat", label: "Chat", Icon: ChatIcon }],
   },
   {
     heading: "Manage",
