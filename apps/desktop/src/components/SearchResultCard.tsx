@@ -24,6 +24,8 @@ interface SearchResultCardProps {
   download?: DownloadState;
   onDownload: () => void;
   onCancel: () => void;
+  /** Opens this model in the detail aside — the whole card is the hit target. */
+  onSelect: () => void;
   /** Host profile — memory decides the fit, chip decides the speed. */
   hardware?: HardwareProfile | null;
 }
@@ -81,6 +83,7 @@ export function SearchResultCard({
   download,
   onDownload,
   onCancel,
+  onSelect,
   hardware,
 }: SearchResultCardProps) {
   const { profile } = result;
@@ -113,7 +116,7 @@ export function SearchResultCard({
 
   if (hero) {
     return (
-      <div className="card p-6">
+      <div className="card cursor-pointer p-6" onClick={onSelect}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="label-caps truncate">
@@ -179,7 +182,7 @@ export function SearchResultCard({
   }
 
   return (
-    <div className="card p-4">
+    <div className="card cursor-pointer p-4" onClick={onSelect}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
@@ -262,7 +265,10 @@ function ActionButton({
     return (
       <button
         type="button"
-        onClick={onCancel}
+        onClick={(e) => {
+          e.stopPropagation();
+          onCancel();
+        }}
         aria-label={`Cancel download of ${name}`}
         className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-hair px-2.5 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 active:scale-[0.97]"
       >
@@ -273,7 +279,10 @@ function ActionButton({
   return (
     <button
       type="button"
-      onClick={onDownload}
+      onClick={(e) => {
+        e.stopPropagation();
+        onDownload();
+      }}
       aria-label={`Download ${name}`}
       className={[
         "inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 active:scale-[0.97]",

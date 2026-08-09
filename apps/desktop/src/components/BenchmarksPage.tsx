@@ -13,7 +13,7 @@ import { Tabs } from "./ui/Tabs";
 import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Meter } from "./ui/SegmentedBar";
 import { BenchMatrix, type MatrixCell } from "./ui/BenchMatrix";
-import { LockIcon, ZapIcon, DownloadIcon, CloseIcon } from "./icons";
+import { LockIcon, ZapIcon, DownloadIcon, CloseIcon, WarningIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard" | "community";
 
@@ -58,6 +58,18 @@ function formatElapsed(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Flags a run whose numbers dropped mid-run from thermal throttling
+ *  (`pmset -g therm`, sampled at run start/end). Silent otherwise — a
+ *  "sustained" run needs no badge, only the exception is worth a flag. */
+function ThermalBadge({ label }: { label: string | null }) {
+  if (label !== "throttled") return null;
+  return (
+    <span title="Thermal throttling kicked in during this run — numbers may be lower than a cool run.">
+      <WarningIcon className="size-3 shrink-0 text-warn" />
+    </span>
+  );
 }
 
 /**
@@ -165,26 +177,40 @@ export function BenchmarksPage() {
   // different machine's numbers when the row isn't `mine`). Only substitutes
   // the live `profile` in for a row measured on this machine; another
   // machine's row uses its own recorded hw fields, never the viewer's.
-  const cardDataForRun = (r: BenchRun): BenchmarkCardData => {
+  // `groupRuns` (the row's own match-tier group) is what the card's "#N on
+  // this Mac" rank is computed from — filtered to `source === "local"` since
+  // there's no community sync yet, every row IS this Mac, but the filter is
+  // what keeps that true once sync exists.
+  const cardDataForRun = (r: BenchRun, groupRuns?: BenchRun[]): BenchmarkCardData => {
     const useProfile = r.source === "local" && profile;
+    const ranked = groupRuns
+      ?.filter((x) => x.source === "local")
+      .sort((a, b) => (b.decode_tps_median ?? 0) - (a.decode_tps_median ?? 0));
+    const rank = ranked ? ranked.findIndex((x) => x.id === r.id) + 1 : 0;
+    const installedModel = useProfile ? installed.find((m) => m.id === r.model_name) : undefined;
     return {
       modelName: r.model_name,
       quant: r.quant,
+      paramSize: installedModel?.parameter_size ?? null,
       chip: useProfile ? (profile.chip ?? r.hw.chip) : r.hw.chip,
+      cpuCores: useProfile ? profile.total_cores : r.hw.cpu_cores,
       memoryGb: useProfile && profile.memory_bytes != null ? profile.memory_bytes / 1024 ** 3 : (r.hw.memory_gb ?? null),
       osVersion: useProfile ? (profile.os_version ?? r.hw.os_version) : r.hw.os_version,
+      ollamaVersion: r.ollama_version,
       decodeTps: r.decode_tps_median ?? 0,
-      prefillTps: r.prefill_tps_median,
       ttftMs: r.ttft_ms_median,
       suiteLabel: `${r.suite_id} v${r.suite_version} · median of ${r.repeats} run${r.repeats === 1 ? "" : "s"}`,
+      dateLabel: new Date(r.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+      rank: rank > 0 ? rank : null,
+      totalOnMachine: ranked ? ranked.length : null,
     };
   };
-  const handleShareRun = async (r: BenchRun) => {
-    const data = cardDataForRun(r);
+  const handleShareRun = async (r: BenchRun, groupRuns?: BenchRun[]) => {
+    const data = cardDataForRun(r, groupRuns);
     const url = await renderBenchmarkCard(data);
     setShareCard({ data, url });
   };
-  const handleShare = () => mine && void handleShareRun(mine);
+  const handleShare = () => mine && void handleShareRun(mine, yours?.runs);
 
   return (
     <>
@@ -306,9 +332,12 @@ export function BenchmarksPage() {
                       ].join(" ")}
                     >
                       <span className="flex min-w-0 flex-col gap-0.5">
-                        <span className={`text-[13px] font-medium ${isMine ? "text-accent-text" : "text-fg"}`}>
+                        <span
+                          className={`flex items-center gap-1.5 text-[13px] font-medium ${isMine ? "text-accent-text" : "text-fg"}`}
+                        >
                           {r.hw.chip}
                           {isMine && " — this Mac"}
+                          <ThermalBadge label={r.thermal_label} />
                         </span>
                         <span className="data truncate text-[10.5px] text-fg-subtle">
                           {[r.hw.gpu_cores && `${r.hw.gpu_cores}-core GPU`, r.hw.memory_gb && `${r.hw.memory_gb} GB`]
@@ -421,7 +450,7 @@ export function BenchmarksPage() {
       {tab === "community" && (
         <section className="card flex flex-col gap-3 p-5">
           <span className="label-caps">Community results</span>
-          <NotBuiltYet>
+          <NotBuiltYet label="coming soon">
             Shared runs from machines like yours, so you can tell a slow model from a slow Mac. There is no
             results server to publish to or read from yet, so nothing here is populated — the Leaderboard tab
             ranks the runs measured on this machine, which are real.
@@ -620,7 +649,10 @@ function LiveRunCard({
           {running && <span className="size-2 rounded-full bg-accent animate-pulse-dot" aria-hidden />}
           <span className="label-caps text-[10px] text-fg-muted">{title}</span>
         </div>
-        <span className="data truncate text-[10.5px] text-fg-subtle">{meta}</span>
+        <span className="data flex items-center gap-1.5 truncate text-[10.5px] text-fg-subtle">
+          {meta}
+          {!running && <ThermalBadge label={mine?.thermal_label ?? null} />}
+        </span>
       </div>
 
       <div className="flex flex-1 flex-col justify-center gap-6 px-5 py-5">
@@ -760,7 +792,7 @@ function Group({
   unlocked: Set<string>;
   canUnlock: boolean;
   onUnlock: (id: string) => Promise<boolean>;
-  onShareRun: (run: BenchRun) => void;
+  onShareRun: (run: BenchRun, groupRuns: BenchRun[]) => void;
 }) {
   const median = medianTps(group.runs);
   const best = Math.max(...group.runs.map((r) => r.decode_tps_median ?? 0), 1);
@@ -787,9 +819,12 @@ function Group({
             >
               <span className="data text-[11px] text-fg-subtle">{i + 1}</span>
               <span className="flex min-w-0 flex-col gap-0.5">
-                <span className={`truncate text-[12.5px] font-medium ${mine ? "text-accent-text" : "text-fg"}`}>
+                <span
+                  className={`flex items-center gap-1.5 truncate text-[12.5px] font-medium ${mine ? "text-accent-text" : "text-fg"}`}
+                >
                   {r.model_name}
                   {r.quant && <span className="data ml-1.5 text-[10.5px] font-normal text-fg-subtle">{r.quant}</span>}
+                  <ThermalBadge label={r.thermal_label} />
                 </span>
                 <span className="data truncate text-[10.5px] text-fg-subtle">
                   {r.hw.chip}
@@ -812,7 +847,7 @@ function Group({
               />
               <button
                 type="button"
-                onClick={() => onShareRun(r)}
+                onClick={() => onShareRun(r, group.runs)}
                 disabled={r.decode_tps_median == null}
                 title="Share a card of this result"
                 className="flex size-7 items-center justify-center rounded-md text-fg-subtle transition-colors hover:text-fg disabled:pointer-events-none disabled:opacity-30"

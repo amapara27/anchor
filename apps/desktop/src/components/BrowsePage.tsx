@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { ArchMeta, LibraryEntry } from "../types";
+import type { ArchMeta, LibraryEntry, LibraryModel } from "../types";
 import { useLibrary } from "../lib/useLibrary";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
@@ -62,7 +62,14 @@ function formatPulls(n: number): string {
  * real tag list — the quantisation variants are where the actual download
  * choice lives, and they're not in any catalog.
  */
-export function BrowsePage() {
+export function BrowsePage({
+  onSelect,
+  selectedTag,
+}: {
+  /** Opens a clicked tag row in the shared detail aside. */
+  onSelect: (m: LibraryModel) => void;
+  selectedTag: string | null;
+}) {
   const { entries, status, error, tags, loadingTags, reload, loadTags } = useLibrary();
   const { models, downloads, startDownload } = useModels();
   const { profile } = useHardwareProfile();
@@ -228,6 +235,8 @@ export function BrowsePage() {
                 hardware={profile}
                 onResolve={resolve}
                 resolving={resolving}
+                onSelect={onSelect}
+                selectedTag={selectedTag}
               />
             ))}
             {visible.length === 0 && (
@@ -287,6 +296,48 @@ function tagFit(
 }
 
 /**
+ * A synthetic LibraryModel for a browsable tag, so the shared detail aside can
+ * render it exactly like an installed/catalog row. Browse tags aren't catalog
+ * entries — there's nothing to look up by id in `useModels()`'s list — so this
+ * builds the same shape `tagFit` above already derives its verdict from.
+ */
+function tagToLibraryModel(
+  entry: LibraryEntry,
+  t: { tag: string; size: string; context: string },
+  arch: ArchMeta | null,
+  installed: boolean,
+): LibraryModel {
+  const params_b = parseTagParams(t.tag) ?? 0;
+  const sizeBytes = parseSize(t.size);
+  const contextTokens = parseContext(t.context) ?? DEFAULT_CONTEXT;
+  return {
+    id: t.tag,
+    name: t.tag,
+    family: entry.name,
+    size_bytes: installed ? sizeBytes : null,
+    status: installed ? "installed" : "available",
+    parameter_size: null,
+    quantization: "Q4_K_M",
+    context_tokens: contextTokens,
+    modified_at: null,
+    publisher: null,
+    arch,
+    spec: {
+      params_b,
+      quant: "Q4_K_M",
+      context_tokens: contextTokens,
+      download_bytes: sizeBytes ?? 0,
+      blurb: entry.description,
+      use_cases: [],
+      publisher: "",
+      capabilities: [],
+    },
+    tags: [],
+    note: "",
+  };
+}
+
+/**
  * The fit verdict for a tag row, sharing its cell with the modality label.
  *
  * Three states, and the middle one is the point of this control:
@@ -334,7 +385,10 @@ function TagFit({
   return (
     <button
       type="button"
-      onClick={onResolve}
+      onClick={(e) => {
+        e.stopPropagation();
+        onResolve();
+      }}
       disabled={resolving}
       title={
         resolving
@@ -370,6 +424,8 @@ function BrowseRow({
   hardware,
   onResolve,
   resolving,
+  onSelect,
+  selectedTag,
 }: {
   entry: LibraryEntry;
   open: boolean;
@@ -385,6 +441,8 @@ function BrowseRow({
   /** Reads one tag's real architecture from the registry, on request. */
   onResolve: (tag: string, digest: string) => void;
   resolving: Record<string, boolean>;
+  onSelect: (m: LibraryModel) => void;
+  selectedTag: string | null;
 }) {
   return (
     <div>
@@ -448,7 +506,12 @@ function BrowseRow({
             return (
               <div
                 key={t.tag}
-                className="grid grid-cols-[minmax(0,1fr)_72px_56px_minmax(0,132px)_104px] items-center gap-3 border-b border-hair py-2 last:border-b-0"
+                onClick={() => onSelect(tagToLibraryModel(entry, t, archFor(t.tag), have))}
+                className={[
+                  "grid cursor-pointer grid-cols-[minmax(0,1fr)_72px_56px_minmax(0,132px)_104px] items-center gap-3 border-b border-hair py-2 last:border-b-0",
+                  "transition-colors duration-150 ease-out hover:bg-raised",
+                  t.tag === selectedTag ? "bg-inset" : "",
+                ].join(" ")}
               >
                 <span className="data min-w-0 truncate text-[12px] text-fg" title={t.tag}>
                   {t.tag}
@@ -482,7 +545,10 @@ function BrowseRow({
                 ) : (
                   <button
                     type="button"
-                    onClick={() => onPull(t.tag)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPull(t.tag);
+                    }}
                     className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-hair px-2 py-1 text-[11px] text-fg-muted transition-colors hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
                   >
                     <DownloadIcon className="size-3" /> Pull

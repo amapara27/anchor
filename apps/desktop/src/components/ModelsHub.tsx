@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ModelsTab } from "../types";
+import type { LibraryModel, ModelsTab } from "../types";
 import { useModels } from "../lib/useModels";
 import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
@@ -49,6 +49,10 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
     Stale: false,
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Browse's tags mostly aren't catalog entries, so they can't be looked up out
+  // of `models` like Installed/Discover selections — this holds the synthetic
+  // LibraryModel BrowsePage builds for whichever tag row is clicked.
+  const [selectedBrowseModel, setSelectedBrowseModel] = useState<LibraryModel | null>(null);
 
   const totalMemoryBytes = profile?.memory_bytes ?? null;
   const chip = profile?.chip ?? null;
@@ -102,7 +106,7 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
     });
   }, [rows, query, chips, isFavorite]);
 
-  const selected = models.find((m) => m.id === selectedId) ?? null;
+  const selected = tab === "browse" ? selectedBrowseModel : (models.find((m) => m.id === selectedId) ?? null);
 
   // Headroom bar: active weights vs stale weights against unified memory.
   const weightsBytes = installed.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0);
@@ -290,13 +294,15 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
               </section>
             ))}
 
-          {tab === "discover" && <SearchPage />}
-          {tab === "browse" && <BrowsePage />}
+          {tab === "discover" && <SearchPage onSelect={setSelectedId} />}
+          {tab === "browse" && (
+            <BrowsePage onSelect={setSelectedBrowseModel} selectedTag={selectedBrowseModel?.id ?? null} />
+          )}
           {tab === "compare" && <ModelComparison />}
         </div>
       </div>
 
-      {tab !== "compare" && tab !== "browse" && (
+      {tab !== "compare" && (
         <ModelDetailAside
           model={selected}
           download={selected ? downloads[selected.id] : undefined}
@@ -307,6 +313,7 @@ export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProp
             if (!selected) return;
             removeModel(selected.id);
             setSelectedId(null);
+            setSelectedBrowseModel(null);
           }}
           onOpenInChat={() => {}}
           onBenchmark={() => {}}

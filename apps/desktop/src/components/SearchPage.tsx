@@ -18,7 +18,7 @@ const EXAMPLES = [
   "run on a low-memory laptop",
 ];
 
-export function SearchPage() {
+export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
   const { results, confident, status, error, query, recents, search } = useModelSearch();
   const { models, downloads, startDownload, cancelDownload } = useModels();
   const { profile } = useHardwareProfile();
@@ -46,6 +46,7 @@ export function SearchPage() {
         download={downloads[result.profile.id]}
         onDownload={() => lib && startDownload(lib.id)}
         onCancel={() => cancelDownload(result.profile.id)}
+        onSelect={() => onSelect(result.profile.id)}
         hardware={profile}
       />
     );
