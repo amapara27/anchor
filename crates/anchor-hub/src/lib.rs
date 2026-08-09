@@ -18,6 +18,7 @@ pub mod library;
 pub mod ollama;
 pub mod server;
 pub mod status;
+pub mod storage;
 pub mod updates;
 
 pub use bench::{BenchProgress, RepeatsMode};

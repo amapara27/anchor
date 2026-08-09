@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
-import type { LibraryModel } from "../types";
+import type { LibraryModel, StorageScan } from "../types";
 import { useModels } from "../lib/useModels";
+import { useStorageScan } from "../lib/useStorageScan";
 import { formatBytes } from "../lib/format";
 import { getLastUsed, isStale, STALE_DAYS } from "../lib/lastUsed";
 import { PageHeader, GhostButton } from "./PageHeader";
 import { StatCard } from "./ui/StatCard";
 import { SegmentedBar, type Segment } from "./ui/SegmentedBar";
-import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
-import { CheckIcon } from "./icons";
+import { CheckIcon, RefreshIcon } from "./icons";
 
 /** Palette for the disk map, walked in order per model family. */
 const FAMILY_COLORS = [
@@ -35,15 +35,19 @@ function formatLastUsed(ms: number | null): string {
  * Storage: what the installed weights cost on disk, where they live, and what
  * can be reclaimed.
  *
- * Everything shown is real (`useModels` + `lastUsed`). Dedupe savings, symlink
- * integrity, on-disk locations and housekeeping rules need a blob scanner in
- * `anchor-hub` that doesn't exist yet, so those sections say so rather than
- * showing a figure nothing computed.
+ * Installed weights come from `useModels()` + `lastUsed`; dedupe savings,
+ * on-disk locations and orphaned-blob housekeeping come from a real scan of
+ * Ollama's store (`useStorageScan`, backed by `anchor_hub::storage`) — Ollama
+ * content-addresses blobs by digest, so shared layers are already deduped on
+ * disk at pull time, and this only reports that truth rather than computing
+ * anything new.
  */
 export function StoragePage() {
   const { models, error, removeModel } = useModels();
+  const { scan, loading: scanning, refresh: rescan, clean } = useStorageScan();
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [pendingRemove, setPendingRemove] = useState<LibraryModel[] | null>(null);
+  const [pendingClean, setPendingClean] = useState<StorageScan | null>(null);
 
   const rows = useMemo(
     () =>
@@ -56,6 +60,10 @@ export function StoragePage() {
 
   const totalBytes = rows.reduce((sum, r) => sum + (r.model.size_bytes ?? 0), 0);
   const staleRows = rows.filter((r) => r.stale);
+  // Nominal sum, not blob-aware: a stale model whose blobs are also referenced
+  // by a kept model would actually free less than this on removal. Doing that
+  // right needs a per-model blob-digest join against `scan`, a second feature
+  // on top of the aggregate scan below — deferred, not silently wrong-by-design.
   const reclaimBytes = staleRows.reduce((sum, r) => sum + (r.model.size_bytes ?? 0), 0);
 
   // Disk map: one segment per model family, largest first.
@@ -86,7 +94,8 @@ export function StoragePage() {
         title="Storage"
         subtitle="What every installed model costs on disk, and what you can safely get back."
         actions={
-          <GhostButton disabled title="Awaiting a blob scanner in anchor-hub">
+          <GhostButton onClick={() => rescan()} disabled={scanning} title="Re-walk Ollama's on-disk store">
+            <RefreshIcon className={`size-3.5 ${scanning ? "animate-spin" : ""}`} />
             Rescan disk
           </GhostButton>
         }
@@ -119,10 +128,11 @@ export function StoragePage() {
               : "Everything's been used recently."
           }
         />
-        <NotBuiltYet>
-          Dedupe savings and symlink integrity need a blob scanner in <code className="data">anchor-hub</code>.
-          Nothing computes blob digests or shared-blob state yet, so there's no honest number to show here.
-        </NotBuiltYet>
+        <StatCard
+          label="Dedupe savings"
+          value={formatBytes(scan?.dedup_savings_bytes ?? 0)}
+          sub={scan ? "from blobs already shared across installed tags" : scanning ? "Scanning…" : "Rescan disk to compute"}
+        />
       </div>
 
       <section className="card overflow-hidden">
@@ -215,18 +225,52 @@ export function StoragePage() {
       <div className="grid grid-cols-2 gap-2.5">
         <section className="card flex flex-col gap-3 p-4">
           <span className="label-caps">Locations</span>
-          <NotBuiltYet>
-            Where each blob actually lives, and which are shared between the Ollama and Hugging Face caches.
-            Needs the same scanner — Anchor doesn't walk the stores yet.
-          </NotBuiltYet>
+          {scan ? (
+            <div className="flex flex-col gap-2 text-[11.5px]">
+              <span className="flex items-center justify-between gap-3">
+                <span className="text-fg-subtle">Store</span>
+                <span className="data truncate text-fg" title={scan.root}>
+                  {scan.root}
+                </span>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="text-fg-subtle">Blobs</span>
+                <span className="data text-fg-muted">{formatBytes(scan.blobs_bytes)}</span>
+              </span>
+              <span className="flex items-center justify-between">
+                <span className="text-fg-subtle">Manifests</span>
+                <span className="data text-fg-muted">{formatBytes(scan.manifests_bytes)}</span>
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-fg-subtle">
+              {scanning ? "Scanning…" : "No Ollama model store found yet — pull a model first."}
+            </p>
+          )}
         </section>
 
         <section className="card flex flex-col gap-3 p-4">
           <span className="label-caps">Housekeeping</span>
-          <NotBuiltYet>
-            Auto-dedupe on pull, stale flagging, and refusing a load that would push you into swap. Removing a
-            model above is the only reclaim Anchor performs today.
-          </NotBuiltYet>
+          {scan && scan.orphaned_blobs.length > 0 ? (
+            <>
+              <p className="text-[11.5px] leading-[1.5] text-fg-subtle">
+                {scan.orphaned_blobs.length} orphaned {scan.orphaned_blobs.length === 1 ? "blob" : "blobs"} — not
+                referenced by any installed model or tag (usually left behind by an interrupted pull). Safe to
+                delete.
+              </p>
+              <GhostButton tone="danger" className="h-7 self-start text-xs" onClick={() => setPendingClean(scan)}>
+                Clean up · frees {formatBytes(scan.orphaned_bytes)}
+              </GhostButton>
+            </>
+          ) : (
+            <p className="text-[11.5px] text-fg-subtle">
+              {scan
+                ? "No orphaned blobs — everything on disk is referenced."
+                : scanning
+                  ? "Scanning…"
+                  : "Rescan disk to check for orphaned blobs."}
+            </p>
+          )}
         </section>
       </div>
 
@@ -247,6 +291,22 @@ export function StoragePage() {
           setSelected({});
         }}
         onCancel={() => setPendingRemove(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingClean != null}
+        title="Clean up orphaned blobs?"
+        body={
+          pendingClean
+            ? `Deletes ${pendingClean.orphaned_blobs.length} blob file${pendingClean.orphaned_blobs.length === 1 ? "" : "s"} nothing installed points at, freeing ${formatBytes(pendingClean.orphaned_bytes)}. This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Clean up"
+        onConfirm={() => {
+          if (pendingClean) void clean(pendingClean);
+          setPendingClean(null);
+        }}
+        onCancel={() => setPendingClean(null)}
       />
     </>
   );

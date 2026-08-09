@@ -10,7 +10,7 @@ use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use anchor_core::{BenchRun, BenchSample, HardwareProfile, HwIdentity, Model};
+use anchor_core::{BenchRun, BenchSample, HardwareProfile, HwIdentity, Model, StorageScan};
 use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
@@ -588,6 +588,27 @@ async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
     registry(&app)?.remove(&id).await.map_err(|e| e.to_string())
 }
 
+/// Scans Ollama's on-disk model store (`blobs/` + `manifests/`): dedupe
+/// savings from content-addressed sharing, and blobs no manifest references
+/// anymore. `Ok(None)` when the store doesn't exist yet (nothing pulled). Runs
+/// on a blocking thread — filesystem walking, like the hardware profiler's
+/// subprocess, must not block the async runtime.
+#[tauri::command]
+async fn scan_storage() -> Result<Option<StorageScan>, String> {
+    tauri::async_runtime::spawn_blocking(anchor_hub::storage::scan)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Deletes every orphaned blob listed in `scan` and returns the bytes freed.
+#[tauri::command]
+async fn clean_orphaned_blobs(scan: StorageScan) -> Result<u64, String> {
+    tauri::async_runtime::spawn_blocking(move || anchor_hub::storage::clean_orphaned(&scan))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Reports which installed models have a newer version upstream as
 /// `(model_id, update_available)` pairs, by diffing manifest digests against
 /// the Ollama registry (heavily cached, best-effort — see [`anchor_hub::updates`]).
@@ -1016,6 +1037,8 @@ pub fn run() {
             unload_model,
             running_models,
             remove_model,
+            scan_storage,
+            clean_orphaned_blobs,
             get_hardware_profile,
             refresh_hardware_profile,
             get_server_status,

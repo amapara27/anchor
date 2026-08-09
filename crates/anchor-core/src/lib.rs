@@ -277,6 +277,33 @@ pub struct EnvTelemetry {
     pub resident_model_count: Option<u32>,
 }
 
+/// One content-addressed blob under Ollama's `blobs/` directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageBlob {
+    /// Colon form, e.g. `"sha256:abcd…"` — matches what a manifest's `digest`
+    /// field carries (the on-disk filename uses a dash instead: `sha256-abcd…`).
+    pub digest: String,
+    pub size_bytes: u64,
+}
+
+/// Result of walking Ollama's on-disk model store: what's shared between
+/// manifests via content-addressing, and what nothing references anymore.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageScan {
+    /// The resolved store root (`$OLLAMA_MODELS`, else `~/.ollama/models`).
+    pub root: String,
+    pub blobs_bytes: u64,
+    pub manifests_bytes: u64,
+    /// Bytes saved by content-addressed sharing: for every blob referenced by
+    /// N>1 manifests, (N-1) × blob size. Ollama already dedupes at pull time —
+    /// this is reporting, not new dedup logic.
+    pub dedup_savings_bytes: u64,
+    /// Blob files under `blobs/` no current manifest references (interrupted
+    /// pulls, removal races) — safe to delete.
+    pub orphaned_blobs: Vec<StorageBlob>,
+    pub orphaned_bytes: u64,
+}
+
 /// One benchmark result: a model, a configuration, a machine, and what it did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchRun {
