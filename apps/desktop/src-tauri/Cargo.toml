@@ -25,8 +25,17 @@ anchor-workflows = { workspace = true }
 keyring = { version = "4.1.6", default-features = false, features = ["apple-native-keyring-store", "v1"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
 tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Dock icon isn't settable through Tauri's public API (Window::set_icon is a
+# per-window titlebar icon, a no-op concept on macOS) — dock_icon.rs talks to
+# NSApplication directly. These three are already in the dependency graph via
+# tao/wry, so this doesn't add a new tree, just exposes what's already built.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSImage"] }
+objc2-foundation = "0.3"

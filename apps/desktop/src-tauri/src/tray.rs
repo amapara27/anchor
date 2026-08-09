@@ -10,9 +10,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anchor_hub::{server, status, GenerateRequest, Registry};
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Wry};
+
+/// Solid-black, alpha-only glyph (no plate) — a macOS "template image", which
+/// the OS recolors itself for light/dark menu bar and highlight state.
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray-icon-template.png");
 
 // ponytail: 5s poll is ample for a menu-bar status label; raise/lower if it ever feels laggy.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -45,8 +50,10 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let handler_current = current.clone();
+    let icon = Image::from_bytes(TRAY_ICON).expect("tray-icon-template.png is a valid PNG");
     TrayIconBuilder::with_id("anchor-tray")
-        .icon(app.default_window_icon().expect("app has a default icon").clone())
+        .icon(icon)
+        .icon_as_template(true)
         .tooltip("Anchor")
         .menu(&menu)
         .on_menu_event(move |app, event| match event.id().as_ref() {

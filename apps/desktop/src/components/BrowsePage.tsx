@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ArchMeta, LibraryEntry, LibraryModel } from "../types";
 import { useLibrary } from "../lib/useLibrary";
 import { useModels } from "../lib/useModels";
@@ -9,7 +9,7 @@ import { DEFAULT_CONTEXT } from "../lib/fit";
 import { parseContext, parseSize, parseTagParams } from "../lib/format";
 import { PageHeader, GhostButton } from "./PageHeader";
 import { ProgressTrack } from "./DownloadProgressBar";
-import { CheckIcon, ChevronDownIcon, DownloadIcon, RefreshIcon, SearchIcon, WarningIcon } from "./icons";
+import { CheckIcon, ChevronDownIcon, DownloadIcon, RefreshIcon, SearchIcon, WarningIcon, XIcon } from "./icons";
 
 /** Sorts offered over the listing. */
 const SORTS = [
@@ -78,7 +78,7 @@ export function BrowsePage({
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("popular");
   const [caps, setCaps] = useState<string[]>([]);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [openEntry, setOpenEntry] = useState<LibraryEntry | null>(null);
   const [shown, setShown] = useState(PAGE);
 
   // Installed ids, so a row can say "installed" instead of offering a re-pull.
@@ -118,10 +118,9 @@ export function BrowsePage({
     setCaps((list) => (list.includes(c) ? list.filter((x) => x !== c) : [...list, c]));
   };
 
-  const toggleRow = (name: string) => {
-    const next = expanded === name ? null : name;
-    setExpanded(next);
-    if (next) loadTags(next);
+  const openRow = (entry: LibraryEntry) => {
+    setOpenEntry(entry);
+    loadTags(entry.name);
   };
 
   return (
@@ -221,23 +220,7 @@ export function BrowsePage({
 
           <section className="card divide-y divide-hair overflow-hidden">
             {visible.slice(0, shown).map((entry) => (
-              <BrowseRow
-                key={entry.name}
-                entry={entry}
-                open={expanded === entry.name}
-                onToggle={() => toggleRow(entry.name)}
-                tags={tags[entry.name]}
-                loadingTags={!!loadingTags[entry.name]}
-                installed={installed}
-                downloads={downloads}
-                onPull={startDownload}
-                archFor={archFor}
-                hardware={profile}
-                onResolve={resolve}
-                resolving={resolving}
-                onSelect={onSelect}
-                selectedTag={selectedTag}
-              />
+              <BrowseRow key={entry.name} entry={entry} onOpen={() => openRow(entry)} />
             ))}
             {visible.length === 0 && (
               <p className="px-4 py-10 text-center text-sm text-fg-subtle">
@@ -255,6 +238,25 @@ export function BrowsePage({
           )}
         </>
       )}
+
+      <TagPickerDialog
+        entry={openEntry}
+        tags={openEntry ? tags[openEntry.name] : undefined}
+        loadingTags={!!(openEntry && loadingTags[openEntry.name])}
+        installed={installed}
+        downloads={downloads}
+        onPull={startDownload}
+        archFor={archFor}
+        hardware={profile}
+        onResolve={resolve}
+        resolving={resolving}
+        onSelect={(m) => {
+          onSelect(m);
+          setOpenEntry(null);
+        }}
+        selectedTag={selectedTag}
+        onClose={() => setOpenEntry(null)}
+      />
     </div>
   );
 }
@@ -410,13 +412,56 @@ function TagFit({
   );
 }
 
-/** One library model: summary line, and its tag list once expanded. */
-function BrowseRow({
+/** One library model summary row — opens the tag picker dialog on click. */
+function BrowseRow({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left transition-colors duration-150 ease-out hover:bg-inset"
+    >
+      <span className="flex min-w-0 flex-col gap-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="data text-[13px] font-medium text-fg">{entry.name}</span>
+          {entry.capabilities.map((c) => (
+            <span
+              key={c}
+              className="rounded-full border border-accent-line bg-accent-soft px-1.5 py-px text-[9.5px] uppercase tracking-[0.06em] text-accent-text"
+            >
+              {c}
+            </span>
+          ))}
+          {entry.sizes.map((s) => (
+            <span
+              key={s}
+              className="data rounded-full border border-hair px-1.5 py-px text-[9.5px] text-fg-subtle"
+            >
+              {s}
+            </span>
+          ))}
+        </span>
+        <span className="line-clamp-2 text-[11.5px] leading-[1.5] text-fg-muted">
+          {entry.description}
+        </span>
+      </span>
+
+      <span className="flex shrink-0 items-center gap-3">
+        <span className="flex flex-col items-end gap-0.5">
+          <span className="data text-[11.5px] text-fg-muted">{formatPulls(entry.pulls)} pulls</span>
+          <span className="data text-[10.5px] text-fg-subtle">
+            {entry.tag_count} tags · {entry.updated}
+          </span>
+        </span>
+        <ChevronDownIcon className="size-3.5 -rotate-90 text-fg-subtle" />
+      </span>
+    </button>
+  );
+}
+
+/** One tag row — identical markup whether it's the only consumer left, the tag picker dialog. */
+function TagRow({
   entry,
-  open,
-  onToggle,
-  tags,
-  loadingTags,
+  t,
   installed,
   downloads,
   onPull,
@@ -428,137 +473,196 @@ function BrowseRow({
   selectedTag,
 }: {
   entry: LibraryEntry;
-  open: boolean;
-  onToggle: () => void;
-  tags: ReturnType<typeof useLibrary>["tags"][string] | undefined;
-  loadingTags: boolean;
+  t: { tag: string; size: string; context: string; modality: string; digest: string };
   installed: Set<string>;
   downloads: ReturnType<typeof useModels>["downloads"];
   onPull: (id: string) => void;
-  /** GGUF metadata for tags we already know, so their fit is exact not bucketed. */
   archFor: (tag: string) => ArchMeta | null;
   hardware: { memory_bytes?: number | null; chip?: string | null } | null;
-  /** Reads one tag's real architecture from the registry, on request. */
   onResolve: (tag: string, digest: string) => void;
   resolving: Record<string, boolean>;
   onSelect: (m: LibraryModel) => void;
   selectedTag: string | null;
 }) {
+  const download = downloads[t.tag];
+  const have = installed.has(t.tag);
+  const fit = tagFit(t, archFor(t.tag), hardware);
   return (
-    <div>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-3 px-4 py-3 text-left transition-colors duration-150 ease-out hover:bg-inset"
-      >
-        <span className="flex min-w-0 flex-col gap-1">
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="data text-[13px] font-medium text-fg">{entry.name}</span>
-            {entry.capabilities.map((c) => (
-              <span
-                key={c}
-                className="rounded-full border border-accent-line bg-accent-soft px-1.5 py-px text-[9.5px] uppercase tracking-[0.06em] text-accent-text"
-              >
-                {c}
-              </span>
-            ))}
-            {entry.sizes.map((s) => (
-              <span
-                key={s}
-                className="data rounded-full border border-hair px-1.5 py-px text-[9.5px] text-fg-subtle"
-              >
-                {s}
-              </span>
-            ))}
-          </span>
-          <span className="line-clamp-2 text-[11.5px] leading-[1.5] text-fg-muted">
-            {entry.description}
-          </span>
+    <div
+      onClick={() => onSelect(tagToLibraryModel(entry, t, archFor(t.tag), have))}
+      className={[
+        "grid cursor-pointer grid-cols-[minmax(0,1fr)_72px_56px_minmax(0,132px)_104px] items-center gap-3 border-b border-hair px-4 py-2 last:border-b-0",
+        "transition-colors duration-150 ease-out hover:bg-raised",
+        t.tag === selectedTag ? "bg-inset" : "",
+      ].join(" ")}
+    >
+      <span className="data min-w-0 truncate text-[12px] text-fg" title={t.tag}>
+        {t.tag}
+      </span>
+      <span className="data text-right text-[11px] text-fg-muted">{t.size}</span>
+      <span className="data text-right text-[11px] text-fg-muted">{t.context}</span>
+      <TagFit
+        fit={fit}
+        modality={t.modality}
+        onResolve={() => onResolve(t.tag, t.digest)}
+        resolving={!!resolving[t.tag]}
+      />
+      {have ? (
+        <span className="flex items-center justify-end gap-1.5 text-[11px] text-ok">
+          <CheckIcon className="size-3" /> installed
         </span>
-
-        <span className="flex shrink-0 items-center gap-3">
-          <span className="flex flex-col items-end gap-0.5">
-            <span className="data text-[11.5px] text-fg-muted">{formatPulls(entry.pulls)} pulls</span>
-            <span className="data text-[10.5px] text-fg-subtle">
-              {entry.tag_count} tags · {entry.updated}
-            </span>
+      ) : download ? (
+        // The listing gives size as a string ("4.9GB"), so there's no byte
+        // total to count against — show the percentage only.
+        <span className="flex flex-col items-end gap-1">
+          <span className="data text-[10.5px] text-fg-subtle">
+            {download.status === "verifying" ? "verifying…" : `${Math.round(download.progress * 100)}%`}
           </span>
-          <ChevronDownIcon
-            className={`size-3.5 text-fg-subtle transition-transform duration-150 ease-out ${open ? "rotate-180" : ""}`}
+          <ProgressTrack
+            pct={download.status === "verifying" ? 100 : download.progress * 100}
+            className="h-1 w-full"
           />
         </span>
-      </button>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPull(t.tag);
+          }}
+          className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-hair px-2 py-1 text-[11px] text-fg-muted transition-colors hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+        >
+          <DownloadIcon className="size-3" /> Pull
+        </button>
+      )}
+    </div>
+  );
+}
 
-      {open && (
-        <div className="border-t border-hair bg-inset px-4 py-2.5">
-          {loadingTags && !tags && <p className="py-2 text-[11.5px] text-fg-subtle">Loading tags…</p>}
+/**
+ * Picks one tag from a library model's full tag list, in a bounded, scrollable,
+ * filterable overlay instead of an inline accordion — some families (llama3.1,
+ * qwen2.5, …) publish 90+ tags, which used to push a page-length block into the
+ * row list itself. Chrome mirrors `ConfirmDialog` (backdrop, Escape-to-close,
+ * focus-on-open); the scrollable filtered list mirrors `CommandPalette`.
+ */
+function TagPickerDialog({
+  entry,
+  tags,
+  loadingTags,
+  installed,
+  downloads,
+  onPull,
+  archFor,
+  hardware,
+  onResolve,
+  resolving,
+  onSelect,
+  selectedTag,
+  onClose,
+}: {
+  entry: LibraryEntry | null;
+  tags: ReturnType<typeof useLibrary>["tags"][string] | undefined;
+  loadingTags: boolean;
+  installed: Set<string>;
+  downloads: ReturnType<typeof useModels>["downloads"];
+  onPull: (id: string) => void;
+  archFor: (tag: string) => ArchMeta | null;
+  hardware: { memory_bytes?: number | null; chip?: string | null } | null;
+  onResolve: (tag: string, digest: string) => void;
+  resolving: Record<string, boolean>;
+  onSelect: (m: LibraryModel) => void;
+  selectedTag: string | null;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!entry) return;
+    setFilter("");
+    requestAnimationFrame(() => inputRef.current?.focus());
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [entry, onClose]);
+
+  if (!entry) return null;
+
+  const q = filter.trim().toLowerCase();
+  const filtered = q ? tags?.filter((t) => t.tag.toLowerCase().includes(q)) : tags;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" role="dialog" aria-modal="true" aria-label={`${entry.name} tags`}>
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden />
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="relative flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-[var(--radius-card)] border border-hair2 bg-surface shadow-(--shadow-overlay) outline-none"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-hair px-5 py-4">
+          <div className="min-w-0">
+            <h2 className="data text-[14px] font-semibold text-fg">{entry.name}</h2>
+            <p className="mt-0.5 line-clamp-2 text-[11.5px] leading-relaxed text-fg-muted">
+              {entry.description}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-inset hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
+          >
+            <XIcon className="size-4" />
+          </button>
+        </div>
+
+        <label className="flex h-9 shrink-0 items-center gap-2 border-b border-hair px-5">
+          <SearchIcon className="size-3.5 shrink-0 text-fg-subtle" />
+          <input
+            ref={inputRef}
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder={`Filter ${entry.tag_count} tags…`}
+            aria-label="Filter tags"
+            className="min-w-0 flex-1 bg-transparent text-[12.5px] text-fg placeholder:text-fg-subtle focus:outline-none"
+          />
+        </label>
+
+        <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto">
+          {loadingTags && !tags && <p className="px-5 py-6 text-center text-[11.5px] text-fg-subtle">Loading tags…</p>}
           {!loadingTags && !tags && (
-            <p className="py-2 text-[11.5px] text-fg-subtle">
-              Couldn’t load tags — collapse and expand to retry.
+            <p className="px-5 py-6 text-center text-[11.5px] text-fg-subtle">
+              Couldn’t load tags — close and reopen to retry.
             </p>
           )}
-          {tags?.length === 0 && <p className="py-2 text-[11.5px] text-fg-subtle">No tags published.</p>}
-          {tags?.map((t) => {
-            const download = downloads[t.tag];
-            const have = installed.has(t.tag);
-            const fit = tagFit(t, archFor(t.tag), hardware);
-            return (
-              <div
-                key={t.tag}
-                onClick={() => onSelect(tagToLibraryModel(entry, t, archFor(t.tag), have))}
-                className={[
-                  "grid cursor-pointer grid-cols-[minmax(0,1fr)_72px_56px_minmax(0,132px)_104px] items-center gap-3 border-b border-hair py-2 last:border-b-0",
-                  "transition-colors duration-150 ease-out hover:bg-raised",
-                  t.tag === selectedTag ? "bg-inset" : "",
-                ].join(" ")}
-              >
-                <span className="data min-w-0 truncate text-[12px] text-fg" title={t.tag}>
-                  {t.tag}
-                </span>
-                <span className="data text-right text-[11px] text-fg-muted">{t.size}</span>
-                <span className="data text-right text-[11px] text-fg-muted">{t.context}</span>
-                <TagFit
-                  fit={fit}
-                  modality={t.modality}
-                  onResolve={() => onResolve(t.tag, t.digest)}
-                  resolving={!!resolving[t.tag]}
-                />
-                {have ? (
-                  <span className="flex items-center justify-end gap-1.5 text-[11px] text-ok">
-                    <CheckIcon className="size-3" /> installed
-                  </span>
-                ) : download ? (
-                  // The listing gives size as a string ("4.9GB"), so there's no
-                  // byte total to count against — show the percentage only.
-                  <span className="flex flex-col items-end gap-1">
-                    <span className="data text-[10.5px] text-fg-subtle">
-                      {download.status === "verifying"
-                        ? "verifying…"
-                        : `${Math.round(download.progress * 100)}%`}
-                    </span>
-                    <ProgressTrack
-                      pct={download.status === "verifying" ? 100 : download.progress * 100}
-                      className="h-1 w-full"
-                    />
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onPull(t.tag);
-                    }}
-                    className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-hair px-2 py-1 text-[11px] text-fg-muted transition-colors hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
-                  >
-                    <DownloadIcon className="size-3" /> Pull
-                  </button>
-                )}
-              </div>
-            );
-          })}
+          {tags?.length === 0 && (
+            <p className="px-5 py-6 text-center text-[11.5px] text-fg-subtle">No tags published.</p>
+          )}
+          {filtered?.length === 0 && tags && tags.length > 0 && (
+            <p className="px-5 py-6 text-center text-[11.5px] text-fg-subtle">No tags match “{filter}”.</p>
+          )}
+          {filtered?.map((t) => (
+            <TagRow
+              key={t.tag}
+              entry={entry}
+              t={t}
+              installed={installed}
+              downloads={downloads}
+              onPull={onPull}
+              archFor={archFor}
+              hardware={hardware}
+              onResolve={onResolve}
+              resolving={resolving}
+              onSelect={onSelect}
+              selectedTag={selectedTag}
+            />
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
