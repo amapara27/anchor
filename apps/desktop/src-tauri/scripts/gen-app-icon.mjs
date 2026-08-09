@@ -8,17 +8,17 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const SIZE = 1024;
-// Design tokens (styles.css).
-const CANVAS = [11, 12, 14]; // --color-canvas  #0b0c0e
-const SURFACE = [19, 20, 23]; // --color-surface #131417
-const EDGE = [40, 42, 47]; // faint hairline (~white/8 over surface)
-const ACCENT = [79, 124, 255]; // --color-accent  #4f7cff
+// Design tokens (styles.css :root — dark theme, the app's default).
+const CANVAS = [10, 10, 11]; // --color-canvas  #0a0a0b
+const SURFACE = [20, 20, 22]; // --color-surface #141416
+const EDGE = [40, 40, 42]; // --hair: white/8.5% over surface
+const ACCENT = [122, 103, 222]; // --color-accent  #7a67de
 
 const cxp = SIZE / 2;
 const cyp = SIZE / 2;
 const s = SIZE * 0.0276; // viewBox(0..24) units → px
 const VBX = 12; // glyph bbox centre x in viewBox space
-const VBY = 11.75; // glyph bbox centre y in viewBox space
+const VBY = 11.5; // glyph bbox centre y in viewBox space
 const HW = 1.0; // half stroke width, viewBox units
 const half = SIZE * 0.4; // plate half-extent (80% tile)
 const rad = SIZE * 0.2; // plate corner radius (squircle)
@@ -45,13 +45,25 @@ for (let y = 0; y < SIZE; y++) {
     const qy = Math.abs(y - cyp) - half + rad;
     const plate = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - rad;
 
-    // Anchor glyph SDF in viewBox units, unioned from stroked primitives.
+    // Anchor glyph SDF in viewBox units, unioned from stroked primitives —
+    // mirrors the current AnchorMark in Sidebar.tsx (ring + shank + crossbar +
+    // flukes arc + four barb ticks). The arc's real path is two elliptical-arc
+    // commands; approximated here as a plain circle (center (12, 12.9), r 8.5)
+    // restricted to the lower half — passes through both real endpoints
+    // (3.5,12.9)/(20.5,12.9), same "stroked primitive" approximation style
+    // already used for the ring/shank/crossbar, indistinguishable once
+    // rasterized at icon sizes.
     const vx = VBX + (x - cxp) / s;
     const vy = VBY + (y - cyp) / s;
-    let g = Math.abs(Math.hypot(vx - 12, vy - 5) - 2.5) - HW; // ring (shackle)
-    g = Math.min(g, sdSeg(vx, vy, 12, 7.5, 12, 21) - HW); // shank
-    g = Math.min(g, sdSeg(vx, vy, 8, 12, 16, 12) - HW); // stock (crossbar)
-    if (vy >= 12) g = Math.min(g, Math.abs(Math.hypot(vx - 12, vy - 12) - 9) - HW); // arc (flukes)
+    let g = Math.abs(Math.hypot(vx - 12, vy - 3.6) - 2) - HW; // ring (shackle)
+    g = Math.min(g, sdSeg(vx, vy, 12, 5.6, 12, 21.2) - HW); // shank
+    g = Math.min(g, sdSeg(vx, vy, 8.2, 8.6, 15.8, 8.6) - HW); // stock (crossbar)
+    if (vy >= 12.9) g = Math.min(g, Math.abs(Math.hypot(vx - 12, vy - 12.9) - 8.5) - HW); // arc (flukes)
+    // Four barb ticks at the fluke ends.
+    g = Math.min(g, sdSeg(vx, vy, 3.5, 12.9, 1.7, 11.2) - HW);
+    g = Math.min(g, sdSeg(vx, vy, 3.5, 12.9, 5.8, 12.3) - HW);
+    g = Math.min(g, sdSeg(vx, vy, 20.5, 12.9, 22.3, 11.2) - HW);
+    g = Math.min(g, sdSeg(vx, vy, 20.5, 12.9, 18.2, 12.3) - HW);
 
     // Compose: canvas → plate → hairline → accent glyph, all anti-aliased.
     let col = mix(CANVAS, SURFACE, clamp(0.5 - plate, 0, 1));
