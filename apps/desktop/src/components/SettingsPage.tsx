@@ -6,7 +6,7 @@ import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useServerStatus } from "../lib/useServerStatus";
 import { useTheme, type ThemePref } from "../lib/useTheme";
 import { formatBytes, formatContext } from "../lib/format";
-import { PageHeader, GhostButton } from "./PageHeader";
+import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
@@ -184,7 +184,7 @@ function AppearancePanel() {
           );
         })}
       </div>
-      <NotBuiltYet>
+      <NotBuiltYet label="coming soon">
         Compact density and a live tokens-per-second readout in chat are on the list. Only the theme is wired up
         today.
       </NotBuiltYet>
@@ -230,7 +230,7 @@ const UNSET = { value: "", label: "Model default" };
  * is not zero: it means the option is omitted from the request entirely.
  */
 function InferencePanel() {
-  const { presets, loading, save, create, remove } = usePresets();
+  const { presets, loading, save, saveNow, create, remove } = usePresets();
   const { models } = useModels();
   const [editingId, setEditingIdState] = useState(() => lastEditingId);
   const setEditingId = (next: string) => {
@@ -238,6 +238,7 @@ function InferencePanel() {
     setEditingIdState(next);
   };
   const [pendingDelete, setPendingDelete] = useState<Preset | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // A deleted preset leaves the editor pointing at nothing — fall back.
   const preset = presets.find((p) => p.id === editingId) ?? presets[0] ?? null;
@@ -270,6 +271,17 @@ function InferencePanel() {
           onChange={setEditingId}
           options={presets.map((p) => ({ value: p.id, label: p.name.trim() || "Untitled preset" }))}
         />
+        <PrimaryButton
+          className="h-8"
+          disabled={saving}
+          onClick={async () => {
+            setSaving(true);
+            await saveNow(preset);
+            setSaving(false);
+          }}
+        >
+          {saving ? "Saving…" : "Save"}
+        </PrimaryButton>
         <GhostButton className="h-8" onClick={() => setEditingId(create(nextPresetName(presets)).id)}>
           New
         </GhostButton>
@@ -574,7 +586,7 @@ function PrivacyPanel() {
           </span>
         </span>
       </div>
-      <NotBuiltYet>
+      <NotBuiltYet label="coming soon">
         Publishing controls — what a shared run includes, and whether it carries a handle — arrive with the
         results server. Nothing is published today, with or without a preference, because there is nowhere to
         publish to.

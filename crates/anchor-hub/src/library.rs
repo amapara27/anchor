@@ -119,7 +119,16 @@ pub fn parse_library(html: &str) -> Vec<LibraryEntry> {
             continue;
         }
 
-        let (capabilities, sizes) = badges(chunk);
+        let (capabilities, sizes, cloud_only) = badges(chunk);
+        // Cloud-only entries (no locally-pullable size at all — e.g. deepseek-v4-flash)
+        // have nothing Anchor can ever load: pulling one just registers a proxy to
+        // Ollama's hosted service, not local weights. A model that offers *both*
+        // (e.g. gpt-oss's 20b/120b alongside a cloud badge) keeps its real sizes —
+        // only the fully-cloud entries are pointless to list here.
+        if cloud_only && sizes.is_empty() {
+            continue;
+        }
+
         out.push(LibraryEntry {
             name,
             description: between(chunk, "<p class=\"max-w-lg", "</p>")
@@ -141,13 +150,16 @@ pub fn parse_library(html: &str) -> Vec<LibraryEntry> {
     out
 }
 
-/// Splits a model block's badges into (capabilities, parameter sizes).
+/// Splits a model block's badges into (capabilities, parameter sizes, has a
+/// cloud badge).
 ///
-/// The two are told apart by colour class — indigo for a capability, blue for a
-/// size — which is the only thing distinguishing them in the markup.
-fn badges(chunk: &str) -> (Vec<String>, Vec<String>) {
+/// The three are told apart by colour class — indigo for a capability, blue
+/// for a size, cyan for the "cloud" badge Ollama shows on models it also (or
+/// only) serves from its own hosted infrastructure rather than local weights.
+fn badges(chunk: &str) -> (Vec<String>, Vec<String>, bool) {
     let mut capabilities = Vec::new();
     let mut sizes = Vec::new();
+    let mut cloud = false;
     for span in chunk.split("<span ").skip(1) {
         let Some((attrs, rest)) = span.split_once('>') else {
             continue;
@@ -155,6 +167,10 @@ fn badges(chunk: &str) -> (Vec<String>, Vec<String>) {
         let Some(text) = rest.split("</span>").next().map(clean) else {
             continue;
         };
+        if attrs.contains("text-cyan-500") {
+            cloud = true;
+            continue;
+        }
         if text.is_empty() {
             continue;
         }
@@ -164,7 +180,7 @@ fn badges(chunk: &str) -> (Vec<String>, Vec<String>) {
             sizes.push(text);
         }
     }
-    (capabilities, sizes)
+    (capabilities, sizes, cloud)
 }
 
 /// Each tag row's desktop layout, which carries the size/context/modality
@@ -181,7 +197,9 @@ pub fn parse_tags(html: &str) -> Vec<LibraryTag> {
         let Some(tag) = between(row, TAG_INPUT, "\"").map(clean) else {
             continue;
         };
-        if tag.is_empty() {
+        // A "-cloud" tag (e.g. "gpt-oss:120b-cloud") pulls a proxy to Ollama's
+        // hosted service, not local weights — there's nothing for Anchor to load.
+        if tag.is_empty() || tag.ends_with("-cloud") {
             continue;
         }
         // Size and context are the two `col-span-2` paragraphs, in that order.

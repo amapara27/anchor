@@ -11,13 +11,21 @@ import type { ReactNode } from "react";
  * `what` names the missing backend so the section still reads as a roadmap
  * rather than a bug.
  */
-export function NotBuiltYet({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function NotBuiltYet({
+  children,
+  className = "",
+  label = "not built yet",
+}: {
+  children: ReactNode;
+  className?: string;
+  label?: string;
+}) {
   return (
     <div
       className={`flex flex-col gap-1.5 rounded-[9px] border border-dashed border-hair bg-inset px-3.5 py-3 ${className}`}
     >
       <span className="data self-start rounded-full border border-hair px-2 py-px text-[9.5px] uppercase tracking-[0.06em] text-fg-subtle">
-        not built yet
+        {label}
       </span>
       <span className="text-[11.5px] leading-[1.5] text-fg-subtle">{children}</span>
     </div>

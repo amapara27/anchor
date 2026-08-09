@@ -157,6 +157,120 @@ fn parses_the_library_listing() {
     assert_eq!(models[1].pulls, 29_500_000);
 }
 
+/// A model offering only cloud-hosted variants (e.g. deepseek-v4-flash: no
+/// local size badge at all, just a cyan "cloud" one) alongside one offering
+/// both (gpt-oss: real local sizes plus a cloud badge for its larger cloud
+/// variants) — real markup shape from `ollama.com/library`.
+const CLOUD_LIBRARY_HTML: &str = r#"
+<div  id="repo">
+  <ul role="list" class="grid grid-cols-1 gap-y-3">
+    <li  class="flex items-baseline border-b border-neutral-200 py-6">
+      <a href="/library/deepseek-v4-flash" class="group w-full space-y-5">
+        <div  title="deepseek-v4-flash" class="flex flex-col">
+          <h2 class="truncate text-xl font-medium underline-offset-2 md:text-2xl">
+            <div class="flex space-x-2 items-center">
+              <span class="group-hover:underline truncate">deepseek-v4-flash</span>
+            </div>
+          </h2>
+          <p class="max-w-lg break-words text-neutral-800 text-md">Cloud-hosted only.</p>
+        </div>
+        <div class="flex flex-col space-y-2">
+          <div class="flex flex-wrap space-x-2">
+              <span  class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600 sm:text-[13px]">tools</span>
+              <span class="inline-flex items-center rounded-md bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-500 sm:text-[13px]">cloud</span>
+          </div>
+          <p class="my-4 flex space-x-5 text-[13px] font-medium text-neutral-500">
+              <span class="flex items-center"><span >1.0M</span><span class="hidden sm:flex">&nbsp;Pulls</span></span>
+              <span class="flex items-center"><span >2</span><span class="hidden sm:flex">&nbsp;Tags</span></span>
+              <span class="flex items-center" title="x"><span class="hidden sm:flex">Updated&nbsp;</span><span >1 week ago</span></span>
+          </p>
+        </div>
+      </a>
+    </li>
+    <li  class="flex items-baseline border-b border-neutral-200 py-6">
+      <a href="/library/gpt-oss" class="group w-full space-y-5">
+        <div  title="gpt-oss" class="flex flex-col">
+          <h2 class="truncate text-xl font-medium underline-offset-2 md:text-2xl">
+            <div class="flex space-x-2 items-center">
+              <span class="group-hover:underline truncate">gpt-oss</span>
+            </div>
+          </h2>
+          <p class="max-w-lg break-words text-neutral-800 text-md">Local and cloud sizes both offered.</p>
+        </div>
+        <div class="flex flex-col space-y-2">
+          <div class="flex flex-wrap space-x-2">
+              <span  class="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-600 sm:text-[13px]">tools</span>
+              <span  class="inline-flex items-center rounded-md bg-[#ddf4ff] px-2 py-0.5 text-xs font-medium text-blue-600 sm:text-[13px]">20b</span>
+              <span  class="inline-flex items-center rounded-md bg-[#ddf4ff] px-2 py-0.5 text-xs font-medium text-blue-600 sm:text-[13px]">120b</span>
+              <span class="inline-flex items-center rounded-md bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-500 sm:text-[13px]">cloud</span>
+          </div>
+          <p class="my-4 flex space-x-5 text-[13px] font-medium text-neutral-500">
+              <span class="flex items-center"><span >5.0M</span><span class="hidden sm:flex">&nbsp;Pulls</span></span>
+              <span class="flex items-center"><span >5</span><span class="hidden sm:flex">&nbsp;Tags</span></span>
+              <span class="flex items-center" title="x"><span class="hidden sm:flex">Updated&nbsp;</span><span >1 week ago</span></span>
+          </p>
+        </div>
+      </a>
+    </li>
+  </ul>
+</div>
+"#;
+
+#[test]
+fn cloud_only_entries_are_dropped_but_mixed_entries_keep_their_local_sizes() {
+    let models = parse_library(CLOUD_LIBRARY_HTML);
+    // deepseek-v4-flash (cloud badge, no local size) is gone entirely — nothing
+    // Anchor could ever load. gpt-oss (cloud badge, but real local sizes too)
+    // survives with its local sizes intact.
+    assert_eq!(models.len(), 1);
+    assert_eq!(models[0].name, "gpt-oss");
+    assert_eq!(models[0].sizes, ["20b", "120b"]);
+}
+
+/// A `-cloud` tag row (e.g. `gpt-oss:120b-cloud`) alongside its real local
+/// counterpart — the exact shape of `ollama.com/library/gpt-oss/tags`.
+const CLOUD_TAGS_HTML: &str = r#"
+          <div class="group px-4 py-3">
+            <div class="hidden md:flex flex-col space-y-[6px]">
+              <div class="grid grid-cols-12 items-center">
+                <span class="flex items-center font-medium col-span-6 group text-sm">
+                  <a href="/library/gpt-oss:120b" class="group-hover:underline">gpt-oss:120b</a>
+                  <input class="command hidden" value="gpt-oss:120b" />
+                </span>
+                <p class="col-span-2 text-neutral-500 text-[13px]">65GB</p>
+                <p class="col-span-2 text-neutral-500 text-[13px]">128K</p>
+                <div class="col-span-2 text-neutral-500 text-[13px] ">Text</div>
+              </div>
+              <div class="flex text-neutral-500 text-xs items-center">
+                <span class="font-mono text-[11px]">aaaaaaaaaaaa</span>&nbsp;·&nbsp;1 week ago
+              </div>
+            </div>
+          </div>
+          <div class="group px-4 py-3">
+            <div class="hidden md:flex flex-col space-y-[6px]">
+              <div class="grid grid-cols-12 items-center">
+                <span class="flex items-center font-medium col-span-6 group text-sm">
+                  <a href="/library/gpt-oss:120b-cloud" class="group-hover:underline">gpt-oss:120b-cloud</a>
+                  <input class="command hidden" value="gpt-oss:120b-cloud" />
+                </span>
+                <p class="col-span-2 text-neutral-500 text-[13px]">—</p>
+                <p class="col-span-2 text-neutral-500 text-[13px]">128K</p>
+                <div class="col-span-2 text-neutral-500 text-[13px] ">Text</div>
+              </div>
+              <div class="flex text-neutral-500 text-xs items-center">
+                <span class="font-mono text-[11px]">bbbbbbbbbbbb</span>&nbsp;·&nbsp;1 week ago
+              </div>
+            </div>
+          </div>
+"#;
+
+#[test]
+fn cloud_suffixed_tags_are_excluded_from_pullable_tags() {
+    let tags = parse_tags(CLOUD_TAGS_HTML);
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].tag, "gpt-oss:120b");
+}
+
 #[test]
 fn parses_tags_without_duplicating_the_mobile_layout() {
     let tags = parse_tags(TAGS_HTML);

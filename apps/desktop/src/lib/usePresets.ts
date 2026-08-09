@@ -59,6 +59,21 @@ export function usePresets() {
     }, SAVE_DEBOUNCE_MS);
   }, []);
 
+  /** Writes a preset immediately, bypassing the debounce — for an explicit
+   *  Save action that wants instant confirmation rather than a scheduled
+   *  write. Cancels any pending debounced write for the same preset first so
+   *  the two can't race and re-apply a stale patch after this one lands. */
+  const saveNow = useCallback(async (preset: Preset) => {
+    setPresets((list) => {
+      const at = list.findIndex((p) => p.id === preset.id);
+      if (at < 0) return [...list, preset];
+      return list.map((p) => (p.id === preset.id ? preset : p));
+    });
+    window.clearTimeout(timers.current[preset.id]);
+    delete timers.current[preset.id];
+    await invoke("save_preset", { preset }).catch(() => {});
+  }, []);
+
   const create = useCallback(
     (name: string) => {
       const preset = emptyPreset(name);
@@ -97,5 +112,5 @@ export function usePresets() {
     };
   }, [presets]);
 
-  return { presets, loading, reload, save, create, remove };
+  return { presets, loading, reload, save, saveNow, create, remove };
 }

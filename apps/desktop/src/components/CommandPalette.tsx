@@ -22,7 +22,6 @@ interface Command {
 // Top-level pages plus the Models hub's sub-views (deep-linked via `sub`).
 const PAGES: { tab: Tab; label: string; sub?: ModelsTab }[] = [
   { tab: "chat", label: "Chat" },
-  { tab: "agents", label: "Agents" },
   { tab: "models", label: "Installed models", sub: "installed" },
   { tab: "models", label: "Discover models", sub: "discover" },
   { tab: "models", label: "Browse the Ollama library", sub: "browse" },

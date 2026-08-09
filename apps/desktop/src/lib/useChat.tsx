@@ -5,21 +5,44 @@ import { recordUse } from "./lastUsed";
 
 /**
  * Owns the chat workspace: the conversation list, the active conversation's
- * messages, and a single streaming turn. The backend DB is the source of truth
- * (run_chat persists both turns); this streams optimistically and reconciles
- * order/title from the reloaded list on completion.
+ * messages, and every in-flight streaming turn. The backend DB is the source
+ * of truth (run_chat persists both turns and keeps generating even if nobody's
+ * watching); this streams optimistically into whichever conversation is
+ * active and reconciles from the DB on completion.
  *
- * Mirrors `useResearch`'s Channel + `runId` staleness idiom and its
- * unload-on-unmount so a resident model (keep_alive:300) never strands.
+ * Generation is tracked **per conversation** (`runningIds`), not as one global
+ * flag — switching to conversation B while A is still generating must not
+ * block sending in B, and switching back to A must correctly show it's still
+ * running rather than silently forgetting about it.
  */
 function useChatState() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // Conversation ids with a generation currently in flight (server-side —
+  // backend keeps going regardless of which conversation is on screen).
+  const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const running = activeId != null && runningIds.has(activeId);
+  // Mirrors `runningIds` for `send`'s synchronous re-entrancy check — reading
+  // the state directly there would close over whatever it was when the
+  // `send` callback was created, not its current value.
+  const runningIdsRef = useRef<Set<string>>(runningIds);
+  const markRunning = useCallback((id: string, on: boolean) => {
+    setRunningIds((s) => {
+      if (s.has(id) === on) return s;
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      runningIdsRef.current = next;
+      return next;
+    });
+  }, []);
 
-  const runId = useRef(0);
+  // Mirrors `activeId` for the channel handlers below, which close over it at
+  // send-time — a ref so a handler firing after the user has switched away
+  // (and switched back) always checks where the user *actually* is now.
+  const activeIdRef = useRef<string | null>(null);
   // The model left resident server-side, so leaving chat can evict it.
   const activeModel = useRef<string | null>(null);
 
@@ -40,14 +63,28 @@ function useChatState() {
     invoke("unload_model", { model }).catch(() => {}); // best-effort
   }, []);
 
-  const select = useCallback((id: string) => {
-    runId.current++; // invalidate any in-flight stream from the previous convo
-    setActiveId(id);
-    setError(undefined);
+  /** Loads a conversation's persisted messages fresh from the DB — the single
+   *  source of truth for "what's actually there," used both on switch and to
+   *  pick up a generation that finished while the user was looking elsewhere. */
+  const loadMessages = useCallback((id: string) => {
     invoke<ChatMessage[]>("conversation_messages", { id })
-      .then(setMessages)
-      .catch(() => setMessages([]));
+      .then((list) => {
+        if (activeIdRef.current === id) setMessages(list);
+      })
+      .catch(() => {
+        if (activeIdRef.current === id) setMessages([]);
+      });
   }, []);
+
+  const select = useCallback(
+    (id: string) => {
+      activeIdRef.current = id;
+      setActiveId(id);
+      setError(undefined);
+      loadMessages(id);
+    },
+    [loadMessages],
+  );
 
   const create = useCallback(
     async (model: string, presetId?: string | null) => {
@@ -56,7 +93,7 @@ function useChatState() {
         presetId: presetId ?? null,
       });
       setConversations((c) => [convo, ...c]);
-      runId.current++;
+      activeIdRef.current = convo.id;
       setActiveId(convo.id);
       setMessages([]);
       setError(undefined);
@@ -80,7 +117,7 @@ function useChatState() {
     (id: string) => {
       setConversations((c) => c.filter((x) => x.id !== id));
       if (id === activeId) {
-        runId.current++;
+        activeIdRef.current = null;
         setActiveId(null);
         setMessages([]);
       }
@@ -89,76 +126,66 @@ function useChatState() {
     [activeId],
   );
 
-  const send = useCallback(
-    (convId: string, model: string, content: string) => {
-      if (running || !content.trim()) return;
-      const myRun = ++runId.current;
-      activeModel.current = model;
-      recordUse(model); // feeds Storage's last-used column and its stale check
-      setRunning(true);
-      setError(undefined);
+  const send = useCallback((convId: string, model: string, content: string) => {
+    if (!content.trim() || runningIdsRef.current.has(convId)) return;
+    markRunning(convId, true);
+    activeModel.current = model;
+    recordUse(model); // feeds Storage's last-used column and its stale check
+    setError(undefined);
 
-      // Optimistic: the user turn plus an empty assistant turn to stream into.
-      const now = Date.now();
-      const streamId = `stream-${now}`;
+    // Optimistic: the user turn plus an empty assistant turn to stream into.
+    // Only meaningful while the user is still looking at this conversation —
+    // a switch away replaces `messages` wholesale via `loadMessages`.
+    const now = Date.now();
+    const streamId = `stream-${now}`;
+    const userMsgId = `local-${now}`;
+    if (activeIdRef.current === convId) {
       setMessages((m) => [
         ...m,
-        { id: `local-${now}`, role: "user", content, thinking: null, stats_json: null, created_ms: now },
+        { id: userMsgId, role: "user", content, thinking: null, stats_json: null, created_ms: now },
         { id: streamId, role: "assistant", content: "", thinking: null, stats_json: null, created_ms: now + 1 },
       ]);
+    }
 
-      // A failed turn persisted nothing, so the optimistic pair has to go with
-      // it — otherwise the thread keeps a user turn and a blank reply that only
-      // vanish on reload.
-      const dropOptimistic = () =>
-        setMessages((m) => m.filter((msg) => msg.id !== streamId && msg.id !== `local-${now}`));
-
-      const channel = new Channel<ChatEvent>();
-      channel.onmessage = (event) => {
-        if (runId.current !== myRun) return; // stale run — ignore
-        if (event.kind === "token") {
-          setMessages((m) =>
-            m.map((msg) => (msg.id === streamId ? { ...msg, content: msg.content + event.text } : msg)),
-          );
-        } else if (event.kind === "thinking") {
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === streamId ? { ...msg, thinking: (msg.thinking ?? "") + event.text } : msg,
-            ),
-          );
-        } else if (event.kind === "result") {
-          // Use the authoritative final text (covers a thinking model that
-          // streamed no `content` tokens), and record reasoning + stats.
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === streamId
-                ? {
-                    ...msg,
-                    content: event.response,
-                    thinking: event.thinking || null,
-                    stats_json: JSON.stringify(event.stats),
-                  }
-                : msg,
-            ),
-          );
-          setRunning(false);
-          reloadConversations(); // title + updated_ms ordering changed
-        } else if (event.kind === "failed") {
+    const channel = new Channel<ChatEvent>();
+    channel.onmessage = (event) => {
+      const isActive = activeIdRef.current === convId;
+      if (event.kind === "token") {
+        if (!isActive) return;
+        setMessages((m) =>
+          m.map((msg) => (msg.id === streamId ? { ...msg, content: msg.content + event.text } : msg)),
+        );
+      } else if (event.kind === "thinking") {
+        if (!isActive) return;
+        setMessages((m) =>
+          m.map((msg) => (msg.id === streamId ? { ...msg, thinking: (msg.thinking ?? "") + event.text } : msg)),
+        );
+      } else if (event.kind === "result") {
+        markRunning(convId, false);
+        // Re-fetch rather than patch by id: if the user navigated away and
+        // back, the optimistic placeholder this run started with is long
+        // gone from `messages` (replaced by `loadMessages` on the switch),
+        // so the DB — which now has the persisted reply — is the only
+        // reliable source once a run's terminal event arrives.
+        if (isActive) loadMessages(convId);
+        reloadConversations(); // title + updated_ms ordering changed
+      } else if (event.kind === "failed") {
+        markRunning(convId, false);
+        if (isActive) {
           setError(event.message);
-          setRunning(false);
-          dropOptimistic();
+          loadMessages(convId); // drops the optimistic pair; nothing was persisted for it
         }
-      };
+      }
+    };
 
-      invoke("run_chat", { conversationId: convId, model, content, onEvent: channel }).catch((e) => {
-        if (runId.current !== myRun) return;
+    invoke("run_chat", { conversationId: convId, model, content, onEvent: channel }).catch((e) => {
+      markRunning(convId, false);
+      if (activeIdRef.current === convId) {
         setError(String(e));
-        setRunning(false);
-        dropOptimistic();
-      });
-    },
-    [running, reloadConversations],
-  );
+        loadMessages(convId);
+      }
+    });
+  }, [loadMessages, markRunning, reloadConversations]);
 
   // Closing the app must not strand a resident model.
   // ponytail: unload only on unmount, which is now app teardown rather than a

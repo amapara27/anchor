@@ -4,8 +4,10 @@ import { useChat } from "../lib/useChat";
 import { useModels } from "../lib/useModels";
 import { usePresets } from "../lib/usePresets";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
+import { useResidency } from "../lib/useResidency";
 import { formatContext } from "../lib/format";
 import { DEFAULT_CONTEXT } from "../lib/fit";
+import { hardwareHint } from "../lib/hint";
 import { ModelSelect } from "./ui/ModelSelect";
 import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
@@ -35,6 +37,38 @@ function groupConversations(list: Conversation[]) {
 }
 
 /**
+ * Whether loading `modelId` right now would push this Mac into heavy swap,
+ * given what Ollama already has resident from other models — not just total
+ * system RAM, since another model already loaded reduces real headroom.
+ * `false` (never warn) when the model is already resident: no fresh load is
+ * about to happen, or hardware is unknown.
+ */
+function wontFitGivenResidency(
+  modelId: string,
+  lib: ReturnType<typeof useModels>["models"],
+  profile: ReturnType<typeof useHardwareProfile>["profile"],
+  resident: ReturnType<typeof useResidency>["models"],
+  residentBytes: number,
+): boolean {
+  if (!profile?.memory_bytes) return false;
+  if (resident.some((m) => m.name === modelId)) return false;
+  const m = lib.find((x) => x.id === modelId);
+  if (!m) return false;
+  const hint = hardwareHint(
+    {
+      id: m.id,
+      params_b: m.spec.params_b,
+      quant: m.spec.quant,
+      contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT,
+      arch: m.arch,
+      sizeBytes: m.size_bytes,
+    },
+    { memory_bytes: profile.memory_bytes - residentBytes, chip: profile.chip },
+  );
+  return hint.tier === "wont_fit";
+}
+
+/**
  * The Chat workspace: a conversation rail, a streaming thread over local Ollama
  * models, and a composer. Conversations persist in SQLite (via `useChat`); the
  * model pill surfaces the hardware fit hint — the moat — for the chosen model.
@@ -43,6 +77,7 @@ export function ChatWorkspace() {
   const { models, loading } = useModels();
   const { profile } = useHardwareProfile();
   const { presets } = usePresets();
+  const { models: resident, residentBytes } = useResidency();
   const { conversations, activeId, messages, running, error, select, create, rename, remove, send, setPreset } =
     useChat();
 
@@ -52,6 +87,10 @@ export function ChatWorkspace() {
   const [query, setQuery] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [pendingSwap, setPendingSwap] = useState<{ text: string } | null>(null);
+  // Conversations (or "__new__" for one not yet created) the user has already
+  // clicked through a won't-fit warning for — don't re-ask every message.
+  const warnedConvos = useRef<Set<string>>(new Set());
 
   // Default the model once the library loads (prefer the suggested general one).
   useEffect(() => {
@@ -82,13 +121,22 @@ export function ChatWorkspace() {
 
   const groups = useMemo(() => groupConversations(filtered), [filtered]);
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || running || !model) return;
+  const doSend = async (text: string) => {
     setInput("");
     let id = activeId;
     if (!id) id = (await create(model, presetId)).id;
     send(id, model, text);
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || running || !model) return;
+    const key = activeId ?? "__new__";
+    if (!warnedConvos.current.has(key) && wontFitGivenResidency(model, models, profile, resident, residentBytes)) {
+      setPendingSwap({ text });
+      return;
+    }
+    await doSend(text);
   };
 
   return (
@@ -187,6 +235,19 @@ export function ChatWorkspace() {
           setPendingDelete(null);
         }}
         onCancel={() => setPendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingSwap != null}
+        title="This model probably won't fit"
+        body="Loading it now would likely push this Mac into heavy swap — expect slow, stuttering responses. Continue anyway?"
+        confirmLabel="Continue"
+        onConfirm={() => {
+          warnedConvos.current.add(activeId ?? "__new__");
+          if (pendingSwap) void doSend(pendingSwap.text);
+          setPendingSwap(null);
+        }}
+        onCancel={() => setPendingSwap(null)}
       />
     </div>
   );
