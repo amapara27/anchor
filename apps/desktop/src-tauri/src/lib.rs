@@ -667,22 +667,6 @@ struct ServerStatus {
     local: bool,
 }
 
-/// Whether a base URL resolves to this machine.
-///
-/// `0.0.0.0` counts: it is a bind address rather than a destination, and a server
-/// listening on it is still the local one — but it is reachable from the network,
-/// which the Settings warning calls out separately.
-fn is_local_host(host: &str) -> bool {
-    let after_scheme = host.split_once("://").map_or(host, |(_, rest)| rest);
-    let authority = after_scheme.split('/').next().unwrap_or("");
-    // A bracketed IPv6 literal ends at `]`; everything else drops a trailing port.
-    let h = match authority.strip_prefix('[') {
-        Some(rest) => rest.split(']').next().unwrap_or(""),
-        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
-    };
-    matches!(h, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1" | "::")
-}
-
 /// Reports whether Ollama is reachable, its version, and whether Anchor owns it.
 ///
 /// Thin status read — never starts the server (unlike [`ensure_server`]); the
@@ -697,47 +681,26 @@ async fn get_server_status(app: AppHandle) -> Result<ServerStatus, String> {
         None
     };
     let managed = app.state::<ServerState>().child.lock().unwrap().is_some();
-    let local = is_local_host(&host);
+    let local = anchor_hub::is_local_host(&host);
     Ok(ServerStatus { reachable, version, managed, host, local })
 }
 
 /// How many written community reviews a free install may open per week.
 const REVIEW_ALLOWANCE: u32 = 3;
 
-/// This install's anonymous id, created on first use.
-///
-/// A random value in a file, deliberately *not* derived from the hardware: it
-/// exists so someone can update or withdraw their own submissions, and must not
-/// double as a machine fingerprint. Reads 16 bytes from the system CSPRNG rather
-/// than pulling in a uuid crate for one call site.
+/// This install's anonymous id — see [`anchor_hub::install_id`], which the CLI
+/// shares so both front-ends attribute benchmark rows to the same install.
 fn install_id(app: &AppHandle) -> Result<String, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
-    let path = dir.join("install_id");
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        let trimmed = existing.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-    let id = rand_hex(16)?;
-    let _ = std::fs::create_dir_all(&dir);
-    std::fs::write(&path, &id).map_err(|e| e.to_string())?;
-    Ok(id)
+    anchor_hub::install_id(&dir).map_err(|e| e.to_string())
 }
 
-/// `n` random bytes from the system CSPRNG, hex-encoded. Used for install and
-/// message ids without pulling in a uuid crate for a couple of call sites.
+/// `n` random bytes from the system CSPRNG, hex-encoded (message ids).
 fn rand_hex(n: usize) -> Result<String, String> {
-    let mut bytes = vec![0u8; n];
-    std::io::Read::read_exact(
-        &mut std::fs::File::open("/dev/urandom").map_err(|e| e.to_string())?,
-        &mut bytes,
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    anchor_hub::rand_hex(n).map_err(|e| e.to_string())
 }
 
 /// The host's benchmark match identity, derived from the cached hardware profile.
@@ -1072,18 +1035,5 @@ mod tests {
         set_secret(key.clone(), String::new()).expect("delete");
         assert_eq!(get_secret(key.clone()).expect("read after delete"), None);
         set_secret(key, String::new()).expect("delete of a missing item is fine");
-    }
-
-    #[test]
-    fn only_this_machine_counts_as_a_local_host() {
-        assert!(is_local_host("http://127.0.0.1:11434"));
-        assert!(is_local_host("http://localhost:11434"));
-        assert!(is_local_host("http://[::1]:11434"));
-        // A bind-all listener is still the local server.
-        assert!(is_local_host("http://0.0.0.0:11434"));
-        // Anything naming another machine is not, however it is spelled.
-        assert!(!is_local_host("http://192.168.1.40:11434"));
-        assert!(!is_local_host("https://ollama.example.com"));
-        assert!(!is_local_host("http://127.0.0.1.evil.test:11434"));
     }
 }

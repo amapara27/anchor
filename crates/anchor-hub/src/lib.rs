@@ -117,6 +117,54 @@ fn normalize_host(raw: Option<&str>) -> String {
     }
 }
 
+/// Whether a base URL resolves to this machine.
+///
+/// `OLLAMA_HOST` is honoured verbatim, so it can point at another machine —
+/// which sends every prompt and response off this Mac, contradicting the promise
+/// the rest of Anchor makes. False here drives an explicit warning rather than
+/// silent remote inference.
+///
+/// `0.0.0.0` counts: it is a bind address rather than a destination, and a
+/// server listening on it is still the local one.
+pub fn is_local_host(host: &str) -> bool {
+    let after_scheme = host.split_once("://").map_or(host, |(_, rest)| rest);
+    let authority = after_scheme.split('/').next().unwrap_or("");
+    // A bracketed IPv6 literal ends at `]`; everything else drops a trailing port.
+    let h = match authority.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+    };
+    matches!(h, "localhost" | "127.0.0.1" | "0.0.0.0" | "::1" | "::")
+}
+
+/// `n` random bytes from the system CSPRNG, hex-encoded. Used for install,
+/// conversation and message ids without pulling in a uuid crate.
+pub fn rand_hex(n: usize) -> std::io::Result<String> {
+    let mut bytes = vec![0u8; n];
+    std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom")?, &mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// This install's anonymous id, created in `dir` on first use.
+///
+/// A random value in a file, deliberately *not* derived from the hardware: it
+/// exists so someone can update or withdraw their own benchmark submissions, and
+/// must not double as a machine fingerprint. Lives here rather than in the Tauri
+/// shell so the CLI's runs are attributed to the same install as the app's.
+pub fn install_id(dir: &std::path::Path) -> std::io::Result<String> {
+    let path = dir.join("install_id");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    let id = rand_hex(16)?;
+    let _ = std::fs::create_dir_all(dir);
+    std::fs::write(&path, &id)?;
+    Ok(id)
+}
+
 /// Errors surfaced by the registry. Stringified at the Tauri boundary.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -677,6 +725,19 @@ mod tests {
         // Already-qualified URLs pass through (incl. https / trimmed whitespace).
         assert_eq!(normalize_host(Some(" http://host:9 ")), "http://host:9");
         assert_eq!(normalize_host(Some("https://remote:443")), "https://remote:443");
+    }
+
+    #[test]
+    fn only_this_machine_counts_as_a_local_host() {
+        assert!(is_local_host("http://127.0.0.1:11434"));
+        assert!(is_local_host("http://localhost:11434"));
+        assert!(is_local_host("http://[::1]:11434"));
+        // A bind-all listener is still the local server.
+        assert!(is_local_host("http://0.0.0.0:11434"));
+        // Anything naming another machine is not, however it is spelled.
+        assert!(!is_local_host("http://192.168.1.40:11434"));
+        assert!(!is_local_host("https://ollama.example.com"));
+        assert!(!is_local_host("http://127.0.0.1.evil.test:11434"));
     }
 
     /// A second sync must not re-fetch `/api/show` for unchanged models.

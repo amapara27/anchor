@@ -1,0 +1,27 @@
+[package]
+name = "anchor-cli"
+description = "Terminal front-end for Anchor: models, chat, benchmarks, storage, and memory fit."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "anchor"
+path = "src/main.rs"
+
+[dependencies]
+anchor-core = { workspace = true }
+anchor-hub = { workspace = true }
+anchor-search = { workspace = true }
+anchor-system = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Same Keychain store the desktop app writes to, under the same service name.
+keyring = { version = "4.1.6", default-features = false, features = [
+    "apple-native-keyring-store",
+    "v1",
+] }

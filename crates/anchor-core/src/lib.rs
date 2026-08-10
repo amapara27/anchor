@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod fit;
+
 /// A local AI model that Anchor knows about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Model {

@@ -16,6 +16,12 @@
 //
 // Pure and dependency-free, like fit.ts, so the selfcheck and the live verifier
 // can both import it directly.
+//
+// MIRRORED IN RUST: `crates/anchor-core/src/fit.rs` carries the same math for
+// the CLI (`anchor fit`) and anything else headless. The GUI keeps this copy
+// because it recomputes on every context-slider tick, which an IPC round-trip
+// would make janky. The two are pinned by fixtures — engine.selfcheck.ts here,
+// the `#[cfg(test)]` block there. Change both, or neither.
 import type { ArchMeta } from "../types";
 
 /**

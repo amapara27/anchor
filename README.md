@@ -44,9 +44,31 @@ Designed but unbuilt, and the UI says so in place rather than showing a number n
 
 **Agents** — Research Assistant, Knowledge Base, Code Reviewer, and Batch Processor — are not in this build. The pipelines and their tool layer live in `anchor-workflows` and stay under test, but no UI reaches them and their Tauri commands are deliberately unregistered, so the app ships without that file-reading surface. The panels remain under `apps/desktop/src/agents/` for when the feature returns.
 
+### CLI
+
+`anchor` is the terminal front-end over the same crates — and the same database, so a conversation started in the terminal appears in the app's sidebar and a benchmark run there lands in its history.
+
+```bash
+cargo install --path crates/anchor-cli     # or: cargo run -p anchor-cli -- <args>
+
+anchor models ls                            # installed models
+anchor models discover "summarize papers"   # semantic search over the catalog
+anchor models browse --filter qwen          # everything on ollama.com
+anchor models compare llama3.2:1b qwen3.5:9b "why is the sky blue?"
+anchor fit deepseek-v2 --ctx 32768          # weights + KV cache + verdict
+anchor chat -m llama3.2:1b                  # interactive; omit -m to continue with --conversation
+anchor bench run llama3.2:1b --suite full
+anchor storage scan
+anchor settings server --start
+```
+
+Every command takes `--json` for scripting, and `--host` to point at a non-default Ollama.
+
+One caveat: the app serialises memory-heavy work internally, but a separate CLI process can't see that lock. Don't benchmark from the terminal while the app is generating — the run would measure the contention rather than the model.
+
 ## Architecture
 
-A pnpm + Cargo monorepo. Domain logic lives in the crates; the Tauri layer is a set of thin command wrappers, which keeps everything testable without a webview and reusable from a future CLI.
+A pnpm + Cargo monorepo. Domain logic lives in the crates; both front-ends — the Tauri layer and the CLI — are thin wrappers over them, which keeps everything testable without a webview.
 
 ```
 anchor/
@@ -54,7 +76,8 @@ anchor/
 │   ├── src/                # React + Tailwind v4 frontend (TypeScript)
 │   └── src-tauri/          # Tauri 2 shell — thin command wrappers only
 └── crates/
-    ├── anchor-core/        # shared domain types; UI- and Tauri-free
+    ├── anchor-cli/         # `anchor` terminal front-end over the same crates + database
+    ├── anchor-core/        # shared domain types + the memory-fit engine; UI- and Tauri-free
     ├── anchor-hub/         # model registry, SQLite, Ollama REST, server lifecycle
     ├── anchor-search/      # semantic search: BGE-small embeddings + cosine
     ├── anchor-system/      # macOS hardware profiling via system_profiler
@@ -113,13 +136,17 @@ pnpm build
 ```bash
 pnpm dev                                     # run the app (Vite on :1420)
 pnpm --filter @anchor/desktop build          # typecheck + frontend build (fast, no Rust)
+cargo run -p anchor-cli -- models ls         # run the CLI from the workspace
 cargo test -p anchor-core -p anchor-hub -p anchor-search \
            -p anchor-system -p anchor-workflows   # logic tests, no webview
+node --experimental-strip-types \
+  apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures
 ```
 
 Conventions worth knowing before contributing:
 
-- Domain logic goes in `crates/*`, never in `src-tauri`. Tauri commands delegate.
+- Domain logic goes in `crates/*`, never in `src-tauri` or `anchor-cli`. Both front-ends delegate.
+- The memory-fit math exists twice on purpose: `anchor_core::fit` (Rust) and `apps/desktop/src/lib/kv.ts` + `fit.ts` (TS, so the context slider recomputes without IPC). Their test fixtures mirror each other — change both, or neither.
 - Frontend types in `apps/desktop/src/types.ts` mirror the Rust serde types — keep them in sync.
 - Tailwind v4 via the Vite plugin. There is no `tailwind.config.js` or `postcss.config.js`.
 - SQLite migrations are append-only: never edit a shipped `V*` constant, add the next one.
