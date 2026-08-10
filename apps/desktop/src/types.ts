@@ -614,6 +614,10 @@ export interface StorageScan {
   dedup_savings_bytes: number;
   orphaned_blobs: StorageBlob[];
   orphaned_bytes: number;
+  /** Manifests that couldn't be read or parsed. Non-zero forces `orphaned_blobs`
+   *  empty — an incomplete reference graph can't tell a dead blob from a live
+   *  one, so cleanup is withheld rather than risking real model data. */
+  unreadable_manifests: number;
 }
 
 /** One benchmark result: a model, a configuration, a machine, and what it did. */

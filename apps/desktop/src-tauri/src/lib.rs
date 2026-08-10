@@ -14,16 +14,14 @@ use anchor_core::{BenchRun, BenchSample, HardwareProfile, HwIdentity, Model, Sto
 use anchor_hub::db::ReviewAllowance;
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
-    AgentRun, BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats,
-    Preset, PullProgress, Registry, RepeatsMode, StoredMessage,
+    BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats, Preset,
+    PullProgress, Registry, RepeatsMode, StoredMessage,
 };
 use anchor_search::{QueryHistory, SemanticIndex};
-use anchor_workflows::{ResearchConfig, ResearchEvent};
 use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
 
-mod agents;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod tray;
@@ -309,28 +307,6 @@ async fn compare_models(
     Ok(())
 }
 
-/// Runs the Research Assistant workflow: plans web searches, gathers sources via
-/// Tavily, and streams a cited brief synthesized by the chosen model back over
-/// `on_event`. Serialized behind `compare_lock` (shared with `compare_models`)
-/// so only one RAM-heavy generation runs at a time.
-#[tauri::command]
-async fn run_research(
-    app: AppHandle,
-    config: ResearchConfig,
-    on_event: Channel<ResearchEvent>,
-) -> Result<(), String> {
-    ensure_server(&app).await?;
-    let registry = registry(&app)?;
-    let state = app.state::<ServerState>();
-    let _run = state.compare_lock.lock().await;
-    anchor_workflows::run_research(&registry, &config, |event| {
-        // Best-effort: a dropped channel (UI navigated away) shouldn't error.
-        let _ = on_event.send(event);
-    })
-    .await;
-    Ok(())
-}
-
 /// Keep-alive for chat: weights stay resident between turns so a follow-up
 /// doesn't reload the model. Evicted on leaving chat / switching model (the
 /// frontend calls `unload_model`).
@@ -543,23 +519,6 @@ async fn rename_conversation(app: AppHandle, id: String, title: String) -> Resul
 async fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
     registry(&app)?.delete_conversation(&id).map_err(|e| e.to_string())
 }
-
-/// Stores a finished agent run. The frontend owns the streamed run, so it
-/// assembles the whole row and hands it over once the run settles.
-#[tauri::command]
-async fn save_agent_run(app: AppHandle, run: AgentRun) -> Result<(), String> {
-    registry(&app)?.save_agent_run(&run).map_err(|e| e.to_string())
-}
-
-/// Agent run history, newest first.
-#[tauri::command]
-async fn agent_runs(app: AppHandle) -> Result<Vec<AgentRun>, String> {
-    registry(&app)?.agent_runs(AGENT_RUN_LIMIT).map_err(|e| e.to_string())
-}
-
-/// Runs kept in the history view. Enough to cover the stat band's 7-day window
-/// many times over; the table itself is never pruned.
-const AGENT_RUN_LIMIT: u32 = 200;
 
 /// Evicts a model's weights from Ollama. The frontend calls this when a run is
 /// cancelled or its view unmounts, so a dropped generation stream never leaves a
@@ -1019,7 +978,6 @@ pub fn run() {
             download_model,
             cancel_download,
             compare_models,
-            run_research,
             run_chat,
             list_conversations,
             create_conversation,
@@ -1030,14 +988,14 @@ pub fn run() {
             save_preset,
             delete_preset,
             set_conversation_preset,
-            save_agent_run,
-            agent_runs,
-            agents::run_batch_processor,
-            agents::run_code_reviewer,
-            agents::run_knowledge_base,
-            agents::kb_ingest,
-            agents::kb_documents,
-            agents::kb_forget_document,
+            // ponytail: the agents + Research Assistant commands are deliberately
+            // NOT registered. Their panels still exist under `src/agents/` but no
+            // UI reaches them, and they read arbitrary files off a caller-supplied
+            // path whose only guard was "the native picker is the trust boundary" —
+            // an assumption that stops holding once nothing opens a picker. To
+            // re-enable the feature, restore `mod agents;`, `src-tauri/src/agents.rs`,
+            // the `run_research` / `save_agent_run` / `agent_runs` commands, and
+            // these entries — re-adding a nav item alone is not enough.
             unload_model,
             running_models,
             remove_model,

@@ -106,7 +106,6 @@ dependencies = [
  "anchor-hub",
  "anchor-search",
  "anchor-system",
- "anchor-workflows",
  "keyring",
  "objc2",
  "objc2-app-kit",

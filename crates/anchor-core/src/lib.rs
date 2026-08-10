@@ -299,9 +299,15 @@ pub struct StorageScan {
     /// this is reporting, not new dedup logic.
     pub dedup_savings_bytes: u64,
     /// Blob files under `blobs/` no current manifest references (interrupted
-    /// pulls, removal races) — safe to delete.
+    /// pulls, removal races) — safe to delete. Always empty when
+    /// `unreadable_manifests > 0`: see that field.
     pub orphaned_blobs: Vec<StorageBlob>,
     pub orphaned_bytes: u64,
+    /// Manifests that could not be read or parsed. A manifest we can't read
+    /// contributes no references, which would make the blobs it alone points at
+    /// look orphaned — so when this is non-zero the scan reports no orphans at
+    /// all rather than offering live model data up for irreversible deletion.
+    pub unreadable_manifests: u32,
 }
 
 /// One benchmark result: a model, a configuration, a machine, and what it did.

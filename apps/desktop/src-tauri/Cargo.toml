@@ -21,7 +21,10 @@ anchor-core = { workspace = true }
 anchor-hub = { workspace = true }
 anchor-search = { workspace = true }
 anchor-system = { workspace = true }
-anchor-workflows = { workspace = true }
+# anchor-workflows is intentionally not a dependency: no agent command is
+# registered (see the note in lib.rs's invoke_handler), so linking it would ship
+# the file-reading tool code with nothing able to call it. Restore this line when
+# the agents feature comes back.
 keyring = { version = "4.1.6", default-features = false, features = ["apple-native-keyring-store", "v1"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

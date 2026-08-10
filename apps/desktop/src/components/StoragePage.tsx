@@ -262,6 +262,13 @@ export function StoragePage() {
                 Clean up · frees {formatBytes(scan.orphaned_bytes)}
               </GhostButton>
             </>
+          ) : scan && scan.unreadable_manifests > 0 ? (
+            <p className="text-[11.5px] leading-[1.5] text-warn">
+              Couldn&rsquo;t read {scan.unreadable_manifests}{" "}
+              {scan.unreadable_manifests === 1 ? "manifest" : "manifests"} in the model store, so which blobs are
+              still in use can&rsquo;t be determined. Cleanup is off — deleting against a partial picture could
+              remove data an installed model still needs.
+            </p>
           ) : (
             <p className="text-[11.5px] text-fg-subtle">
               {scan

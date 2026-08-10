@@ -6,7 +6,7 @@
 
 ## About
 
-Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: managing models, profiling your hardware, benchmarking, and running tool-enabled agents.
+Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: managing models, profiling your hardware, and benchmarking them.
 
 It is **not** an inference engine. Ollama does the inference; Anchor is the management layer around it. That boundary is deliberate and it shapes most of the design decisions in the codebase — if a feature would require Anchor to run weights itself, it is out of scope.
 
@@ -19,17 +19,6 @@ Built for developers, students, researchers, and small business operators who wa
 ### Chat
 
 Streaming conversations against any installed model, with reasoning/thinking output rendered separately from the answer. Conversations, titles, and full message history persist in SQLite across launches.
-
-### Agents
-
-Tool-enabled workflows that run a deterministic pipeline and stream their progress — phase by phase, with sources and intermediate notes visible as they happen. Every run is recorded in a history with its duration, token count, and a per-phase timing trace.
-
-- **Research Assistant** — plans queries, searches the web via Tavily, and synthesizes a cited answer.
-- **Knowledge Base** — ingest documents into a local embedded corpus, then ask questions answered from the passages it retrieves, with citations.
-- **Code Reviewer** — point a local model at a codebase, a file, or a diff and get focused findings back.
-- **Batch Processor** — *in progress.* Apply one instruction across many files and get a row per file instead of prose.
-
-Each agent is a deterministic pipeline over a shared event protocol (`AgentEvent`) and a shared tool set — document reading, chunking, web search — rather than an open-ended tool loop. That keeps runs cheap and predictable on local hardware.
 
 ### Models
 
@@ -45,9 +34,15 @@ First-launch profiling of CPU, RAM, and GPU. Apple Silicon is special-cased via 
 
 Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time.
 
-### In Progress
+### Storage
 
-Three areas are designed but unbuilt, and the UI says so in place rather than showing a number nothing computed: the **Storage** page's dedupe/integrity figures, locations and housekeeping rules (no blob scanner), the **Community** tab on Benchmarks (no results server), and the appearance/publishing preference toggles that depended on both. Everything else on those pages — the disk map, the reclaim total, the local suite and the leaderboard — is measured.
+A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
+
+### Not built yet
+
+Designed but unbuilt, and the UI says so in place rather than showing a number nothing computed: the **Community** tab on Benchmarks (no results server) and the appearance/publishing preference toggles that depended on it.
+
+**Agents** — Research Assistant, Knowledge Base, Code Reviewer, and Batch Processor — are not in this build. The pipelines and their tool layer live in `anchor-workflows` and stay under test, but no UI reaches them and their Tauri commands are deliberately unregistered, so the app ships without that file-reading surface. The panels remain under `apps/desktop/src/agents/` for when the feature returns.
 
 ## Architecture
 
@@ -63,7 +58,7 @@ anchor/
     ├── anchor-hub/         # model registry, SQLite, Ollama REST, server lifecycle
     ├── anchor-search/      # semantic search: BGE-small embeddings + cosine
     ├── anchor-system/      # macOS hardware profiling via system_profiler
-    └── anchor-workflows/   # agents, tools, and the streamed event protocol
+    └── anchor-workflows/   # agent pipelines + tools; built and tested, not wired into the app
 ```
 
 | Layer | Technology |
@@ -75,9 +70,8 @@ anchor/
 | Storage | SQLite via `rusqlite`, versioned migrations |
 | Embeddings | `fastembed` (BGE-small, 384-dim), cosine in Rust |
 | Hardware | `system_profiler` subprocess |
-| Web search | Tavily REST API |
 
-All state — the registry, conversations, agent runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads and, if you use it, Tavily search.
+All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads: with agents unwired there is no web-search path in this build, so everything else runs fully offline.
 
 ## Getting started
 
@@ -106,7 +100,7 @@ Pull at least one model so there is something to talk to:
 ollama pull llama3.1:8b
 ```
 
-The Research Assistant needs a [Tavily](https://tavily.com) API key, entered in its panel or set as `TAVILY_API_KEY` in the environment. Every other feature runs fully offline.
+That is all the setup there is — no API keys, and every feature works offline.
 
 ### Build a release binary
 

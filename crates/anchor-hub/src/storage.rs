@@ -52,16 +52,21 @@ fn scan_at(root: &Path) -> std::io::Result<StorageScan> {
     // digest (colon form) -> reference count across every manifest on disk.
     let mut refs: HashMap<String, u32> = HashMap::new();
     let mut manifests_bytes = 0u64;
+    let mut unreadable_manifests = 0u32;
     let manifests_dir = root.join("manifests");
     if manifests_dir.is_dir() {
         walk_files(&manifests_dir, &mut |path| {
             manifests_bytes += std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-            if let Ok(text) = std::fs::read_to_string(path) {
-                if let Ok(m) = serde_json::from_str::<Manifest>(&text) {
+            match std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str::<Manifest>(&t).ok()) {
+                Some(m) => {
                     for l in m.config.iter().chain(m.layers.iter()) {
                         *refs.entry(l.digest.clone()).or_insert(0) += 1;
                     }
                 }
+                // Every non-dotfile under manifests/ is supposed to be a tag
+                // manifest, so a read or parse failure means the reference graph
+                // is incomplete — not that we found something uninteresting.
+                None => unreadable_manifests += 1,
             }
         })?;
     }
@@ -97,6 +102,15 @@ fn scan_at(root: &Path) -> std::io::Result<StorageScan> {
         }
     }
 
+    // A manifest we couldn't read contributes no references, so blobs it alone
+    // points at would show up as orphans and be offered for irreversible
+    // deletion. An incomplete reference graph is never safe to delete against:
+    // report the count instead and let the UI explain why cleanup is off.
+    if unreadable_manifests > 0 {
+        orphaned_blobs.clear();
+        orphaned_bytes = 0;
+    }
+
     Ok(StorageScan {
         root: root.to_string_lossy().to_string(),
         blobs_bytes,
@@ -104,15 +118,23 @@ fn scan_at(root: &Path) -> std::io::Result<StorageScan> {
         dedup_savings_bytes,
         orphaned_blobs,
         orphaned_bytes,
+        unreadable_manifests,
     })
 }
 
 /// Recursively visits every file under `dir`, calling `f` on each. Manifests
 /// nest at a fixed depth in practice (registry-host/namespace/model/tag) but
 /// nothing here assumes it — plain recursion, no `walkdir` dependency needed.
+///
+/// Dotfiles and dot-directories are skipped: a tag is never named `.DS_Store`,
+/// and counting OS junk as an unreadable manifest would disable blob cleanup on
+/// most macOS machines for no reason.
 fn walk_files(dir: &Path, f: &mut impl FnMut(&Path)) -> std::io::Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let path = entry.path();
         if entry.metadata()?.is_dir() {
             walk_files(&path, f)?;
@@ -204,6 +226,44 @@ mod tests {
         assert_eq!(freed, 50);
         assert!(!root.join("blobs/sha256-bbbb").exists());
         assert!(root.join("blobs/sha256-aaaa").exists()); // referenced blob untouched
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_unparseable_manifest_suppresses_orphan_reporting() {
+        let root = tmp("badmanifest");
+        write_blob(&root, "aaaa", &[0u8; 100]);
+        write_blob(&root, "bbbb", &[0u8; 50]);
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[("aaaa", 100)]);
+        // A truncated / corrupt manifest: its layers can't be read, so "bbbb"
+        // may well be live. Reporting it as orphaned would offer real model data
+        // for permanent deletion.
+        fs::write(root.join("manifests/registry.ollama.ai/library/llama3.1/70b"), b"{\"layers\": [").unwrap();
+
+        let scan = scan_at(&root).unwrap();
+        assert_eq!(scan.unreadable_manifests, 1);
+        assert!(scan.orphaned_blobs.is_empty(), "must not offer orphans from an incomplete reference graph");
+        assert_eq!(scan.orphaned_bytes, 0);
+
+        // And cleanup against that scan is a no-op, so nothing is lost.
+        assert_eq!(clean_orphaned(&scan), 0);
+        assert!(root.join("blobs/sha256-bbbb").exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_dotfile_under_manifests_is_not_counted_as_an_unreadable_manifest() {
+        let root = tmp("manifestdotfile");
+        write_blob(&root, "aaaa", &[0u8; 100]);
+        write_blob(&root, "bbbb", &[0u8; 50]);
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[("aaaa", 100)]);
+        // Real macOS junk, non-UTF-8 — present in the wild under manifests/.
+        fs::write(root.join("manifests/.DS_Store"), [0x00, 0xff, 0xfe, 0x01]).unwrap();
+
+        let scan = scan_at(&root).unwrap();
+        assert_eq!(scan.unreadable_manifests, 0, "OS junk must not disable cleanup");
+        assert_eq!(scan.orphaned_blobs.len(), 1, "genuine orphan still reported");
+        assert_eq!(scan.orphaned_blobs[0].digest, "sha256:bbbb");
         fs::remove_dir_all(&root).ok();
     }
 
