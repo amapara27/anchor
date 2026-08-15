@@ -1,157 +1,187 @@
-//! The Full suite's prompt catalog and context-size matrix.
+//! The suite's scenario catalog.
 //!
-//! Pure and I/O-free on purpose: the feasibility filter and grouping logic are
-//! the part most worth unit-testing in isolation, without a live Ollama server.
+//! A scenario is a (prompt tokens, generation tokens) pair with a use case
+//! attached — the shape `llama-bench` calls `pp`/`tg`. Context size is not a
+//! separate axis: it is derived from what the scenario itself needs, so a
+//! scenario can never fail to fit the context it runs in.
+//!
+//! Pure and I/O-free on purpose: the sizing and grouping logic is the part
+//! most worth unit-testing in isolation, without a live Ollama server.
+//!
+//! **Mirrored in `apps/desktop/src/components/BenchmarksPage.tsx` (`SCENARIOS`)**
+//! for display only — ids, token counts, and labels must stay in sync.
 
-/// Suite id for the Full (multi-prompt, multi-context) suite, distinct from
-/// [`super::SUITE_ID`] (`"anchor-std"`, the single-prompt Quick suite).
-pub const FULL_SUITE_ID: &str = "anchor-full";
-/// Bump when the matrix/repeat *logic* changes (context sizes, feasibility
-/// rule, cell structure). Independent of [`PROMPT_CATALOG_VERSION`], which
-/// versions the prompt *text*.
-pub const FULL_SUITE_VERSION: u32 = 1;
-/// Bump when `SHORT`/`LONG_CONTEXT`/`GENERATION_HEAVY`'s text changes.
+/// Bump when the catalog's *structure* changes (scenarios added/removed,
+/// context derivation, repeat policy).
+pub const SUITE_ID: &str = "anchor-scenarios";
+pub const SUITE_VERSION: u32 = 2;
+/// Bump when a scenario's prompt *text* changes without changing its shape.
 pub const PROMPT_CATALOG_VERSION: u32 = 1;
 
-/// Context sizes the Full matrix is evaluated at. 4096 matches the Quick
-/// suite's `SUITE_NUM_CTX` (so that cell is roughly comparable to Quick);
-/// 8192/16384 are large enough to show KV-cache/bandwidth cost growing even
-/// for prompts that don't need the extra room — Ollama allocates KV for the
-/// full `num_ctx` regardless of how much of it a prompt actually uses.
-const FULL_CTX_SIZES: [u32; 3] = [4096, 8192, 16384];
+/// Headroom over prompt + generation before rounding up to a power of two, so
+/// a token-estimate that runs slightly long can't overflow the context.
+const CTX_MARGIN: u32 = 64;
 
-/// Repeats behind a Full-mode cell's median.
+/// Rough bytes per token for the filler prose below. Only used to size the
+/// padding — Ollama reports the real `prompt_eval_count`.
+const CHARS_PER_TOKEN: usize = 4;
+
+/// Repeats behind a scenario's median.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepeatsMode {
-    /// 3 repeats everywhere, matching the Quick suite's rigor.
+    /// 3 repeats everywhere.
     Thorough,
-    /// 3 repeats on the cheap prompts, 1 on `generation_heavy` (its 1000-token
-    /// output dominates a Full run's wall-clock time across 3 context sizes).
+    /// 1 repeat for the long-generation scenarios (their output dominates the
+    /// suite's wall-clock time), 3 for the rest.
     Fast,
 }
 
-struct PromptSpec {
-    id: &'static str,
-    text: fn() -> String,
-    /// Hand-estimated input length, used only to decide whether a cell fits a
-    /// given `num_ctx` — not fed to Ollama, which reports the real count.
-    input_tokens_estimate: u32,
-    num_predict: u64,
+/// Generation length at or above which `Fast` drops to a single repeat. Keyed
+/// on the token count rather than a scenario id so a new scenario can't slip
+/// past the policy.
+const HEAVY_GEN_TOKENS: u32 = 1024;
+
+pub struct Scenario {
+    pub id: &'static str,
+    /// What this shape is for, shown in the UI next to the numbers.
+    pub label: &'static str,
+    pub prompt_tokens: u32,
+    pub gen_tokens: u32,
+    /// The actual task. Padded out to `prompt_tokens` with filler when it is
+    /// shorter than the budget.
+    instruction: &'static str,
 }
 
-const SHORT: PromptSpec = PromptSpec {
-    id: "short",
-    text: short_text,
-    input_tokens_estimate: 100,
-    num_predict: 200,
-};
-const LONG_CONTEXT: PromptSpec = PromptSpec {
-    id: "long_context",
-    text: long_context_text,
-    input_tokens_estimate: 4000,
-    num_predict: 200,
-};
-const GENERATION_HEAVY: PromptSpec = PromptSpec {
-    id: "generation_heavy",
-    text: generation_heavy_text,
-    input_tokens_estimate: 50,
-    num_predict: 1000,
-};
+pub const CATALOG: [Scenario; 9] = [
+    Scenario {
+        id: "classify",
+        label: "Classification, sentiment, keyword extraction",
+        prompt_tokens: 768,
+        gen_tokens: 32,
+        instruction: "Classify the passage above as one of: technical, historical, or commercial. \
+                      Then list the three keywords that best characterise it. Answer in one line.",
+    },
+    Scenario {
+        id: "summarize",
+        label: "Article summarization, contextual paragraphs",
+        prompt_tokens: 1536,
+        gen_tokens: 256,
+        instruction: "Summarize the passage above in a single paragraph. Keep the central claims \
+                      and drop the illustrative detail.",
+    },
+    Scenario {
+        id: "expand",
+        label: "Prompt expansion, explanation generation",
+        prompt_tokens: 320,
+        gen_tokens: 1280,
+        instruction: "Using the passage above as background, write a thorough explanation of the \
+                      subject for a reader encountering it for the first time. Work through a \
+                      concrete example rather than staying abstract.",
+    },
+    Scenario {
+        id: "creative",
+        label: "Storytelling, short-prompt creative writing",
+        prompt_tokens: 32,
+        gen_tokens: 1536,
+        instruction: "Write the opening scene of a story about a lighthouse keeper who finds a \
+                      letter bearing no postmark, no sender, and tomorrow's date.",
+    },
+    Scenario {
+        id: "balanced",
+        label: "Balanced Q&A, content drafting, code generation",
+        prompt_tokens: 896,
+        gen_tokens: 1024,
+        instruction: "Answer the question the passage above raises, then draft a short section of \
+                      documentation covering it, including one worked code example.",
+    },
+    Scenario {
+        id: "rag",
+        label: "Long-document Q&A, retrieval-augmented generation",
+        prompt_tokens: 3584,
+        gen_tokens: 320,
+        instruction: "Answer using only the passage above: what changed, why it mattered, and what \
+                      it displaced? Cite the sentences you relied on.",
+    },
+    Scenario {
+        id: "draft",
+        label: "Detailed replies, multi-paragraph sections",
+        prompt_tokens: 1792,
+        gen_tokens: 640,
+        instruction: "Draft a detailed reply to a colleague who sent the passage above, covering \
+                      what you agree with, what you would push back on, and what you would do next.",
+    },
+    Scenario {
+        id: "reasoning",
+        label: "Chain-of-thought, long-form reasoning",
+        prompt_tokens: 1536,
+        gen_tokens: 2560,
+        instruction: "Reason step by step about the passage above: identify the causal chain it \
+                      describes, test each link against the evidence given, and state where the \
+                      argument is weakest before giving your conclusion.",
+    },
+    Scenario {
+        id: "codegen",
+        label: "Code generation, functions and test authoring",
+        prompt_tokens: 1024,
+        gen_tokens: 1536,
+        instruction: "Using the passage above as the spec, write a well-documented function that \
+                      implements it, including type hints, a docstring, and two unit tests that \
+                      exercise its edge cases.",
+    },
+];
 
-const CATALOG: [&PromptSpec; 3] = [&SHORT, &LONG_CONTEXT, &GENERATION_HEAVY];
+/// Neutral filler. Deliberately dull and self-contained: it pads a prompt to a
+/// target length without steering the model toward a longer or shorter answer.
+const FILLER: &str = "The history of the printing press begins with the observation that movable \
+    type could reproduce a page far faster than a scribe copying it by hand, and that a single set \
+    of cast letters could be rearranged indefinitely rather than carved anew for every new text. ";
 
-fn short_text() -> String {
-    "You are helping a new engineer understand a codebase. Explain what a hash \
-     table is, how it achieves average O(1) lookup, and describe one real \
-     situation where you'd reach for one over a sorted array or a tree map. \
-     Keep the explanation grounded in a concrete example rather than abstract \
-     definitions."
-        .to_string()
-}
-
-fn generation_heavy_text() -> String {
-    "Write a detailed, thorough explanation of how transformer self-attention \
-     works, covering the mathematical formulation, multi-head attention, and \
-     why scaling the dot product matters."
-        .to_string()
-}
-
-/// Deterministic, no file I/O: repeats a fixed neutral filler paragraph to
-/// roughly `input_tokens_estimate` tokens (~4 chars/token), then appends a
-/// fixed question so the model has to actually attend to the text, not just
-/// echo the tail of it.
-fn long_context_text() -> String {
-    const FILLER: &str = "The history of the printing press begins with the \
-        observation that movable type could reproduce a page far faster than \
-        a scribe copying it by hand, and that a single set of cast letters \
-        could be rearranged indefinitely rather than carved anew for every \
-        new text. ";
-    // ~4000 tokens * ~4 chars/token ≈ 16000 chars.
-    let mut s = FILLER.repeat(16_000 / FILLER.len() + 1);
-    s.push_str("\n\nSummarize the key theme of the passage above in two sentences.");
-    s
-}
-
-/// One (prompt, context size) cell of the Full matrix.
-pub struct Cell {
-    id: &'static str,
-    text_fn: fn() -> String,
-    pub num_ctx: u32,
-    pub num_predict: u64,
-}
-
-impl Cell {
-    pub fn prompt_id(&self) -> &'static str {
-        self.id
+impl Scenario {
+    /// Context to load with: enough for the prompt, the capped output, and a
+    /// margin — rounded up to a power of two so scenarios share context tiers
+    /// and the model reloads a handful of times, not once per scenario.
+    pub fn num_ctx(&self) -> u32 {
+        (self.prompt_tokens + self.gen_tokens + CTX_MARGIN).next_power_of_two()
     }
 
+    /// The prompt text: filler padded to `prompt_tokens`, then the instruction,
+    /// so the model has to attend to the padding rather than echo its tail.
+    /// An instruction already at budget is used unpadded.
     pub fn text(&self) -> String {
-        (self.text_fn)()
+        let budget = self.prompt_tokens as usize * CHARS_PER_TOKEN;
+        let Some(pad) = budget.checked_sub(self.instruction.len() + 2) else {
+            return self.instruction.to_string();
+        };
+        // FILLER is ASCII, so truncating on a byte index is char-safe.
+        let mut text = FILLER.repeat(pad / FILLER.len() + 1);
+        text.truncate(pad);
+        text.push_str("\n\n");
+        text.push_str(self.instruction);
+        text
     }
 }
 
-/// The feasibility-filtered matrix: a cell only runs if the prompt's
-/// estimated input plus its capped output plausibly fits `num_ctx`, with a
-/// safety margin for estimation error. `long_context` (~4000 in + 200 out)
-/// doesn't fit at 4096, so that cell is skipped rather than run truncated.
-pub fn full_matrix() -> Vec<Cell> {
-    const SAFETY_MARGIN: u32 = 64;
-    FULL_CTX_SIZES
-        .iter()
-        .flat_map(|&ctx| {
-            CATALOG.iter().filter_map(move |p| {
-                let needed = p.input_tokens_estimate + p.num_predict as u32 + SAFETY_MARGIN;
-                (needed <= ctx).then_some(Cell {
-                    id: p.id,
-                    text_fn: p.text,
-                    num_ctx: ctx,
-                    num_predict: p.num_predict,
-                })
-            })
-        })
-        .collect()
-}
-
-/// Groups cells by `num_ctx`, in ascending order, so a Full run reloads the
-/// model once per distinct context size rather than once per cell — Ollama
-/// reloads on a `num_ctx` change, not on a prompt change.
-pub fn grouped_by_ctx(cells: Vec<Cell>) -> Vec<(u32, Vec<Cell>)> {
-    let mut groups: Vec<(u32, Vec<Cell>)> = Vec::new();
-    for cell in cells {
+/// Scenarios grouped by context size, ascending, so the suite reloads the model
+/// once per distinct context rather than once per scenario — Ollama reloads on
+/// a `num_ctx` change, not on a prompt change.
+pub fn grouped_by_ctx() -> Vec<(u32, Vec<&'static Scenario>)> {
+    let mut groups: Vec<(u32, Vec<&'static Scenario>)> = Vec::new();
+    let mut sorted: Vec<&'static Scenario> = CATALOG.iter().collect();
+    sorted.sort_by_key(|s| (s.num_ctx(), s.gen_tokens));
+    for scenario in sorted {
+        let ctx = scenario.num_ctx();
         match groups.last_mut() {
-            Some((ctx, group)) if *ctx == cell.num_ctx => group.push(cell),
-            _ => groups.push((cell.num_ctx, vec![cell])),
+            Some((c, group)) if *c == ctx => group.push(scenario),
+            _ => groups.push((ctx, vec![scenario])),
         }
     }
     groups
 }
 
-/// Repeats for a cell given the toggle: `generation_heavy` gets 1 in Fast / 3
-/// in Thorough (it's the expensive one — 1000 tokens out, three context
-/// sizes); everything else always gets 3, since it's cheap either way.
-pub fn repeats_for(prompt_id: &str, mode: RepeatsMode) -> u32 {
-    match (prompt_id, mode) {
-        ("generation_heavy", RepeatsMode::Fast) => 1,
+/// Repeats for one scenario under the chosen mode.
+pub fn repeats_for(scenario: &Scenario, mode: RepeatsMode) -> u32 {
+    match mode {
+        RepeatsMode::Fast if scenario.gen_tokens >= HEAVY_GEN_TOKENS => 1,
         _ => 3,
     }
 }
@@ -160,46 +190,102 @@ pub fn repeats_for(prompt_id: &str, mode: RepeatsMode) -> u32 {
 mod tests {
     use super::*;
 
+    // Rows are keyed on the scenario id, so a duplicate would have two
+    // different measurements overwrite each other in the database.
     #[test]
-    fn long_context_is_skipped_at_4096_but_included_at_larger_sizes() {
-        let matrix = full_matrix();
-        assert!(!matrix.iter().any(|c| c.prompt_id() == "long_context" && c.num_ctx == 4096));
-        assert!(matrix.iter().any(|c| c.prompt_id() == "long_context" && c.num_ctx == 8192));
-        assert!(matrix.iter().any(|c| c.prompt_id() == "long_context" && c.num_ctx == 16384));
+    fn scenario_ids_are_unique() {
+        let mut ids: Vec<&str> = CATALOG.iter().map(|s| s.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), CATALOG.len());
     }
 
+    // The whole point of deriving context instead of declaring it: a scenario
+    // can never be run truncated.
     #[test]
-    fn short_and_generation_heavy_run_at_every_context_size() {
-        let matrix = full_matrix();
-        for ctx in FULL_CTX_SIZES {
-            assert!(matrix.iter().any(|c| c.prompt_id() == "short" && c.num_ctx == ctx));
-            assert!(matrix.iter().any(|c| c.prompt_id() == "generation_heavy" && c.num_ctx == ctx));
+    fn every_scenario_fits_the_context_it_derives() {
+        for s in &CATALOG {
+            let ctx = s.num_ctx();
+            assert!(ctx.is_power_of_two(), "{}: {ctx} is not a power of two", s.id);
+            assert!(
+                ctx >= s.prompt_tokens + s.gen_tokens + CTX_MARGIN,
+                "{}: {ctx} ctx can't hold {} in + {} out",
+                s.id,
+                s.prompt_tokens,
+                s.gen_tokens
+            );
+        }
+    }
+
+    // A prompt that misses its nominal length measures a different shape than
+    // the one the catalog advertises.
+    #[test]
+    fn built_prompts_land_near_their_nominal_token_count() {
+        for s in &CATALOG {
+            let estimate = (s.text().len() / CHARS_PER_TOKEN) as u32;
+            let slack = (s.prompt_tokens / 10).max(8);
+            assert!(
+                estimate.abs_diff(s.prompt_tokens) <= slack,
+                "{}: ~{estimate} tokens vs {} nominal",
+                s.id,
+                s.prompt_tokens
+            );
+        }
+    }
+
+    // The instruction has to survive padding — a prompt truncated to its filler
+    // would measure prefill against no task at all.
+    #[test]
+    fn padding_never_swallows_the_instruction() {
+        for s in &CATALOG {
+            assert!(s.text().ends_with(s.instruction), "{}", s.id);
         }
     }
 
     #[test]
-    fn matrix_has_exactly_eight_feasible_cells() {
-        // 3 prompts x 3 ctx sizes, minus the one infeasible cell
-        // (long_context @ 4096).
-        assert_eq!(full_matrix().len(), 8);
+    fn fast_mode_cuts_repeats_only_for_long_generations() {
+        for s in &CATALOG {
+            assert_eq!(repeats_for(s, RepeatsMode::Thorough), 3, "{}", s.id);
+            let expected = if s.gen_tokens >= HEAVY_GEN_TOKENS { 1 } else { 3 };
+            assert_eq!(repeats_for(s, RepeatsMode::Fast), expected, "{}", s.id);
+        }
+    }
+
+    // The desktop app restates this catalog to render the suite table without
+    // an IPC round-trip. Nothing at runtime reconciles the two, so a change
+    // here that isn't mirrored there silently mislabels every row.
+    #[test]
+    fn the_typescript_mirror_matches_this_catalog() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/desktop/src/lib/scenarios.ts");
+        let ts = std::fs::read_to_string(path).expect("the TS mirror must exist");
+        assert!(ts.contains(&format!("\"{SUITE_ID}\"")), "suite id drifted");
+        for s in &CATALOG {
+            let entry = format!(
+                "{{ id: \"{}\", label: \"{}\", promptTokens: {}, genTokens: {} }}",
+                s.id, s.label, s.prompt_tokens, s.gen_tokens
+            );
+            assert!(ts.contains(&entry), "scenarios.ts is missing or has drifted from:\n  {entry}");
+        }
+        // Counts entries, not the `promptTokens: number` interface field.
+        assert_eq!(
+            ts.matches("{ id: \"").count(),
+            CATALOG.len(),
+            "scenarios.ts lists a different number of scenarios"
+        );
     }
 
     #[test]
-    fn cells_group_by_ascending_ctx_without_splitting_a_ctx_across_groups() {
-        let groups = grouped_by_ctx(full_matrix());
+    fn scenarios_group_by_ascending_ctx_without_splitting_a_tier() {
+        let groups = grouped_by_ctx();
         let ctxs: Vec<u32> = groups.iter().map(|(ctx, _)| *ctx).collect();
-        assert_eq!(ctxs, vec![4096, 8192, 16384]);
-        // 4096 only fits short + generation_heavy (long_context excluded).
-        assert_eq!(groups[0].1.len(), 2);
-        assert_eq!(groups[1].1.len(), 3);
-        assert_eq!(groups[2].1.len(), 3);
-    }
-
-    #[test]
-    fn repeats_for_generation_heavy_drops_to_one_in_fast_mode() {
-        assert_eq!(repeats_for("generation_heavy", RepeatsMode::Fast), 1);
-        assert_eq!(repeats_for("generation_heavy", RepeatsMode::Thorough), 3);
-        assert_eq!(repeats_for("short", RepeatsMode::Fast), 3);
-        assert_eq!(repeats_for("long_context", RepeatsMode::Fast), 3);
+        let mut sorted = ctxs.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(ctxs, sorted, "each context tier must appear exactly once, ascending");
+        assert_eq!(
+            groups.iter().map(|(_, g)| g.len()).sum::<usize>(),
+            CATALOG.len(),
+            "every scenario lands in exactly one group"
+        );
     }
 }

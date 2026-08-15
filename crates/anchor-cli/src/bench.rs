@@ -18,11 +18,8 @@ pub enum Cmd {
     /// measures the contention rather than the model.
     Run {
         model: String,
-        /// `quick` is the single fixed-prompt suite; `full` is the versioned
-        /// prompt × context-size matrix.
-        #[arg(long, value_enum, default_value_t = Suite::Quick)]
-        suite: Suite,
-        /// Repeats tradeoff for the full suite. Ignored by `quick`.
+        /// `thorough` runs every scenario three times; `fast` drops the
+        /// long-generation scenarios to a single run.
         #[arg(long, value_enum, default_value_t = Repeats::Thorough)]
         repeats: Repeats,
     },
@@ -39,13 +36,14 @@ pub enum Cmd {
         /// Scope to one model instead of ranking across all of them.
         #[arg(long)]
         model: Option<String>,
-        /// Restrict to one suite, e.g. `anchor-std`, so two suites' numbers are
-        /// never blended into one table.
+        /// Restrict to one suite id, so numbers from a retired suite are never
+        /// blended into one table. Defaults to the current suite.
+        #[arg(long, default_value = anchor_hub::SUITE_ID)]
+        suite: String,
+        /// Rank one scenario, e.g. `reasoning`. Throughput only compares
+        /// like-for-like, so a ranking across every scenario at once is noise.
         #[arg(long)]
-        suite: Option<String>,
-        /// Restrict to one full-suite prompt, e.g. `long_context`.
-        #[arg(long)]
-        prompt: Option<String>,
+        scenario: Option<String>,
         /// Restrict to one context size.
         #[arg(long)]
         ctx: Option<u32>,
@@ -64,16 +62,12 @@ pub enum Cmd {
         /// Restrict to one context size.
         #[arg(long)]
         ctx: Option<u32>,
-        /// Restrict to one full-suite prompt, e.g. `long_context`.
+        /// Restrict to one scenario, e.g. `reasoning`.
         #[arg(long)]
-        prompt: Option<String>,
+        scenario: Option<String>,
     },
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum Suite {
-    Quick,
-    Full,
+    /// The scenarios the suite measures, and the shape of each.
+    Scenarios,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -84,27 +78,24 @@ pub enum Repeats {
 
 pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
     match cmd {
-        Cmd::Run {
-            model,
-            suite,
-            repeats,
-        } => bench(&model, suite, repeats, json).await,
+        Cmd::Run { model, repeats } => bench(&model, repeats, json).await,
         Cmd::Ls { model, limit } => history(model.as_deref(), limit, json).await,
         Cmd::Top {
             model,
             suite,
-            prompt,
+            scenario,
             ctx,
-        } => top(model.as_deref(), suite.as_deref(), prompt.as_deref(), ctx, json).await,
+        } => top(model.as_deref(), Some(&suite), scenario.as_deref(), ctx, json).await,
+        Cmd::Scenarios => scenarios(json),
         Cmd::Samples {
             run_id,
             model,
             ctx,
-            prompt,
+            scenario,
         } => {
             let run_id = match run_id {
                 Some(id) => id,
-                None => newest_run(model.as_deref(), ctx, prompt.as_deref()).await?,
+                None => newest_run(model.as_deref(), ctx, scenario.as_deref()).await?,
             };
             let samples = registry()?
                 .bench_samples_for(&run_id)
@@ -115,12 +106,13 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             if samples.is_empty() {
                 return Err(format!("no samples for {run_id}"));
             }
-            println!("{:>6} {:>8} {:>12} {:>12} {:>10}", "REPEAT", "WARMUP", "PREFILL t/s", "DECODE t/s", "TTFT ms");
+            // The suite's warmup is per context tier, not per scenario, so it
+            // is never stored as a sample — every row here is a measured repeat.
+            println!("{:>6} {:>12} {:>12} {:>10}", "REPEAT", "PREFILL t/s", "DECODE t/s", "TTFT ms");
             for s in &samples {
                 println!(
-                    "{:>6} {:>8} {:>12} {:>12} {:>10}",
+                    "{:>6} {:>12} {:>12} {:>10}",
                     s.repeat_index,
-                    if s.is_warmup { "yes" } else { "" },
                     opt1(s.prefill_tps),
                     opt1(s.decode_tps),
                     opt1(s.ttft_ms),
@@ -140,7 +132,7 @@ fn hw() -> Result<HwIdentity, String> {
 async fn newest_run(
     model: Option<&str>,
     ctx: Option<u32>,
-    prompt: Option<&str>,
+    scenario: Option<&str>,
 ) -> Result<String, String> {
     let digest = digest_of(model).await?;
     let run = registry()?
@@ -149,7 +141,7 @@ async fn newest_run(
         .into_iter()
         .find(|r| {
             ctx.is_none_or(|c| r.num_ctx == c)
-                && prompt.is_none_or(|p| r.prompt_id.as_deref() == Some(p))
+                && scenario.is_none_or(|s| r.prompt_id.as_deref() == Some(s))
         })
         .ok_or("no matching benchmark run — see `anchor bench ls`")?;
     eprintln!(
@@ -165,7 +157,39 @@ async fn newest_run(
     Ok(run.id)
 }
 
-async fn bench(model: &str, suite: Suite, repeats: Repeats, json: bool) -> Result<(), String> {
+/// The catalog itself — what `--scenario` accepts, and the shape behind each
+/// id. Read from the engine's own catalog rather than restated here.
+fn scenarios(json: bool) -> Result<(), String> {
+    if json {
+        let rows: Vec<_> = anchor_hub::CATALOG
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "label": s.label,
+                    "prompt_tokens": s.prompt_tokens,
+                    "gen_tokens": s.gen_tokens,
+                    "num_ctx": s.num_ctx(),
+                })
+            })
+            .collect();
+        return print_json(&rows);
+    }
+    println!("{:<12} {:>8} {:>8} {:>7}  {}", "SCENARIO", "PROMPT", "GEN", "CTX", "USE CASE");
+    for s in &anchor_hub::CATALOG {
+        println!(
+            "{:<12} {:>8} {:>8} {:>7}  {}",
+            s.id,
+            s.prompt_tokens,
+            s.gen_tokens,
+            s.num_ctx(),
+            s.label
+        );
+    }
+    Ok(())
+}
+
+async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> {
     ensure_server().await?;
     let registry = registry()?;
     let hw = hw()?;
@@ -179,33 +203,26 @@ async fn bench(model: &str, suite: Suite, repeats: Repeats, json: bool) -> Resul
             total,
             decode_tps,
         } => progress_line(&format!("run {index} of {total}: {decode_tps:.1} tok/s")),
-        BenchProgress::CellStarted {
-            prompt_id,
+        BenchProgress::ScenarioStarted {
+            scenario_id,
             num_ctx,
-            cell_index,
-            cell_total,
+            index,
+            total,
         } => progress_line(&format!(
-            "cell {cell_index}/{cell_total}: {prompt_id} at {num_ctx} ctx"
+            "scenario {index}/{total}: {scenario_id} at {num_ctx} ctx"
         )),
-        BenchProgress::CellDone { run, .. } => finished.push(*run),
-        BenchProgress::Done { run } => finished.push(*run),
-        BenchProgress::FullDone { runs } => finished = runs,
+        BenchProgress::ScenarioDone { run, .. } => finished.push(*run),
+        BenchProgress::Done { runs } => finished = runs,
         BenchProgress::Failed { message } => eprintln!("\n{message}"),
         // Live tok/s readings drive the app's running graphic; a terminal
         // already sees the per-run lines.
         BenchProgress::Sample { .. } => {}
     };
 
-    let result = match suite {
-        Suite::Quick => registry
-            .run_benchmark(model, &hw, &install_id, on_progress)
-            .await
-            .map(|_| ()),
-        Suite::Full => registry
-            .run_full_benchmark(model, &hw, &install_id, repeats.into(), on_progress)
-            .await
-            .map(|_| ()),
-    };
+    let result = registry
+        .run_benchmark(model, &hw, &install_id, repeats.into(), on_progress)
+        .await
+        .map(|_| ());
     crate::progress_done();
     result.map_err(|e| e.to_string())?;
 
@@ -252,13 +269,13 @@ async fn history(model: Option<&str>, limit: u32, json: bool) -> Result<(), Stri
 async fn top(
     model: Option<&str>,
     suite: Option<&str>,
-    prompt: Option<&str>,
+    scenario: Option<&str>,
     ctx: Option<u32>,
     json: bool,
 ) -> Result<(), String> {
     let digest = digest_of(model).await?;
     let runs = registry()?
-        .bench_runs_for(&hw()?, digest.as_deref(), suite, prompt, ctx)
+        .bench_runs_for(&hw()?, digest.as_deref(), suite, scenario, ctx)
         .map_err(|e| e.to_string())?;
     if json {
         return print_json(&runs);
@@ -274,45 +291,99 @@ fn print_runs(runs: &[BenchRun], show_match: bool) {
     }
     // Run ids are 200-char composites — useless in a table, so the last column
     // is what actually distinguishes the rows: which machine (for a ranking) or
-    // which prompt (for this machine's own history). `--json` carries the id.
+    // which scenario (for this machine's own history). `--json` carries the id.
     println!(
-        "{:<26} {:>7} {:>11} {:>11} {:>9} {:<12} {}",
+        "{:<26} {:<12} {:>7} {:>11} {:>11} {:>9} {}",
         "MODEL",
+        "SCENARIO",
         "CTX",
         "PREFILL",
         "DECODE",
         "LOAD ms",
-        "SUITE",
-        if show_match { "MACHINE" } else { "PROMPT" }
+        if show_match { "MACHINE" } else { "SUITE" }
     );
     for r in runs {
         let tail = if show_match {
-            match r.match_quality {
-                Some(anchor_core::MatchQuality::Exact) => format!("{} (exact)", r.hw.chip),
-                Some(anchor_core::MatchQuality::SameChipMemory) => {
-                    format!("{} (same memory)", r.hw.chip)
-                }
-                Some(anchor_core::MatchQuality::SameFamily) => {
-                    format!("{} (same family)", r.hw.chip)
-                }
-                None => r.hw.chip.clone(),
-            }
+            format!("{}{}", r.hw.chip, match_suffix(r.match_quality))
         } else {
-            r.prompt_id.clone().unwrap_or_else(|| "—".into())
+            r.suite_id.clone()
         };
         println!(
-            "{:<26} {:>7} {:>11} {:>11} {:>9} {:<12} {}",
+            "{:<26} {:<12} {:>7} {:>11} {:>11} {:>9} {}",
             r.model_name,
+            r.prompt_id.as_deref().unwrap_or("—"),
             r.num_ctx,
             opt1(r.prefill_tps_median),
             opt1(r.decode_tps_median),
             r.load_ms.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
-            r.suite_id,
             tail,
         );
     }
 }
 
+/// How close another machine's run is to this one, appended to its chip name.
+/// An unqualified chip means the run is this machine's own.
+fn match_suffix(quality: Option<anchor_core::MatchQuality>) -> &'static str {
+    match quality {
+        Some(anchor_core::MatchQuality::Exact) => " (exact)",
+        Some(anchor_core::MatchQuality::SameChipMemory) => " (same memory)",
+        Some(anchor_core::MatchQuality::SameFamily) => " (same family)",
+        None => "",
+    }
+}
+
 fn opt1(v: Option<f64>) -> String {
     v.map(|v| format!("{v:.1}")).unwrap_or_else(|| "—".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anchor_core::MatchQuality;
+
+    #[test]
+    fn a_missing_measurement_renders_as_an_em_dash() {
+        assert_eq!(opt1(None), "—");
+        assert_eq!(opt1(Some(42.06)), "42.1", "rates are shown to one decimal");
+        assert_eq!(opt1(Some(0.0)), "0.0", "zero is a real reading, not a gap");
+    }
+
+    // The chip alone means "this machine's own run". Every borrowed row has to
+    // carry its distance, or a ranking would present another machine's numbers
+    // as if they were yours.
+    #[test]
+    fn only_this_machines_own_runs_are_unqualified() {
+        assert_eq!(match_suffix(None), "");
+        for q in [
+            MatchQuality::Exact,
+            MatchQuality::SameChipMemory,
+            MatchQuality::SameFamily,
+        ] {
+            assert!(
+                match_suffix(Some(q)).starts_with(' '),
+                "{q:?} must be labelled and separated from the chip name"
+            );
+        }
+    }
+
+    #[test]
+    fn each_match_tier_is_labelled_distinctly() {
+        let labels = [
+            match_suffix(Some(MatchQuality::Exact)),
+            match_suffix(Some(MatchQuality::SameChipMemory)),
+            match_suffix(Some(MatchQuality::SameFamily)),
+        ];
+        let mut seen = labels.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), labels.len(), "tiers must not share a label");
+    }
+
+    // The CLI's own flag enum has to map onto the engine's mode one-for-one;
+    // a wrong arm here silently changes how many repeats a benchmark runs.
+    #[test]
+    fn the_repeats_flag_maps_onto_the_engines_mode() {
+        assert_eq!(RepeatsMode::from(Repeats::Thorough), RepeatsMode::Thorough);
+        assert_eq!(RepeatsMode::from(Repeats::Fast), RepeatsMode::Fast);
+    }
 }

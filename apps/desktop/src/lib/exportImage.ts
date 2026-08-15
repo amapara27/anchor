@@ -175,10 +175,10 @@ export interface BenchmarkCardData {
   memoryGb: number | null;
   osVersion: string | null;
   ollamaVersion: string | null;
-  /** Headline number — always the Quick result's decode tok/s. */
+  /** Headline number — always the headline scenario's decode tok/s. */
   decodeTps: number;
   ttftMs: number | null;
-  /** e.g. "anchor-std v1 · median of 3 runs". */
+  /** e.g. "anchor-scenarios v1 · median of 3 runs". */
   suiteLabel: string;
   /** Pre-formatted, e.g. "Aug 7, 2026" — the run's own date, not "today". */
   dateLabel: string;

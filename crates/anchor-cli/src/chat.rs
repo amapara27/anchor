@@ -7,7 +7,7 @@ use std::io::Write;
 use anchor_hub::{ChatMessage, ChatRequest, Registry, StoredMessage};
 use clap::{Args as ClapArgs, Subcommand};
 
-use crate::{ensure_server, print_json, registry};
+use crate::{confirm, ensure_server, print_json, registry};
 
 /// Keep-alive between turns, matching the app: weights stay resident so a
 /// follow-up doesn't reload the model.
@@ -50,7 +50,12 @@ pub enum Cmd {
     /// Print a conversation's messages.
     Show { id: String },
     /// Delete a conversation and its messages.
-    Rm { id: String },
+    Rm {
+        id: String,
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Rename a conversation.
     Rename { id: String, title: String },
 }
@@ -59,7 +64,13 @@ pub async fn run(args: Args, json: bool) -> Result<(), String> {
     match args.cmd {
         Some(Cmd::Ls) => return list(json),
         Some(Cmd::Show { id }) => return show(&id, json),
-        Some(Cmd::Rm { id }) => {
+        Some(Cmd::Rm { id, yes }) => {
+            // The app reads the same store, so this deletes a thread out from
+            // under its sidebar too.
+            if !yes && !confirm(&format!("delete conversation {id} and its messages?"))? {
+                println!("left alone");
+                return Ok(());
+            }
             registry()?
                 .delete_conversation(&id)
                 .map_err(|e| e.to_string())?;
@@ -111,6 +122,16 @@ fn open_conversation(registry: &Registry, args: &Args) -> Result<(String, String
     }
 }
 
+/// The sidebar label a conversation gets from its first message.
+fn chat_title(content: &str) -> String {
+    let title: String = content.trim().chars().take(CHAT_TITLE_LEN).collect();
+    if title.is_empty() {
+        "New chat".into()
+    } else {
+        title
+    }
+}
+
 /// One assistant turn, following the app's `run_chat` exactly: persist the user
 /// message, rebuild the request from full stored history (so the model's chat
 /// template frames the roles), stream, then persist the reply with its stats.
@@ -125,11 +146,7 @@ async fn turn(
         .messages_for(conversation_id)
         .map_err(|e| e.to_string())?;
     if prior.is_empty() {
-        let title: String = content.trim().chars().take(CHAT_TITLE_LEN).collect();
-        let _ = registry.rename_conversation(
-            conversation_id,
-            if title.is_empty() { "New chat" } else { &title },
-        );
+        let _ = registry.rename_conversation(conversation_id, &chat_title(content));
     }
     let _ = registry.set_conversation_model(conversation_id, model);
 
@@ -302,4 +319,45 @@ fn show(id: &str, json: bool) -> Result<(), String> {
         println!("{}\n", m.content);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_first_message_becomes_the_title_verbatim() {
+        assert_eq!(chat_title("why is the sky blue?"), "why is the sky blue?");
+    }
+
+    // The sidebar column is fixed width; an untruncated title would push the
+    // rest of the row out of view in the app, which reads the same rows.
+    #[test]
+    fn a_long_first_message_is_capped() {
+        let long = "a".repeat(200);
+        let title = chat_title(&long);
+        assert_eq!(title.chars().count(), CHAT_TITLE_LEN);
+    }
+
+    // Trimming happens before the cap, so leading whitespace can't eat the title.
+    #[test]
+    fn surrounding_whitespace_is_not_part_of_the_title() {
+        assert_eq!(chat_title("   hello   "), "hello");
+    }
+
+    // A whitespace-only message trims to nothing, and an empty sidebar label
+    // would render as a blank row rather than a findable conversation.
+    #[test]
+    fn a_blank_first_message_falls_back_to_a_placeholder() {
+        assert_eq!(chat_title("   \n  "), "New chat");
+        assert_eq!(chat_title(""), "New chat");
+    }
+
+    // Counting chars rather than bytes: 60 bytes of CJK is 20 characters, and
+    // slicing by byte would panic on a char boundary.
+    #[test]
+    fn the_cap_counts_characters_not_bytes() {
+        let cjk = "模".repeat(100);
+        assert_eq!(chat_title(&cjk).chars().count(), CHAT_TITLE_LEN);
+    }
 }

@@ -21,7 +21,7 @@ pub mod status;
 pub mod storage;
 pub mod updates;
 
-pub use bench::{BenchProgress, RepeatsMode};
+pub use bench::{BenchProgress, RepeatsMode, Scenario, CATALOG, SUITE_ID, SUITE_VERSION};
 pub use db::{
     AgentMemory, AgentRun, Conversation, KbChunk, KbDocument, Preset, StoredMessage,
     DEFAULT_PRESET_ID,

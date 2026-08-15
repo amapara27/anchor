@@ -132,7 +132,7 @@ fn bench(id: &str, hw: HwIdentity, tps: f64) -> BenchRun {
         kv_cache_type: "f16".to_string(),
         flash_attn: false,
         ollama_version: Some("0.24.0".to_string()),
-        suite_id: "anchor-std".to_string(),
+        suite_id: "anchor-scenarios".to_string(),
         suite_version: 1,
         prefill_tps_median: Some(900.0),
         decode_tps_median: Some(tps),
@@ -240,10 +240,10 @@ fn bench_runs_round_trip_and_rerun_replaces_rather_than_duplicates() {
 fn bench_run_extended_fields_and_samples_round_trip() {
     let mut conn = in_memory();
     let mine = hw("apple-m4", 10, 10, 16);
-    let mut run = bench("full-cell", mine.clone(), 42.0);
-    run.prompt_id = Some("generation_heavy".to_string());
+    let mut run = bench("scenario-row", mine.clone(), 42.0);
+    run.prompt_id = Some("reasoning".to_string());
     run.prompt_version = Some(1);
-    run.suite_id = "anchor-full".to_string();
+    run.suite_id = "anchor-scenarios".to_string();
     run.ttft_ms_median = Some(48.5);
     run.thermal_label = Some("sustained".to_string());
     run.notes = Some("running on battery".to_string());
@@ -251,37 +251,37 @@ fn bench_run_extended_fields_and_samples_round_trip() {
     run.env_end = Some(env(85, false));
 
     let samples = vec![
-        sample("full-cell", 0, true, 40.0),
-        sample("full-cell", 1, false, 41.0),
-        sample("full-cell", 2, false, 42.0),
-        sample("full-cell", 3, false, 43.0),
+        sample("scenario-row", 0, true, 40.0),
+        sample("scenario-row", 1, false, 41.0),
+        sample("scenario-row", 2, false, 42.0),
+        sample("scenario-row", 3, false, 43.0),
     ];
     upsert_bench_with_samples(&mut conn, &run, &samples).unwrap();
 
-    let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), Some("anchor-full"), Some("generation_heavy"), None)
+    let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), Some("anchor-scenarios"), Some("reasoning"), None)
         .unwrap();
     assert_eq!(read.len(), 1);
-    assert_eq!(read[0].prompt_id.as_deref(), Some("generation_heavy"));
+    assert_eq!(read[0].prompt_id.as_deref(), Some("reasoning"));
     assert_eq!(read[0].ttft_ms_median, Some(48.5));
     assert_eq!(read[0].thermal_label.as_deref(), Some("sustained"));
     assert_eq!(read[0].notes.as_deref(), Some("running on battery"));
     assert_eq!(read[0].env_start.as_ref().unwrap().thermal_pressure_pct, Some(100));
     assert_eq!(read[0].env_end.as_ref().unwrap().on_ac_power, Some(false));
 
-    // Suite filter excludes the anchor-std-shaped query.
-    let none = bench_runs_for(&conn, &mine, Some("sha256:abc"), Some("anchor-std"), None, None).unwrap();
+    // Suite filter excludes rows from any other suite.
+    let none = bench_runs_for(&conn, &mine, Some("sha256:abc"), Some("anchor-retired"), None, None).unwrap();
     assert_eq!(none.len(), 0);
 
-    let stored_samples = bench_samples_for(&conn, "full-cell").unwrap();
+    let stored_samples = bench_samples_for(&conn, "scenario-row").unwrap();
     assert_eq!(stored_samples.len(), 4);
     assert!(stored_samples[0].is_warmup);
     assert_eq!(stored_samples[3].decode_tps, Some(43.0));
 
     // Re-upserting with fewer samples must not leave the old ones behind.
     upsert_bench_with_samples(&mut conn, &run, &samples[..2]).unwrap();
-    assert_eq!(bench_samples_for(&conn, "full-cell").unwrap().len(), 2);
+    assert_eq!(bench_samples_for(&conn, "scenario-row").unwrap().len(), 2);
 
-    update_bench_notes(&conn, "full-cell", Some("edited by user")).unwrap();
+    update_bench_notes(&conn, "scenario-row", Some("edited by user")).unwrap();
     let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), None, None, None).unwrap();
     assert_eq!(read[0].notes.as_deref(), Some("edited by user"));
 }

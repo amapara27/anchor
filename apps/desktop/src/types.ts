@@ -652,9 +652,9 @@ export interface BenchRun {
   synced_at: number | null;
   /** Set by a match query; absent on a row read back directly. */
   match_quality?: MatchQuality;
-  /** Catalog id of the Full-suite prompt this row measures, e.g. "short". `null` for anchor-std rows. */
+  /** Catalog id of the scenario this row measures, e.g. "rag". `null` only on rows from a retired suite. */
   prompt_id: string | null;
-  /** Version of the prompt text, independent of `suite_version`. `null` for anchor-std rows. */
+  /** Version of the prompt text, independent of `suite_version`. `null` on those same retired rows. */
   prompt_version: number | null;
   /** Time-to-first-token proxy, median over repeats, in milliseconds. */
   ttft_ms_median: number | null;
@@ -686,21 +686,17 @@ export interface BenchSample {
   created_at: number;
 }
 
-/** Which benchmark suite to run. */
-export type BenchSuiteKind = "quick" | "full";
-
-/** Repeats tradeoff for a Full-suite run; ignored for Quick. */
+/** Repeats tradeoff: `fast` runs the long-generation scenarios once, `thorough` runs everything three times. */
 export type BenchRepeatsMode = "thorough" | "fast";
 
 /** Streamed progress from a running benchmark (`anchor_hub::BenchProgress`). */
 export type BenchProgress =
   | { kind: "status"; message: string }
   | { kind: "run"; index: number; total: number; decode_tps: number }
-  | { kind: "done"; run: BenchRun }
+  | { kind: "scenario_started"; scenario_id: string; num_ctx: number; index: number; total: number }
+  | { kind: "scenario_done"; run: BenchRun; index: number; total: number }
+  | { kind: "done"; runs: BenchRun[] }
   | { kind: "failed"; message: string }
-  | { kind: "cell_started"; prompt_id: string; num_ctx: number; cell_index: number; cell_total: number }
-  | { kind: "cell_done"; run: BenchRun; cell_index: number; cell_total: number }
-  | { kind: "full_done"; runs: BenchRun[] }
   /** A live instantaneous decode-rate reading, throttled (~90ms), for the running graphic. */
   | { kind: "sample"; tps: number };
 

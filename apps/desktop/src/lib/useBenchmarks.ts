@@ -5,14 +5,8 @@
 // from a superseded run so a stale stream can't overwrite fresh state.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type {
-  BenchProgress,
-  BenchRepeatsMode,
-  BenchRun,
-  BenchSuiteKind,
-  MatchQuality,
-  ReviewAllowance,
-} from "../types";
+import type { BenchProgress, BenchRepeatsMode, BenchRun, MatchQuality, ReviewAllowance } from "../types";
+import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
 import { recordUse } from "./lastUsed";
 import { saveMeasuredRun } from "./measured";
 
@@ -62,12 +56,13 @@ function recordMeasured(run: BenchRun): void {
   });
 }
 
-/** Live progress for one Full-suite matrix cell, keyed by (promptId, numCtx). */
-export interface CellProgress {
-  promptId: string;
+/** Live progress for one scenario. Context is derived from the scenario, so
+ *  the id alone identifies the row. */
+export interface ScenarioProgress {
+  scenarioId: string;
   numCtx: number;
-  cellIndex: number;
-  cellTotal: number;
+  index: number;
+  total: number;
   run?: BenchRun;
 }
 
@@ -76,16 +71,17 @@ const WAVEFORM_LENGTH = 52;
 
 export function useBenchmarks(modelId: string | null) {
   const [groups, setGroups] = useState<MatchGroup[]>([]);
-  // Always the Quick (anchor-std) suite, independent of whatever `groups` is
-  // currently showing — the page's "Your machine" summary and the Share card
-  // both need Quick's number even while the Full tab is on screen.
-  const [quickGroups, setQuickGroups] = useState<MatchGroup[]>([]);
+  // This model's headline scenario, fetched separately because `groups` gets
+  // repointed at a cross-model ranking whenever the Leaderboard tab is open —
+  // the page's "Your machine" summary and the Share card need one model's
+  // number either way.
+  const [headlineGroups, setHeadlineGroups] = useState<MatchGroup[]>([]);
   const [progress, setProgress] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allowance, setAllowance] = useState<ReviewAllowance | null>(null);
   const [unlocked, setUnlocked] = useState<Set<string>>(new Set());
-  const [cells, setCells] = useState<CellProgress[]>([]);
+  const [scenarios, setScenarios] = useState<ScenarioProgress[]>([]);
   // Real instantaneous decode-tps readings from the backend's `sample` events
   // (token-arrival timing, not a client-side simulation) — the running
   // graphic's waveform. Left in place (not cleared) after a run finishes, so
@@ -102,22 +98,19 @@ export function useBenchmarks(modelId: string | null) {
   const [version, setVersion] = useState(0);
   const runId = useRef(0);
 
-  /** Loads results, optionally filtered to one suite/prompt/context — pass
-   *  `suiteId: "anchor-std"` for the Quick tab so Full-mode cells (once any
-   *  exist) never blend into a leaderboard the caller expects to be one
-   *  suite's numbers. `id: null` ranks every benchmarked model against every
-   *  other one instead of scoping to one — the leaderboard's cross-model
-   *  view, meaningful once `suiteId`/`promptId`/`numCtx` pin the comparison
-   *  to one apples-to-apples configuration. */
+  /** Loads results, optionally filtered to one suite/scenario/context.
+   *  `id: null` ranks every benchmarked model against every other one — the
+   *  leaderboard's cross-model view, which only means anything once
+   *  `scenarioId` pins the comparison to one apples-to-apples shape. */
   const load = useCallback(
-    async (id: string | null, suiteId?: string, promptId?: string, numCtx?: number) => {
+    async (id: string | null, suiteId?: string, scenarioId?: string, numCtx?: number) => {
       try {
         setGroups(
           group(
             await invoke<BenchRun[]>("bench_runs_for_model", {
               model: id,
               suiteId: suiteId ?? null,
-              promptId: promptId ?? null,
+              promptId: scenarioId ?? null,
               numCtx: numCtx ?? null,
             }),
           ),
@@ -136,12 +129,17 @@ export function useBenchmarks(modelId: string | null) {
   useEffect(() => {
     let cancelled = false;
     if (!modelId) {
-      setQuickGroups([]);
+      setHeadlineGroups([]);
       return;
     }
-    invoke<BenchRun[]>("bench_runs_for_model", { model: modelId, suiteId: "anchor-std", promptId: null, numCtx: null })
-      .then((runs) => !cancelled && setQuickGroups(group(runs)))
-      .catch(() => !cancelled && setQuickGroups([]));
+    invoke<BenchRun[]>("bench_runs_for_model", {
+      model: modelId,
+      suiteId: SUITE_ID,
+      promptId: HEADLINE_SCENARIO,
+      numCtx: null,
+    })
+      .then((runs) => !cancelled && setHeadlineGroups(group(runs)))
+      .catch(() => !cancelled && setHeadlineGroups([]));
     return () => {
       cancelled = true;
     };
@@ -171,13 +169,13 @@ export function useBenchmarks(modelId: string | null) {
   }, [modelId, historyScope, version]);
 
   const run = useCallback(
-    (id: string, suite: BenchSuiteKind, repeats: BenchRepeatsMode) => {
+    (id: string, repeats: BenchRepeatsMode) => {
       const myRun = ++runId.current;
       recordUse(id); // feeds Storage's last-used column and its stale check
       setRunning(true);
       setError(null);
       setProgress("starting");
-      setCells([]);
+      setScenarios([]);
       setWaveform([]);
       setRunStartedAt(Date.now());
       setRunProgress(null);
@@ -196,29 +194,22 @@ export function useBenchmarks(modelId: string | null) {
           case "sample":
             setWaveform((w) => [...w, event.tps].slice(-WAVEFORM_LENGTH));
             break;
-          case "done":
-            setProgress(null);
-            setRunning(false);
-            setRunStartedAt(null);
-            recordMeasured(event.run);
-            setVersion((v) => v + 1);
-            break;
-          case "cell_started":
-            setProgress(`cell ${event.cell_index} of ${event.cell_total} · ${event.prompt_id} @ ${event.num_ctx}`);
-            setCells((cs) => [
-              ...cs,
-              { promptId: event.prompt_id, numCtx: event.num_ctx, cellIndex: event.cell_index, cellTotal: event.cell_total },
+          case "scenario_started":
+            setProgress(`scenario ${event.index} of ${event.total} · ${event.scenario_id} @ ${event.num_ctx}`);
+            setScenarios((ss) => [
+              ...ss,
+              { scenarioId: event.scenario_id, numCtx: event.num_ctx, index: event.index, total: event.total },
             ]);
             break;
-          case "cell_done":
-            recordMeasured(event.run);
-            setCells((cs) =>
-              cs.map((c) =>
-                c.promptId === event.run.prompt_id && c.numCtx === event.run.num_ctx ? { ...c, run: event.run } : c,
-              ),
+          case "scenario_done":
+            // Only the headline scenario feeds the hardware-truth engine: it is
+            // the shape the model pickers' tok/s estimate is calibrated against.
+            if (event.run.prompt_id === HEADLINE_SCENARIO) recordMeasured(event.run);
+            setScenarios((ss) =>
+              ss.map((s) => (s.scenarioId === event.run.prompt_id ? { ...s, run: event.run } : s)),
             );
             break;
-          case "full_done":
+          case "done":
             setProgress(null);
             setRunning(false);
             setRunStartedAt(null);
@@ -233,7 +224,7 @@ export function useBenchmarks(modelId: string | null) {
         }
       };
 
-      invoke("run_benchmark", { model: id, suite, repeats, onEvent: channel }).catch((e) => {
+      invoke("run_benchmark", { model: id, repeats, onEvent: channel }).catch((e) => {
         if (runId.current !== myRun) return;
         setProgress(null);
         setRunning(false);
@@ -254,13 +245,13 @@ export function useBenchmarks(modelId: string | null) {
 
   return {
     groups,
-    quickGroups,
+    headlineGroups,
     progress,
     running,
     error,
     allowance,
     unlocked,
-    cells,
+    scenarios,
     waveform,
     runStartedAt,
     runProgress,

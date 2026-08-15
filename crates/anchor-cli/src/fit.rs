@@ -26,7 +26,12 @@ pub struct Args {
 
 pub async fn run(args: Args, json: bool) -> Result<(), String> {
     let source = resolve(&args.model).await?;
-    let breakdown = compute(&source, args.ctx, args.quant.as_deref())?;
+    let breakdown = compute(
+        &source,
+        args.ctx,
+        args.quant.as_deref(),
+        hardware()?.memory_bytes,
+    )?;
     if json {
         return print_json(&breakdown.result);
     }
@@ -46,6 +51,7 @@ pub struct Subject {
     pub origin: &'static str,
 }
 
+#[derive(Debug)]
 pub struct Breakdown {
     pub context: u64,
     pub result: FitResult,
@@ -109,16 +115,18 @@ fn from_installed(model: &Model) -> Subject {
     }
 }
 
+/// Takes the host's memory rather than reading it, so the decision logic here
+/// is testable without profiling the machine the tests run on.
 fn compute(
     subject: &Subject,
     ctx: Option<u64>,
     quant_override: Option<&str>,
+    memory_bytes: Option<u64>,
 ) -> Result<Breakdown, String> {
     let context = ctx.unwrap_or_else(|| fit::fit_context(subject.max_context));
     if context == 0 {
         return Err("context length must be greater than zero".into());
     }
-    let memory_bytes = hardware()?.memory_bytes;
     let quant = quant_override.unwrap_or(&subject.quant);
     // An explicit --quant is a "what if I ran this build instead" question, so
     // the real on-disk size of the build we have must not answer it.
@@ -203,7 +211,10 @@ fn verdict(tier: FitTier) -> &'static str {
 /// in hand, so it skips resolution.
 pub fn print_breakdown(model: &Model) -> Result<(), String> {
     let subject = from_installed(model);
-    let breakdown = compute(&subject, None, None)?;
+    let breakdown = compute(&subject, None, None, hardware()?.memory_bytes)?;
     print(&subject, &breakdown);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

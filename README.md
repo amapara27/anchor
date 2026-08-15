@@ -34,6 +34,8 @@ First-launch profiling of CPU, RAM, and GPU. Apple Silicon is special-cased via 
 
 Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time.
 
+One suite, run in full every time: eight scenarios, each a fixed (prompt tokens, generation tokens) shape with a use case attached — classification, RAG, chain-of-thought — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times.
+
 ### Storage
 
 A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
@@ -57,12 +59,16 @@ anchor models browse --filter qwen          # everything on ollama.com
 anchor models compare llama3.2:1b qwen3.5:9b "why is the sky blue?"
 anchor fit deepseek-v2 --ctx 32768          # weights + KV cache + verdict
 anchor chat -m llama3.2:1b                  # interactive; omit -m to continue with --conversation
-anchor bench run llama3.2:1b --suite full
+anchor bench scenarios                      # what the suite measures
+anchor bench run llama3.2:1b --repeats fast
+anchor bench top --scenario balanced        # rank every model on one scenario
 anchor storage scan
 anchor settings server --start
 ```
 
 Every command takes `--json` for scripting, and `--host` to point at a non-default Ollama.
+
+Anything that deletes — `models rm`, `chat rm`, `storage clean` — asks first, and takes `--yes` to skip the prompt. The prompt reads from stdin, so a piped or redirected invocation without `--yes` declines rather than proceeding; scripts need the flag. Clearing a stored secret is likewise explicit: `anchor settings secret set KEY ""` deletes it, while an empty value arriving on stdin is an error rather than a silent wipe.
 
 One caveat: the app serialises memory-heavy work internally, but a separate CLI process can't see that lock. Don't benchmark from the terminal while the app is generating — the run would measure the contention rather than the model.
 
@@ -137,7 +143,7 @@ pnpm build
 pnpm dev                                     # run the app (Vite on :1420)
 pnpm --filter @anchor/desktop build          # typecheck + frontend build (fast, no Rust)
 cargo run -p anchor-cli -- models ls         # run the CLI from the workspace
-cargo test -p anchor-core -p anchor-hub -p anchor-search \
+cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-search \
            -p anchor-system -p anchor-workflows   # logic tests, no webview
 node --experimental-strip-types \
   apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures

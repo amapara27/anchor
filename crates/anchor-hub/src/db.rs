@@ -255,13 +255,14 @@ const V8: &str = "
     );
 ";
 
-/// Version 9: the Full benchmark suite — a versioned prompt/context matrix
-/// alongside the original single-prompt `anchor-std` suite, plus per-run
-/// telemetry and the raw samples behind each row's medians.
+/// Version 9: per-prompt benchmark rows, per-run telemetry, and the raw
+/// samples behind each row's medians.
 ///
-/// Every `bench_runs` column added here is nullable, so `anchor-std` rows
-/// (which predate all of it) read back with `NULL` in the new columns rather
-/// than needing a backfill.
+/// Every `bench_runs` column added here is nullable, so the older
+/// single-prompt rows that predate it read back with `NULL` rather than
+/// needing a backfill. (The `anchor-std`/`anchor-full` suites this migration
+/// was written for have since been replaced by `anchor-scenarios`; their rows
+/// remain readable but nothing queries them.)
 const V9: &str = "
     ALTER TABLE bench_runs ADD COLUMN prompt_id TEXT;
     ALTER TABLE bench_runs ADD COLUMN prompt_version INTEGER;
@@ -569,9 +570,10 @@ const BENCH_COLUMNS: &str = "id, hw_key, chip_key, chip, cpu_cores, gpu_cores, m
 /// leaderboard's cross-model view — meaningful once `suite_id`/`prompt_id`/
 /// `num_ctx` pin the comparison to one apples-to-apples configuration).
 /// `suite_id`/`prompt_id`/`num_ctx` are `None` when the caller wants every
-/// suite mixed together; pass `suite_id: Some("anchor-std")` to see only Quick
-/// results once Full-mode rows exist, so a looser suite is never blended into
-/// a leaderboard the caller expects to be one suite's numbers.
+/// suite mixed together; pass `suite_id: Some(bench::SUITE_ID)` and a
+/// `prompt_id` (a scenario id) to pin a leaderboard to one shape, so rows from
+/// a retired suite are never blended into numbers the caller expects to be
+/// one suite's.
 pub fn bench_runs_for(
     conn: &Connection,
     hw: &HwIdentity,

@@ -8,7 +8,9 @@ use anchor_core::Model;
 use anchor_hub::{CompareEvent, Phase, Slot};
 use clap::Subcommand;
 
-use crate::{ensure_server, fmt_bytes, print_json, progress_done, progress_line, registry};
+use crate::{
+    confirm, ensure_server, fmt_bytes, print_json, progress_done, progress_line, registry,
+};
 
 /// How long the scraped Ollama library listing stays good. Models are published
 /// on a scale of days, and the page is ~700 KB — a day-old list is fine.
@@ -23,7 +25,12 @@ pub enum Cmd {
     /// Download a model from the Ollama library.
     Pull { id: String },
     /// Remove an installed model.
-    Rm { id: String },
+    Rm {
+        id: String,
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Models Ollama currently has resident in memory.
     Ps,
     /// Evict a model's weights from memory.
@@ -60,7 +67,13 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
         Cmd::Ls => ls(json).await,
         Cmd::Info { id } => info(&id, json).await,
         Cmd::Pull { id } => pull(&id).await,
-        Cmd::Rm { id } => {
+        Cmd::Rm { id, yes } => {
+            // Asked before `ensure_server`, so declining never leaves a daemon
+            // running that was started only to delete something.
+            if !yes && !confirm(&format!("delete {id}? this removes it from Ollama"))? {
+                println!("left alone");
+                return Ok(());
+            }
             ensure_server().await?;
             registry()?.remove(&id).await.map_err(|e| e.to_string())?;
             println!("removed {id}");
@@ -296,6 +309,11 @@ fn clip(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
+    // The ellipsis needs a column of its own, so a zero-width cell has nothing
+    // left to spend on content — and `max - 1` would underflow.
+    if max == 0 {
+        return String::new();
+    }
     s.chars().take(max - 1).collect::<String>() + "…"
 }
 
@@ -378,3 +396,6 @@ fn label(slot: Slot) -> &'static str {
         Slot::B => "B",
     }
 }
+
+#[cfg(test)]
+mod tests;

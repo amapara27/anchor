@@ -1,6 +1,6 @@
-//! The benchmark suites: Quick (a single fixed prompt) and Full (a versioned
-//! prompt × context-size matrix), plus the live telemetry captured around
-//! each run.
+//! The benchmark suite: a versioned catalog of scenarios, each a (prompt
+//! tokens, generation tokens) shape with a use case attached, plus the live
+//! telemetry captured around each run.
 //!
 //! Lives in `anchor-hub` because it needs both halves this crate already
 //! owns: the Ollama client that produces [`GenerationStats`], and the SQLite
@@ -14,36 +14,12 @@
 
 mod prompts;
 
-pub use prompts::RepeatsMode;
+pub use prompts::{RepeatsMode, Scenario, CATALOG, SUITE_ID, SUITE_VERSION};
 
 use anchor_core::{BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity};
 use serde::Serialize;
 
 use crate::{ollama, status, GenerateRequest, GenerationStats, Registry, Result};
-
-/// Identifies the Quick suite, so a result carries what produced it.
-///
-/// **Bump `SUITE_VERSION` whenever the prompt, token count, or context changes.**
-/// Results are keyed on it, so old numbers stay in place as their own rows
-/// rather than being silently compared against new ones.
-pub const SUITE_ID: &str = "anchor-std";
-pub const SUITE_VERSION: u32 = 1;
-
-/// Fixed prompt. Deliberately mundane and self-contained: no retrieval, no
-/// reasoning cliff, nothing that would make one model's answer far longer than
-/// another's before `num_predict` caps it.
-const SUITE_PROMPT: &str =
-    "Write a short paragraph explaining what a hash table is and when you would use one.";
-
-/// Tokens to generate per measured run. Long enough that the per-token rate
-/// settles, short enough that a full benchmark stays under a minute.
-const SUITE_NUM_PREDICT: u64 = 128;
-
-/// Context to load with. Pinned because throughput depends on it.
-const SUITE_NUM_CTX: u32 = 4096;
-
-/// Measured runs behind the reported medians, after a discarded warmup.
-const SUITE_REPEATS: u32 = 3;
 
 /// A drop of this many percentage points in thermal headroom between a run's
 /// start and end snapshots labels it "throttled" rather than "sustained".
@@ -59,18 +35,16 @@ const THROTTLE_DELTA_PCT: u8 = 15;
 pub enum BenchProgress {
     /// A human-readable phase, e.g. "warming up", "run 2 of 3".
     Status { message: String },
-    /// One measured run finished.
+    /// One measured repeat of the current scenario finished.
     Run { index: u32, total: u32, decode_tps: f64 },
-    /// The whole (Quick) suite finished; the row is already stored.
-    Done { run: Box<BenchRun> },
+    /// One scenario started.
+    ScenarioStarted { scenario_id: String, num_ctx: u32, index: u32, total: u32 },
+    /// One scenario finished; its row is already stored.
+    ScenarioDone { run: Box<BenchRun>, index: u32, total: u32 },
+    /// The whole suite finished.
+    Done { runs: Vec<BenchRun> },
     /// The suite failed partway.
     Failed { message: String },
-    /// A Full-suite cell (one prompt at one context size) started.
-    CellStarted { prompt_id: String, num_ctx: u32, cell_index: u32, cell_total: u32 },
-    /// A Full-suite cell finished; its row is already stored.
-    CellDone { run: Box<BenchRun>, cell_index: u32, cell_total: u32 },
-    /// The whole Full suite finished.
-    FullDone { runs: Vec<BenchRun> },
     /// A live instantaneous decode-rate reading, for the running graphic.
     /// Wall-clock, from token arrival timing — not Ollama's own
     /// `eval_count/eval_duration`, which only exist once a whole call
@@ -266,158 +240,15 @@ impl Registry {
         crate::db::reviews_used(&self.connect()?, now_ms)
     }
 
-    /// Runs the standard (Quick) suite against `model` and stores the result.
+    /// Runs the suite against `model`, storing each scenario as its own row.
     ///
-    /// Sequence: evict the model, one warmup run (which absorbs the load cost
-    /// and is discarded), then [`SUITE_REPEATS`] measured runs. The warmup is
-    /// not optional — its `eval_duration` includes weight loading, so counting
-    /// it would understate throughput on exactly the machines that load slowest.
+    /// Scenarios are grouped by derived `num_ctx` and run in ascending order so
+    /// the model reloads once per distinct context size, not once per scenario
+    /// — Ollama reloads on a `num_ctx` change, not on a prompt change. Each
+    /// context group gets one discarded warmup, whose `eval_duration` includes
+    /// weight loading: counting it would understate throughput on exactly the
+    /// machines that load slowest.
     pub async fn run_benchmark<F>(
-        &self,
-        model: &str,
-        hw: &HwIdentity,
-        install_id: &str,
-        mut on_progress: F,
-    ) -> Result<BenchRun>
-    where
-        F: FnMut(BenchProgress) + Send,
-    {
-        let digest = ollama::digest_of(&self.host, model)
-            .await?
-            .ok_or_else(|| crate::Error::Ollama(format!("{model} is not installed")))?;
-        let ollama_version = ollama::version(&self.host).await.ok();
-
-        // Byte-identical to the id every anchor-std row was already stored
-        // under (no prompt segment), so this keeps upserting the same row.
-        let id = BenchRun::derive_id(
-            install_id, &hw.hw_key, &digest, SUITE_ID, SUITE_VERSION, SUITE_NUM_CTX, "f16", false, None,
-        );
-
-        // Cold start: the load time we report should be a real one.
-        on_progress(BenchProgress::Status {
-            message: "unloading model".into(),
-        });
-        let _ = self.unload(model).await;
-
-        let request =
-            GenerateRequest::for_benchmark(model, SUITE_PROMPT, SUITE_NUM_PREDICT, SUITE_NUM_CTX);
-
-        let env_start = capture_env(self, model).await;
-
-        on_progress(BenchProgress::Status {
-            message: "warming up".into(),
-        });
-        let mut sampler = LiveSampler::new();
-        let warmup_start = now_ms();
-        let (_, warmup) = ollama::generate(&self.host, &request, |_tok| {
-            if let Some(tps) = sampler.on_token() {
-                on_progress(BenchProgress::Sample { tps });
-            }
-        })
-        .await?;
-        let load_ms = warmup.load_duration_ns.map(|ns| ns / 1_000_000);
-
-        let mut samples = vec![sample_from(&id, 0, true, warmup_start, &warmup)];
-        let mut decode = Vec::new();
-        let mut prefill = Vec::new();
-        let mut ttft = Vec::new();
-        for i in 1..=SUITE_REPEATS {
-            on_progress(BenchProgress::Status {
-                message: format!("run {i} of {SUITE_REPEATS}"),
-            });
-            let wall_start = now_ms();
-            let (_, stats) = ollama::generate(&self.host, &request, |_tok| {
-                if let Some(tps) = sampler.on_token() {
-                    on_progress(BenchProgress::Sample { tps });
-                }
-            })
-            .await?;
-            if let Some(d) = tps(stats.eval_count, stats.eval_duration_ns) {
-                decode.push(d);
-                on_progress(BenchProgress::Run {
-                    index: i,
-                    total: SUITE_REPEATS,
-                    decode_tps: d,
-                });
-            }
-            if let Some(p) = tps(stats.prompt_eval_count, stats.prompt_eval_duration_ns) {
-                prefill.push(p);
-            }
-            if let Some(t) = ttft_ms(&stats) {
-                ttft.push(t);
-            }
-            samples.push(sample_from(&id, i, false, wall_start, &stats));
-        }
-
-        let env_end = capture_env(self, model).await;
-        let label = thermal_label(&env_start, &env_end);
-        let notes = auto_notes(&label, &env_start);
-
-        // Read the resident size while the model is still loaded — `for_benchmark`
-        // holds keep_alive open precisely so this can happen.
-        let peak_rss_bytes = status::running(self)
-            .await
-            .ok()
-            .and_then(|rs| rs.into_iter().find(|r| r.name == model).and_then(|r| r.size));
-
-        let now = now_ms();
-        let run = BenchRun {
-            id,
-            hw: hw.clone(),
-            model_name: model.to_string(),
-            model_digest: digest,
-            quant: self
-                .cached_models()
-                .ok()
-                .and_then(|ms| ms.into_iter().find(|m| m.id == model))
-                .and_then(|m| m.quantization),
-            num_ctx: SUITE_NUM_CTX,
-            // ponytail: Ollama's defaults. Read them back from the server once
-            // it exposes the loaded cache type and flash-attention state.
-            kv_cache_type: "f16".to_string(),
-            flash_attn: false,
-            ollama_version,
-            suite_id: SUITE_ID.to_string(),
-            suite_version: SUITE_VERSION,
-            prefill_tps_median: median(prefill),
-            decode_tps_median: median(decode),
-            load_ms,
-            peak_rss_bytes,
-            repeats: SUITE_REPEATS,
-            install_id: install_id.to_string(),
-            rating: None,
-            review: None,
-            visible: true,
-            created_at: now,
-            updated_at: now,
-            source: BenchSource::Local,
-            synced_at: None,
-            match_quality: None,
-            prompt_id: None,
-            prompt_version: None,
-            ttft_ms_median: median(ttft),
-            env_start: Some(env_start),
-            env_end: Some(env_end),
-            thermal_label: Some(label),
-            notes,
-        };
-
-        crate::db::upsert_bench_with_samples(&mut self.connect()?, &run, &samples)?;
-        let _ = self.unload(model).await;
-        on_progress(BenchProgress::Done {
-            run: Box::new(run.clone()),
-        });
-        Ok(run)
-    }
-
-    /// Runs the Full suite (a versioned prompt × context-size matrix) against
-    /// `model` and stores each cell as its own row.
-    ///
-    /// Cells are grouped by `num_ctx` and run in ascending order so the model
-    /// reloads once per distinct context size, not once per cell — Ollama
-    /// reloads on a `num_ctx` change, not on a prompt change. Each ctx group
-    /// gets one discarded warmup, same reasoning as the Quick suite.
-    pub async fn run_full_benchmark<F>(
         &self,
         model: &str,
         hw: &HwIdentity,
@@ -438,15 +269,15 @@ impl Registry {
             .and_then(|ms| ms.into_iter().find(|m| m.id == model))
             .and_then(|m| m.quantization);
 
-        let groups = prompts::grouped_by_ctx(prompts::full_matrix());
-        let cell_total = groups.iter().map(|(_, cells)| cells.len()).sum::<usize>() as u32;
-        let mut cell_index = 0u32;
+        let groups = prompts::grouped_by_ctx();
+        let total = CATALOG.len() as u32;
+        let mut index = 0u32;
         let mut results = Vec::new();
-        // One sampler for the whole run (every ctx group, every cell) so the
-        // live graphic reads as one continuous feed, not a reset per cell.
+        // One sampler for the whole run (every ctx group, every scenario) so
+        // the live graphic reads as one continuous feed, not a reset per row.
         let mut sampler = LiveSampler::new();
 
-        for (num_ctx, cells) in groups {
+        for (num_ctx, scenarios) in groups {
             on_progress(BenchProgress::Status {
                 message: format!("unloading model before {num_ctx} context"),
             });
@@ -455,38 +286,46 @@ impl Registry {
             on_progress(BenchProgress::Status {
                 message: format!("warming up at {num_ctx} context"),
             });
-            let warmup_predict = cells[0].num_predict.min(64);
+            let warmup_predict = scenarios[0].gen_tokens.min(64) as u64;
             let warmup_request =
-                GenerateRequest::for_benchmark(model, cells[0].text(), warmup_predict, num_ctx);
-            let _ = ollama::generate(&self.host, &warmup_request, |_tok| {
+                GenerateRequest::for_benchmark(model, scenarios[0].text(), warmup_predict, num_ctx);
+            let (_, warmup) = ollama::generate(&self.host, &warmup_request, |_tok| {
                 if let Some(tps) = sampler.on_token() {
                     on_progress(BenchProgress::Sample { tps });
                 }
             })
             .await?;
+            // Every scenario in this group loaded under this warmup, so they
+            // all report its load cost rather than leaving the column empty.
+            let load_ms = warmup.load_duration_ns.map(|ns| ns / 1_000_000);
 
-            for cell in cells {
-                cell_index += 1;
-                on_progress(BenchProgress::CellStarted {
-                    prompt_id: cell.prompt_id().to_string(),
+            for scenario in scenarios {
+                index += 1;
+                on_progress(BenchProgress::ScenarioStarted {
+                    scenario_id: scenario.id.to_string(),
                     num_ctx,
-                    cell_index,
-                    cell_total,
+                    index,
+                    total,
                 });
 
                 let env_start = capture_env(self, model).await;
-                let repeat_count = prompts::repeats_for(cell.prompt_id(), repeats);
-                let request = GenerateRequest::for_benchmark(model, cell.text(), cell.num_predict, num_ctx);
+                let repeat_count = prompts::repeats_for(scenario, repeats);
+                let request = GenerateRequest::for_benchmark(
+                    model,
+                    scenario.text(),
+                    scenario.gen_tokens as u64,
+                    num_ctx,
+                );
                 let id = BenchRun::derive_id(
                     install_id,
                     &hw.hw_key,
                     &digest,
-                    prompts::FULL_SUITE_ID,
-                    prompts::FULL_SUITE_VERSION,
+                    SUITE_ID,
+                    SUITE_VERSION,
                     num_ctx,
                     "f16",
                     false,
-                    Some((cell.prompt_id(), prompts::PROMPT_CATALOG_VERSION)),
+                    Some((scenario.id, prompts::PROMPT_CATALOG_VERSION)),
                 );
 
                 let mut samples = Vec::new();
@@ -533,13 +372,11 @@ impl Registry {
                     kv_cache_type: "f16".to_string(),
                     flash_attn: false,
                     ollama_version: ollama_version.clone(),
-                    suite_id: prompts::FULL_SUITE_ID.to_string(),
-                    suite_version: prompts::FULL_SUITE_VERSION,
+                    suite_id: SUITE_ID.to_string(),
+                    suite_version: SUITE_VERSION,
                     prefill_tps_median: median(prefill),
                     decode_tps_median: median(decode),
-                    // Load cost is absorbed by the per-ctx-group warmup above,
-                    // not measured per cell.
-                    load_ms: None,
+                    load_ms,
                     peak_rss_bytes,
                     repeats: repeat_count,
                     install_id: install_id.to_string(),
@@ -551,7 +388,7 @@ impl Registry {
                     source: BenchSource::Local,
                     synced_at: None,
                     match_quality: None,
-                    prompt_id: Some(cell.prompt_id().to_string()),
+                    prompt_id: Some(scenario.id.to_string()),
                     prompt_version: Some(prompts::PROMPT_CATALOG_VERSION),
                     ttft_ms_median: median(ttft),
                     env_start: Some(env_start),
@@ -561,17 +398,17 @@ impl Registry {
                 };
 
                 crate::db::upsert_bench_with_samples(&mut self.connect()?, &run, &samples)?;
-                on_progress(BenchProgress::CellDone {
+                on_progress(BenchProgress::ScenarioDone {
                     run: Box::new(run.clone()),
-                    cell_index,
-                    cell_total,
+                    index,
+                    total,
                 });
                 results.push(run);
             }
         }
 
         let _ = self.unload(model).await;
-        on_progress(BenchProgress::FullDone { runs: results.clone() });
+        on_progress(BenchProgress::Done { runs: results.clone() });
         Ok(results)
     }
 }
@@ -618,11 +455,13 @@ mod tests {
     }
 
     /// End-to-end against a live server. Ignored by default: it needs Ollama
-    /// running with `llama3.2:1b` installed, and takes ~30s.
+    /// running with `llama3.2:1b` installed, and takes several minutes.
     ///   cargo test -p anchor-hub -- --ignored --nocapture runs_the_suite
     #[tokio::test]
     #[ignore = "needs a live Ollama server with llama3.2:1b"]
     async fn runs_the_suite_end_to_end() {
+        use prompts::RepeatsMode;
+
         let dir = std::env::temp_dir().join(format!("anchor-bench-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let registry = Registry::open(dir.join("registry.db")).unwrap();
@@ -636,40 +475,42 @@ mod tests {
             os_version: Some("15.5".into()),
         };
 
-        let run = registry
-            .run_benchmark("llama3.2:1b", &hw, "test-install", |p| {
+        let runs = registry
+            .run_benchmark("llama3.2:1b", &hw, "test-install", RepeatsMode::Fast, |p| {
                 println!("{p:?}");
             })
             .await
             .expect("benchmark should complete");
 
-        assert!(run.decode_tps_median.unwrap() > 0.0, "decode throughput measured");
-        assert!(run.prefill_tps_median.unwrap() > 0.0, "prefill throughput measured");
-        assert_eq!(run.repeats, SUITE_REPEATS);
-        assert!(run.model_digest.len() > 16, "digest recorded");
-        assert!(run.peak_rss_bytes.unwrap() > 0, "resident size read while loaded");
-        assert!(run.ttft_ms_median.unwrap() > 0.0, "ttft measured");
-        assert!(run.env_start.is_some(), "telemetry captured at start");
-        assert!(run.env_end.is_some(), "telemetry captured at end");
-        assert!(run.thermal_label.is_some(), "thermal label derived");
-        println!(
-            "\ndecode {:.1} tok/s | prefill {:.0} tok/s | ttft {:.0} ms | load {:?} ms | peak {:.2} GiB | thermal {:?}",
-            run.decode_tps_median.unwrap(),
-            run.prefill_tps_median.unwrap(),
-            run.ttft_ms_median.unwrap(),
-            run.load_ms,
-            run.peak_rss_bytes.unwrap() as f64 / 1024_f64.powi(3),
-            run.thermal_label,
-        );
+        assert_eq!(runs.len(), CATALOG.len(), "one row per scenario");
+        for run in &runs {
+            let id = run.prompt_id.as_deref().unwrap();
+            assert!(run.decode_tps_median.unwrap() > 0.0, "{id}: decode throughput measured");
+            assert!(run.prefill_tps_median.unwrap() > 0.0, "{id}: prefill throughput measured");
+            assert!(run.model_digest.len() > 16, "{id}: digest recorded");
+            assert!(run.peak_rss_bytes.unwrap() > 0, "{id}: resident size read while loaded");
+            assert!(run.ttft_ms_median.unwrap() > 0.0, "{id}: ttft measured");
+            assert!(run.env_start.is_some(), "{id}: telemetry captured at start");
+            assert!(run.env_end.is_some(), "{id}: telemetry captured at end");
+            assert!(run.thermal_label.is_some(), "{id}: thermal label derived");
+            println!(
+                "{id:<12} {:>6} ctx | decode {:>6.1} tok/s | prefill {:>6.0} tok/s | ttft {:>5.0} ms | load {:?} ms",
+                run.num_ctx,
+                run.decode_tps_median.unwrap(),
+                run.prefill_tps_median.unwrap(),
+                run.ttft_ms_median.unwrap(),
+                run.load_ms,
+            );
+        }
 
-        // The row must be readable back through the tiered match query.
-        let found = registry.bench_runs_for(&hw, Some(&run.model_digest), None, None, None).unwrap();
-        assert_eq!(found.len(), 1);
+        // The rows must be readable back through the tiered match query.
+        let digest = &runs[0].model_digest;
+        let found = registry.bench_runs_for(&hw, Some(digest), Some(SUITE_ID), None, None).unwrap();
+        assert_eq!(found.len(), CATALOG.len());
         assert_eq!(found[0].match_quality, Some(anchor_core::MatchQuality::Exact));
 
-        let samples = registry.bench_samples_for(&run.id).unwrap();
-        assert_eq!(samples.len(), 1 + SUITE_REPEATS as usize, "warmup plus measured repeats stored");
-        assert!(samples[0].is_warmup);
+        let samples = registry.bench_samples_for(&runs[0].id).unwrap();
+        assert_eq!(samples.len(), runs[0].repeats as usize, "one sample per measured repeat");
         std::fs::remove_dir_all(&dir).ok();
     }
 

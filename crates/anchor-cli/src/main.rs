@@ -143,6 +143,23 @@ pub fn hardware() -> Result<anchor_core::HardwareProfile, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Which stdin answers mean yes. Anything else — including EOF, which leaves the
+/// buffer empty — means no, so a piped or redirected delete fails safe.
+pub fn is_affirmative(answer: &str) -> bool {
+    matches!(answer.trim(), "y" | "Y" | "yes")
+}
+
+/// Asks before something irreversible. Every destructive command routes through
+/// this, so there is one prompt to reason about rather than one per call site.
+pub fn confirm(question: &str) -> Result<bool, String> {
+    println!("{question} [y/N]");
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| e.to_string())?;
+    Ok(is_affirmative(&answer))
+}
+
 pub fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
     let out = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     println!("{out}");
@@ -208,4 +225,90 @@ pub fn progress_done() {
 
 fn is_terminal() -> bool {
     std::io::IsTerminal::is_terminal(&std::io::stdout())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anchor_hub::GenerationStats;
+
+    fn stats(eval_count: Option<u64>, eval_duration_ns: Option<u64>) -> GenerationStats {
+        GenerationStats {
+            eval_count,
+            eval_duration_ns,
+            ..Default::default()
+        }
+    }
+
+    // Bytes are the one unit printed without decimals, so a single `{:.2}`
+    // format string for every unit would render 512 bytes as "512.00 B".
+    #[test]
+    fn bytes_under_a_kibibyte_print_without_decimals() {
+        assert_eq!(fmt_bytes(0), "0 B");
+        assert_eq!(fmt_bytes(512), "512 B");
+        assert_eq!(fmt_bytes(1023), "1023 B", "1023 is still bytes, not 1.00 KiB");
+    }
+
+    // The loop divides while `value >= 1024.0`, so the boundary belongs to the
+    // larger unit — off-by-one here shows up as "1024.00 B".
+    #[test]
+    fn the_kibibyte_boundary_rolls_over_to_the_larger_unit() {
+        assert_eq!(fmt_bytes(1024), "1.00 KiB");
+        assert_eq!(fmt_bytes(1024 * 1024), "1.00 MiB");
+        assert_eq!(fmt_bytes(1024 * 1024 * 1024), "1.00 GiB");
+    }
+
+    // Binary units, not decimal: a 4 GB (decimal) figure is under 4 GiB.
+    #[test]
+    fn sizes_are_binary_not_decimal() {
+        assert_eq!(fmt_bytes(4_000_000_000), "3.73 GiB");
+    }
+
+    // The unit table stops at TiB, so anything larger has to keep using it
+    // rather than running off the end of the array.
+    #[test]
+    fn sizes_past_the_largest_unit_stay_in_tebibytes() {
+        assert_eq!(fmt_bytes(2048_u64 * 1024 * 1024 * 1024 * 1024), "2048.00 TiB");
+    }
+
+    #[test]
+    fn throughput_needs_both_a_count_and_a_duration() {
+        assert_eq!(tokens_per_second(&stats(Some(100), Some(2_000_000_000))), Some(50.0));
+        assert_eq!(tokens_per_second(&stats(None, Some(2_000_000_000))), None);
+        assert_eq!(tokens_per_second(&stats(Some(100), None)), None);
+    }
+
+    // Ollama reports a zero duration for a generation that produced nothing;
+    // dividing by it would yield inf rather than "no rate to report".
+    #[test]
+    fn a_zero_duration_yields_no_throughput_rather_than_infinity() {
+        assert_eq!(tokens_per_second(&stats(Some(100), Some(0))), None);
+    }
+
+    #[test]
+    fn only_lowercase_y_and_yes_confirm() {
+        assert!(is_affirmative("y"));
+        assert!(is_affirmative("Y"));
+        assert!(is_affirmative("yes"));
+        // Trailing newline is what read_line actually hands us.
+        assert!(is_affirmative("y\n"));
+        assert!(is_affirmative("  yes  \n"));
+    }
+
+    // Everything not on the accept list declines, which is the safe direction:
+    // "Yes" reading as no costs a retype, "n" reading as yes costs a model.
+    #[test]
+    fn anything_else_declines() {
+        for answer in ["n", "N", "no", "Yes", "YES", "yep", "1", "delete"] {
+            assert!(!is_affirmative(answer), "{answer:?} must not confirm");
+        }
+    }
+
+    // EOF leaves read_line's buffer untouched, so a piped or redirected delete
+    // has to land here rather than reading an empty line as consent.
+    #[test]
+    fn an_empty_answer_from_eof_declines() {
+        assert!(!is_affirmative(""), "EOF must not confirm");
+        assert!(!is_affirmative("\n"), "a bare newline must not confirm");
+    }
 }

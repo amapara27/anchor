@@ -362,13 +362,13 @@ pub struct BenchRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub match_quality: Option<MatchQuality>,
 
-    /// Catalog id of the prompt this row measures, e.g. `"short"`,
-    /// `"long_context"`, `"generation_heavy"`. `None` for `anchor-std` rows,
-    /// which don't use the catalog.
+    /// Catalog id of the scenario this row measures, e.g. `"classify"`,
+    /// `"rag"`, `"reasoning"`. `None` only on rows from the retired
+    /// single-prompt suites, which predate the catalog.
     pub prompt_id: Option<String>,
     /// Version of the prompt *text*, independent of `suite_version` (which
-    /// versions suite logic — the ctx set, repeat counts, cell structure).
-    /// `None` for `anchor-std` rows.
+    /// versions suite logic — the scenario set, context derivation, repeat
+    /// counts). `None` on those same retired rows.
     pub prompt_version: Option<u32>,
     /// Time-to-first-token proxy, in milliseconds: `prompt_eval_duration_ns`,
     /// median over repeats. On an already-warmed/loaded model, generation
@@ -393,12 +393,11 @@ impl BenchRun {
     /// stuffing the ballot box. Left unhashed so it stays greppable in a
     /// `sqlite3` shell.
     ///
-    /// `prompt` is `(prompt_id, prompt_version)` for a Full-suite cell, `None`
-    /// for the single-prompt `anchor-std` suite — omitting the segment when
-    /// `None` keeps this byte-identical to every id derived before Full mode
-    /// existed, so existing rows keep upserting in place. When `Some`, the
-    /// segment is what keeps sibling cells that share a `num_ctx` (different
-    /// prompts, same context size) from colliding on one row.
+    /// `prompt` is `(prompt_id, prompt_version)` — the scenario behind the row.
+    /// It is what keeps sibling scenarios that share a `num_ctx` tier from
+    /// colliding on one row. `None` omits the segment entirely, which is how
+    /// the retired single-prompt suites derived their ids; keeping that branch
+    /// means their existing rows still resolve to the same key.
     #[allow(clippy::too_many_arguments)]
     pub fn derive_id(
         install_id: &str,

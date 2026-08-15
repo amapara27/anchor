@@ -709,19 +709,8 @@ fn hw_identity(app: &AppHandle) -> Result<HwIdentity, String> {
     Ok(HwIdentity::from_profile(&profile))
 }
 
-/// Which suite `run_benchmark` runs.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum BenchSuiteKind {
-    /// The single fixed-prompt suite (`anchor-std`), unchanged since before
-    /// Full mode existed.
-    Quick,
-    /// The versioned prompt x context-size matrix (`anchor-full`).
-    Full,
-}
-
-/// Repeats tradeoff for a Full-suite run. Ignored when `suite` is `Quick`
-/// (Quick always runs 3 repeats, as it always has).
+/// Repeats tradeoff for a run: `fast` drops the long-generation scenarios to a
+/// single repeat, `thorough` runs everything three times.
 #[derive(serde::Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum BenchRepeatsMode {
@@ -738,19 +727,15 @@ impl From<BenchRepeatsMode> for RepeatsMode {
     }
 }
 
-/// Runs a benchmark suite against a model and stores the result(s).
+/// Runs the benchmark suite against a model and stores one row per scenario.
 ///
 /// Takes `compare_lock` (shared with `compare_models` and `run_research`) so a
 /// benchmark can never run alongside another RAM-heavy generation — a contended
-/// run would measure the contention, not the model. One command for both
-/// suites rather than two: the server/registry/hw/install-id/lock ceremony
-/// below is identical either way, and the suites already differ through the
-/// `BenchProgress` variants each one streams.
+/// run would measure the contention, not the model.
 #[tauri::command]
 async fn run_benchmark(
     app: AppHandle,
     model: String,
-    suite: BenchSuiteKind,
     repeats: BenchRepeatsMode,
     on_event: Channel<BenchProgress>,
 ) -> Result<(), String> {
@@ -765,13 +750,10 @@ async fn run_benchmark(
         // Best-effort: a dropped channel (UI navigated away) shouldn't error.
         let _ = on_event.send(event);
     };
-    let result = match suite {
-        BenchSuiteKind::Quick => registry.run_benchmark(&model, &hw, &id, on_progress).await.map(|_| ()),
-        BenchSuiteKind::Full => registry
-            .run_full_benchmark(&model, &hw, &id, repeats.into(), on_progress)
-            .await
-            .map(|_| ()),
-    };
+    let result = registry
+        .run_benchmark(&model, &hw, &id, repeats.into(), on_progress)
+        .await
+        .map(|_| ());
     if let Err(e) = result {
         let _ = on_event.send(BenchProgress::Failed {
             message: e.to_string(),
@@ -787,9 +769,9 @@ async fn run_benchmark(
 /// `model: None` ranks every benchmarked model against every other one — the
 /// leaderboard's cross-model view. Pass `model: Some(id)` to scope to one
 /// model instead (the Suite tab's "how does my machine compare" table).
-/// `suite_id`/`prompt_id`/`num_ctx` filter which rows come back — pass
-/// `suite_id: Some("anchor-std")` to see only Quick results once Full-mode
-/// rows exist, so the two suites' numbers are never blended into one
+/// `suite_id`/`prompt_id`/`num_ctx` filter which rows come back — pass the
+/// current `suite_id` and a `prompt_id` (a scenario id) to pin a ranking to
+/// one shape, so a retired suite's numbers are never blended into one
 /// leaderboard.
 #[tauri::command]
 async fn bench_runs_for_model(

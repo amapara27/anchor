@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, BenchSuiteKind, HardwareProfile, LibraryModel, ReviewAllowance } from "../types";
+import type { BenchRepeatsMode, BenchRun, HardwareProfile, LibraryModel, ReviewAllowance } from "../types";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
@@ -12,35 +12,17 @@ import { ModelSelect } from "./ui/ModelSelect";
 import { Tabs } from "./ui/Tabs";
 import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Meter } from "./ui/SegmentedBar";
-import { BenchMatrix, type MatrixCell } from "./ui/BenchMatrix";
+import { ScenarioTable, type ScenarioRow } from "./ui/ScenarioTable";
+import { HEADLINE_SCENARIO, SCENARIOS_BY_COST, SUITE_ID, scenarioLabel } from "../lib/scenarios";
 import { LockIcon, ZapIcon, DownloadIcon, CloseIcon, WarningIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard" | "community";
 
 const TAB_HINT: Record<BenchTab, string> = {
-  suite: "median of three runs, after a warm-up",
+  suite: "nine scenarios, median of the repeats after a warm-up",
   leaderboard: "every model you've tested, ranked by decode tok/s",
   community: "no results server yet",
 };
-
-/** Prompt catalog and context sizes the Full suite runs, mirroring
- *  `anchor_hub::bench::prompts` — kept here only for building the matrix UI
- *  and the leaderboard's cell selector, not sent anywhere. */
-const PROMPT_IDS = ["short", "long_context", "generation_heavy"];
-const CTX_SIZES = [4096, 8192, 16384];
-
-/** The fixed 8 feasible (prompt, context) cells the Full suite runs — mirrors
- *  the backend's feasibility filter (`long_context` doesn't fit at 4096). A
- *  cross-model leaderboard needs one fixed cell picked (comparing tok/s across
- *  different context sizes isn't apples-to-apples), so this is always the
- *  full, static list rather than derived from whichever models happen to have
- *  data yet. */
-const FEASIBLE_CELLS: { promptId: string; numCtx: number }[] = CTX_SIZES.flatMap((numCtx) =>
-  PROMPT_IDS.filter((promptId) => !(promptId === "long_context" && numCtx === 4096)).map((promptId) => ({
-    promptId,
-    numCtx,
-  })),
-);
 
 /** Median of the group's decode throughput — what the tier is summarised by. */
 function medianTps(runs: BenchRun[]): number | null {
@@ -78,16 +60,15 @@ function ThermalBadge({ label }: { label: string | null }) {
  * result.
  *
  * Top section (run setup / live run / history) is always visible, above the
- * suite/leaderboard/community tabs. Two suites: Quick (`run_benchmark`,
- * unchanged since before Full mode existed) and Full (a versioned prompt x
- * context-size matrix). The Leaderboard ranks **models** against each other
- * (not a separate leaderboard per model) — Quick scope compares every
- * model's Quick result directly; Full scope needs one fixed prompt+context
- * cell picked first, since tok/s only compares fairly at the same
- * configuration. Rows are still grouped by hardware match tier so a number
- * from a looser match is never presented as though it came from an identical
- * Mac. The Community tab has no backend — there is no results server to
- * publish to or read from — so it says so rather than showing invented runs.
+ * suite/leaderboard/community tabs. One suite, run in full every time: eight
+ * scenarios, each a (prompt tokens, generation tokens) shape with a use case
+ * attached, at a context derived from what the scenario needs. The Leaderboard
+ * ranks **models** against each other (not a separate leaderboard per model)
+ * and is always scoped to one scenario, since tok/s only compares fairly at
+ * the same shape. Rows are grouped by hardware match tier so a number from a
+ * looser match is never presented as though it came from an identical Mac.
+ * The Community tab has no backend — there is no results server to publish to
+ * or read from — so it says so rather than showing invented runs.
  */
 export function BenchmarksPage() {
   const { models } = useModels();
@@ -95,22 +76,20 @@ export function BenchmarksPage() {
   const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState<BenchTab>("suite");
-  const [mode, setMode] = useState<BenchSuiteKind>("quick");
   const [repeatsMode, setRepeatsMode] = useState<BenchRepeatsMode>("fast");
-  const [leaderboardScope, setLeaderboardScope] = useState<BenchSuiteKind>("quick");
-  const [cellFilter, setCellFilter] = useState(FEASIBLE_CELLS[0]);
+  const [scenarioFilter, setScenarioFilter] = useState(HEADLINE_SCENARIO);
   const [shareCard, setShareCard] = useState<{ data: BenchmarkCardData; url: string } | null>(null);
 
   const modelId = selected ?? installed[0]?.id ?? null;
   const {
     groups,
-    quickGroups,
+    headlineGroups,
     progress,
     running,
     error,
     allowance,
     unlocked,
-    cells,
+    scenarios,
     waveform,
     runStartedAt,
     runProgress,
@@ -123,21 +102,17 @@ export function BenchmarksPage() {
     load,
   } = useBenchmarks(modelId);
 
-  // `groups` is driven entirely by which view is on screen: the Suite tab's
-  // Full matrix is about one model (needs `modelId`), while the Leaderboard
-  // ranks every model against every other one (`model: null`), fixed to one
-  // cell for the Full scope so tok/s compares fairly.
+  // `groups` is driven entirely by which view is on screen: the Suite tab is
+  // about one model's eight scenarios, while the Leaderboard ranks every model
+  // against every other one (`model: null`) at one scenario, so tok/s compares
+  // like for like.
   useEffect(() => {
-    if (tab === "suite" && mode === "full") {
-      if (modelId) void load(modelId, "anchor-full");
+    if (tab === "suite") {
+      if (modelId) void load(modelId, SUITE_ID);
     } else if (tab === "leaderboard") {
-      if (leaderboardScope === "quick") {
-        void load(null, "anchor-std");
-      } else {
-        void load(null, "anchor-full", cellFilter.promptId, cellFilter.numCtx);
-      }
+      void load(null, SUITE_ID, scenarioFilter);
     }
-  }, [modelId, tab, mode, leaderboardScope, cellFilter, version, load]);
+  }, [modelId, tab, scenarioFilter, version, load]);
 
   // Elapsed-time clock for the live-run card. Ticks locally rather than
   // threading a timestamp through every backend event.
@@ -149,30 +124,33 @@ export function BenchmarksPage() {
   }, [running]);
   const elapsedMs = runStartedAt != null ? nowTick - runStartedAt : 0;
 
-  const total = quickGroups.reduce((n, g) => n + g.runs.length, 0);
-  const yours = quickGroups.find((g) => g.quality === "exact");
+  // Header summary and the share card read the headline scenario only — one
+  // canonical number per model rather than eight competing ones.
+  const yours = headlineGroups.find((g) => g.quality === "exact");
   const yourTps = yours ? medianTps(yours.runs) : null;
   const mine = yours?.runs.find((r) => r.source === "local");
 
-  const fullExactLocal = useMemo(
+  const exactLocal = useMemo(
     () => (groups.find((g) => g.quality === "exact")?.runs ?? []).filter((r) => r.source === "local"),
     [groups],
   );
 
-  const matrixCells: MatrixCell[] = useMemo(
+  // A live run's rows win over stored ones, so the table fills in as it goes
+  // rather than showing the previous run's numbers until the whole suite ends.
+  const scenarioRows: ScenarioRow[] = useMemo(
     () =>
-      PROMPT_IDS.flatMap((promptId) =>
-        CTX_SIZES.map((numCtx) => {
-          const infeasible = promptId === "long_context" && numCtx === 4096;
-          const historical = fullExactLocal.find((r) => r.prompt_id === promptId && r.num_ctx === numCtx);
-          const live = cells.find((c) => c.promptId === promptId && c.numCtx === numCtx);
-          return { promptId, numCtx, infeasible, run: live?.run ?? historical };
-        }),
-      ),
-    [fullExactLocal, cells],
+      SCENARIOS_BY_COST.map((s) => {
+        const live = scenarios.find((x) => x.scenarioId === s.id);
+        return {
+          scenarioId: s.id,
+          run: live?.run ?? exactLocal.find((r) => r.prompt_id === s.id),
+          pending: live != null && live.run == null,
+        };
+      }),
+    [exactLocal, scenarios],
   );
 
-  // Shared by the History card's "Share" (this machine's last Quick result)
+  // Shared by the History card's "Share" (this machine's last headline result)
   // and each leaderboard row's own Share button (that row's result — a
   // different machine's numbers when the row isn't `mine`). Only substitutes
   // the live `profile` in for a row measured on this machine; another
@@ -258,11 +236,9 @@ export function BenchmarksPage() {
           installed={installed}
           profile={profile}
           running={running}
-          mode={mode}
-          setMode={setMode}
           repeatsMode={repeatsMode}
           setRepeatsMode={setRepeatsMode}
-          onRun={() => modelId && run(modelId, mode, repeatsMode)}
+          onRun={() => modelId && run(modelId, repeatsMode)}
         />
         <LiveRunCard
           running={running}
@@ -298,131 +274,46 @@ export function BenchmarksPage() {
         <span className="data ml-auto text-[11px] text-fg-subtle">{TAB_HINT[tab]}</span>
       </div>
 
-      {tab === "suite" && mode === "quick" && (
-        <section className="card overflow-hidden">
-          {total === 0 && !running ? (
-            <p className="px-4 py-10 text-center text-sm text-fg-muted">
-              {modelId
-                ? "No results yet for this model. Run the suite to record the first one."
-                : "Install a model to benchmark it."}
-            </p>
-          ) : (
-            <>
-              <div className="label-caps grid grid-cols-[minmax(0,1.5fr)_96px_96px_minmax(0,1fr)_86px] gap-3.5 border-b border-hair bg-inset px-4 py-2.5">
-                <span>Machine</span>
-                <span className="text-right">Decode</span>
-                <span className="text-right">Prefill</span>
-                <span>vs the fastest here</span>
-                <span className="text-right">Peak mem</span>
-              </div>
-              {quickGroups
-                .flatMap((g) => g.runs)
-                .map((r) => {
-                  const best = Math.max(
-                    ...quickGroups.flatMap((g) => g.runs).map((x) => x.decode_tps_median ?? 0),
-                    1,
-                  );
-                  const isMine = r.source === "local";
-                  return (
-                    <div
-                      key={r.id}
-                      className={[
-                        "grid grid-cols-[minmax(0,1.5fr)_96px_96px_minmax(0,1fr)_86px] items-center gap-3.5 border-b border-hair px-4 py-3",
-                        isMine ? "bg-accent-soft" : "",
-                      ].join(" ")}
-                    >
-                      <span className="flex min-w-0 flex-col gap-0.5">
-                        <span
-                          className={`flex items-center gap-1.5 text-[13px] font-medium ${isMine ? "text-accent-text" : "text-fg"}`}
-                        >
-                          {r.hw.chip}
-                          {isMine && " — this Mac"}
-                          <ThermalBadge label={r.thermal_label} />
-                        </span>
-                        <span className="data truncate text-[10.5px] text-fg-subtle">
-                          {[r.hw.gpu_cores && `${r.hw.gpu_cores}-core GPU`, r.hw.memory_gb && `${r.hw.memory_gb} GB`]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </span>
-                      </span>
-                      <span className="data text-right text-[13px] text-fg">
-                        {r.decode_tps_median != null ? `${r.decode_tps_median.toFixed(1)}` : "—"}
-                      </span>
-                      <span className="data text-right text-[12px] text-fg-muted">
-                        {r.prefill_tps_median != null ? r.prefill_tps_median.toFixed(0) : "—"}
-                      </span>
-                      <Meter
-                        fraction={(r.decode_tps_median ?? 0) / best}
-                        color={isMine ? "var(--accent)" : "var(--hair2)"}
-                        height={6}
-                      />
-                      <span className="data text-right text-[12px] text-fg-muted">
-                        {r.peak_rss_bytes != null ? formatBytes(r.peak_rss_bytes) : "—"}
-                      </span>
-                    </div>
-                  );
-                })}
-              <p className="px-4 py-3 text-[11.5px] leading-[1.5] text-fg-subtle">
-                Every task runs three times after a warm-up; the median is recorded. Same prompts, same seed,
-                same token counts on every machine.
-              </p>
-            </>
-          )}
-        </section>
-      )}
-
-      {tab === "suite" && mode === "full" && (
+      {tab === "suite" && (
         <section className="flex flex-col gap-3">
-          <BenchMatrix
-            promptIds={PROMPT_IDS}
-            ctxSizes={CTX_SIZES}
-            cells={matrixCells}
-            onSelect={(promptId, numCtx) => {
-              setLeaderboardScope("full");
-              setCellFilter({ promptId, numCtx });
-              setTab("leaderboard");
-            }}
-          />
+          {!modelId ? (
+            <p className="card px-4 py-10 text-center text-sm text-fg-muted">Install a model to benchmark it.</p>
+          ) : (
+            <ScenarioTable
+              rows={scenarioRows}
+              onSelect={(scenarioId) => {
+                setScenarioFilter(scenarioId);
+                setTab("leaderboard");
+              }}
+            />
+          )}
           <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
-            Short, long-context, and generation-heavy prompts across three context sizes — a cell is skipped
-            (n/a) where the prompt and its capped output can't fit. Fast mode runs the generation-heavy cells
-            once instead of three times to keep a Full run shorter; every other cell always runs three.
+            Each scenario is a fixed shape — so many tokens in, so many out — at the smallest power-of-two
+            context that holds both. Fast mode runs the long-generation scenarios once instead of three times
+            to keep a run short; everything else always runs three. Pick a row to rank every model on it.
           </p>
         </section>
       )}
 
       {tab === "leaderboard" && (
         <div className="flex flex-col gap-3.5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <Tabs
-              ariaLabel="Leaderboard suite"
-              value={leaderboardScope}
-              onChange={setLeaderboardScope}
-              items={[
-                { key: "quick", label: "Quick" },
-                { key: "full", label: "Full" },
-              ]}
-            />
-            {leaderboardScope === "full" && (
-              <div className="flex flex-wrap gap-1.5">
-                {FEASIBLE_CELLS.map((c) => {
-                  const active = cellFilter.promptId === c.promptId && cellFilter.numCtx === c.numCtx;
-                  return (
-                    <button
-                      key={`${c.promptId}@${c.numCtx}`}
-                      type="button"
-                      onClick={() => setCellFilter(c)}
-                      className={[
-                        "data rounded-full border px-2.5 py-1 text-[10.5px]",
-                        active ? "border-accent bg-accent-soft text-accent-text" : "border-hair text-fg-muted hover:text-fg",
-                      ].join(" ")}
-                    >
-                      {c.promptId} · {(c.numCtx / 1024).toFixed(0)}k
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {SCENARIOS_BY_COST.map((sc) => (
+              <button
+                key={sc.id}
+                type="button"
+                title={sc.label}
+                onClick={() => setScenarioFilter(sc.id)}
+                className={[
+                  "data rounded-full border px-2.5 py-1 text-[10.5px]",
+                  scenarioFilter === sc.id
+                    ? "border-accent bg-accent-soft text-accent-text"
+                    : "border-hair text-fg-muted hover:text-fg",
+                ].join(" ")}
+              >
+                {sc.id} · {sc.promptTokens}/{sc.genTokens}
+              </button>
+            ))}
           </div>
           {groups.length === 0 ? (
             <p className="card px-4 py-10 text-center text-sm text-fg-muted">
@@ -441,8 +332,9 @@ export function BenchmarksPage() {
             ))
           )}
           <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
-            Models are ranked by decode tok/s within each hardware-match tier — a number from a looser
-            match is never shown as if it came from an identical Mac.
+            Ranked by decode tok/s on <span className="text-fg-muted">{scenarioFilter}</span> —{" "}
+            {scenarioLabel(scenarioFilter).toLowerCase()} — within each hardware-match tier, so a number from
+            a looser match is never shown as if it came from an identical Mac.
           </p>
         </div>
       )}
@@ -470,7 +362,7 @@ export function BenchmarksPage() {
 }
 
 /** Segmented pill toggle, buttons evenly split (unlike `ui/Tabs.tsx`'s
- *  content-sized pills) — matches the run-setup card's Quick/Full and
+ *  content-sized pills) — matches the run-setup card's rigor toggle and
  *  Fast/Thorough switches. Kept local: nothing else in the app wants a
  *  full-width even split. */
 function SegToggle<T extends string>({
@@ -522,8 +414,6 @@ function RunSetupCard({
   installed,
   profile,
   running,
-  mode,
-  setMode,
   repeatsMode,
   setRepeatsMode,
   onRun,
@@ -533,8 +423,6 @@ function RunSetupCard({
   installed: LibraryModel[];
   profile: HardwareProfile | null;
   running: boolean;
-  mode: BenchSuiteKind;
-  setMode: (m: BenchSuiteKind) => void;
   repeatsMode: BenchRepeatsMode;
   setRepeatsMode: (m: BenchRepeatsMode) => void;
   onRun: () => void;
@@ -543,9 +431,7 @@ function RunSetupCard({
     <div className="card flex flex-col overflow-hidden md:aspect-square">
       <div className="flex items-center justify-between border-b border-hair bg-inset px-5 py-3">
         <span className="label-caps text-[10px]">Run setup</span>
-        <span className="data text-[10.5px] text-fg-subtle">
-          {mode === "full" ? "prompt × context matrix" : "one fixed prompt"}
-        </span>
+        <span className="data text-[10.5px] text-fg-subtle">{SCENARIOS_BY_COST.length} scenarios</span>
       </div>
       <div className="flex flex-1 flex-col gap-5 px-5 py-5">
         <div className="flex flex-col gap-2">
@@ -563,42 +449,27 @@ function RunSetupCard({
         </div>
 
         <div className="flex flex-col gap-2">
-          <span className="label-caps text-[10px]">Suite</span>
+          <div className="flex items-baseline justify-between">
+            <span className="label-caps text-[10px]">Rigor</span>
+            <span className="data text-[10px] text-fg-subtle">
+              {repeatsMode === "thorough" ? "3 runs everywhere" : "long generations run once"}
+            </span>
+          </div>
           <SegToggle
-            value={mode}
-            onChange={setMode}
+            value={repeatsMode}
+            onChange={setRepeatsMode}
             disabled={running}
             options={[
-              { key: "quick", label: "Quick" },
-              { key: "full", label: "Full" },
+              { key: "fast", label: "Fast" },
+              { key: "thorough", label: "Thorough" },
             ]}
           />
         </div>
-
-        {mode === "full" && (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-baseline justify-between">
-              <span className="label-caps text-[10px]">Rigor</span>
-              <span className="data text-[10px] text-fg-subtle">
-                {repeatsMode === "thorough" ? "3 runs everywhere" : "generation-heavy runs once"}
-              </span>
-            </div>
-            <SegToggle
-              value={repeatsMode}
-              onChange={setRepeatsMode}
-              disabled={running}
-              options={[
-                { key: "fast", label: "Fast" },
-                { key: "thorough", label: "Thorough" },
-              ]}
-            />
-          </div>
-        )}
       </div>
       <div className="px-5 pb-5">
         <PrimaryButton className="w-full justify-center" onClick={onRun} disabled={!modelId || running}>
           {running ? <Spinner small /> : <ZapIcon className="size-3.5" />}
-          {running ? "Running…" : mode === "full" ? "Run full suite" : "Run benchmark"}
+          {running ? "Running…" : "Run suite"}
         </PrimaryButton>
       </div>
     </div>
@@ -607,7 +478,7 @@ function RunSetupCard({
 
 /** Live throughput while a suite runs — a real waveform sampled from token
  *  arrival timing (backend `sample` events), not a client-side simulation.
- *  Idle, it shows the last Quick result instead. */
+ *  Idle, it shows the last headline-scenario result instead. */
 function LiveRunCard({
   running,
   progress,
