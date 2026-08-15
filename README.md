@@ -6,7 +6,7 @@
 
 ## About
 
-Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: managing models, profiling your hardware, and benchmarking them.
+Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will actually fit your machine before you pull it, chatting with what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
 
 It is **not** an inference engine. Ollama does the inference; Anchor is the management layer around it. That boundary is deliberate and it shapes most of the design decisions in the codebase — if a feature would require Anchor to run weights itself, it is out of scope.
 
@@ -18,33 +18,41 @@ Built for developers, students, researchers, and small business operators who wa
 
 ### Chat
 
-Streaming conversations against any installed model, with reasoning/thinking output rendered separately from the answer. Conversations, titles, and full message history persist in SQLite across launches.
+Streaming conversations against any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. Conversations, titles, and full message history persist in SQLite across launches, and each conversation can carry its own inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
 
-### Models
+![Chat](docs/screenshots/chat.png)
+
+### Exploring models
 
 - **Model hub** — every installed Ollama model in one place, cached to SQLite so the list is instant on launch. Download with inline progress, remove, and inspect per-model detail: parameter count, quantization, context window, and file size.
 - **Semantic search** — natural-language queries over a curated model catalog, embedded locally with BGE-small (`fastembed`, in-process ONNX) and matched by cosine similarity. No external API, no vector database. Results are filtered by capability first, so a vision query never surfaces a text-only model.
+- **Browse the full library** — every model and tag on ollama.com, not just the curated catalog, for when you know what you want by name.
 - **Side-by-side comparison** — run the same prompt through two models at once and compare output, speed, and memory.
 
-### Hardware
+### Fit
 
-First-launch profiling of CPU, RAM, and GPU. Apple Silicon is special-cased via `system_profiler` for accurate unified-memory readings. Anchor flags models that would exceed safe limits for your machine before you download them.
+The question every other feature answers from a different angle: will this model actually run here? First-launch hardware profiling of CPU, RAM, and GPU — Apple Silicon is special-cased via `system_profiler` for accurate unified-memory readings — feeds a memory-fit engine that sizes weights, KV cache, and compute buffer per (model, quantization, context length) and renders one verdict everywhere a model shows up: the catalog, search results, the compare picker, and the chat model picker can never disagree, because they all call the same estimator. Every installed and not-yet-installed model gets a full breakdown — weights / KV cache / compute buffer / OS reserve — before you spend disk space or memory finding out the hard way.
+
+![Fit](docs/screenshots/fit.png)
 
 ### Benchmarks
 
-Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time.
+Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time and a live waveform while a run is in progress.
 
-One suite, run in full every time: eight scenarios, each a fixed (prompt tokens, generation tokens) shape with a use case attached — classification, RAG, chain-of-thought — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times.
+One suite, run in full every time: nine scenarios, each a fixed (prompt tokens, generation tokens) shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), so a throttled run is flagged rather than silently reported as a model's true speed.
+
+![Benchmarks](docs/screenshots/benchmarks.png)
+
+### Configuration
+
+- **Inference presets** — system prompt, temperature, top-p, and context length per conversation, autosaved as you type.
+- **Hardware panel** — the profiled chip, memory, and core counts Anchor is basing every fit verdict on, with a manual re-profile.
+- **Appearance** — dark (graphite/violet) or light (cream/gold) theme, or follow the system.
+- **Privacy** — a standing reminder that inference, chats, and history never leave the machine.
 
 ### Storage
 
 A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
-
-### Not built yet
-
-Designed but unbuilt, and the UI says so in place rather than showing a number nothing computed: the **Community** tab on Benchmarks (no results server) and the appearance/publishing preference toggles that depended on it.
-
-**Agents** — Research Assistant, Knowledge Base, Code Reviewer, and Batch Processor — are not in this build. The pipelines and their tool layer live in `anchor-workflows` and stay under test, but no UI reaches them and their Tauri commands are deliberately unregistered, so the app ships without that file-reading surface. The panels remain under `apps/desktop/src/agents/` for when the feature returns.
 
 ### CLI
 
@@ -157,13 +165,21 @@ Conventions worth knowing before contributing:
 - Tailwind v4 via the Vite plugin. There is no `tailwind.config.js` or `postcss.config.js`.
 - SQLite migrations are append-only: never edit a shipped `V*` constant, add the next one.
 
-## Platform
+## Currently supported
 
-macOS only. Apple Silicon is the primary target; Intel Macs are untested.
+- **macOS**, Apple Silicon as the primary target. Intel Macs build and run but are untested.
+- **[Ollama](https://ollama.com)** as the only backing inference engine — Anchor manages it, doesn't replace it.
 
-## Out of scope
+## In the pipeline
 
-Windows and Linux support, direct llama.cpp integration, a drag-and-drop workflow canvas, LoRA hot-swapping, a code execution tool, and Docker export.
+Roadmap items, not promises with dates:
+
+- **Windows and Linux** support.
+- **Additional inference engines** beyond Ollama, starting with direct llama.cpp integration.
+- **A community benchmark leaderboard.** The schema is already there (`source`/`synced_at` columns on every bench run) and every run stores a full result today — there's just no results server yet, so all comparisons are local-only for now.
+- **Publishing controls** for what a shared benchmark run includes, once there's somewhere to publish it to.
+- **Compact density and a live tokens/sec readout** in chat.
+
 
 ## License
 
