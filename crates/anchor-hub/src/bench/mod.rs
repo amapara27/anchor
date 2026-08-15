@@ -29,6 +29,10 @@ use crate::{ollama, status, GenerateRequest, GenerationStats, Registry, Result};
 /// Pro). Tune against real hardware if this mislabels runs in practice.
 const THROTTLE_DELTA_PCT: u8 = 15;
 
+/// `OSThermalPressureLevel`'s nominal value — anything above it is real
+/// thermal pressure, not a threshold we picked.
+const THERMAL_NOMINAL: u8 = 0;
+
 /// Progress from a benchmark run, streamed to the UI over a Tauri channel.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -146,6 +150,12 @@ async fn capture_env(registry: &Registry, model: &str) -> EnvTelemetry {
 /// points between `start` and `end`, "sustained" when it held, "unknown" when
 /// either snapshot couldn't read thermal state at all.
 fn thermal_label(start: &EnvTelemetry, end: &EnvTelemetry) -> String {
+    // The OS pressure level first: it's the only thermal signal Apple Silicon
+    // publishes, and any reading above nominal at either end means the run
+    // wasn't cool. `pmset`'s speed limit is the Intel-era fallback below.
+    if let (Some(s), Some(e)) = (start.thermal_level, end.thermal_level) {
+        return if s.max(e) > THERMAL_NOMINAL { "throttled" } else { "sustained" }.to_string();
+    }
     match (start.thermal_pressure_pct, end.thermal_pressure_pct) {
         (Some(s), Some(e)) if s.saturating_sub(e) >= THROTTLE_DELTA_PCT => "throttled",
         (Some(_), Some(_)) => "sustained",
@@ -510,6 +520,7 @@ mod tests {
     fn env_with_thermal(pct: Option<u8>) -> EnvTelemetry {
         EnvTelemetry {
             thermal_pressure_pct: pct,
+            thermal_level: None,
             on_ac_power: Some(true),
             uptime_secs: Some(3600),
             free_memory_bytes: Some(1024),
@@ -517,11 +528,29 @@ mod tests {
         }
     }
 
+    fn env_with_level(level: u8) -> EnvTelemetry {
+        EnvTelemetry { thermal_level: Some(level), ..env_with_thermal(None) }
+    }
+
     #[test]
     fn thermal_label_detects_a_throttle_drop() {
         assert_eq!(thermal_label(&env_with_thermal(Some(100)), &env_with_thermal(Some(80))), "throttled");
         assert_eq!(thermal_label(&env_with_thermal(Some(100)), &env_with_thermal(Some(95))), "sustained");
         assert_eq!(thermal_label(&env_with_thermal(None), &env_with_thermal(Some(95))), "unknown");
+    }
+
+    // Apple Silicon has no speed-limit reading, so the OS pressure level is the
+    // only thing standing between every run and a permanent "unknown".
+    #[test]
+    fn thermal_label_prefers_the_os_pressure_level() {
+        assert_eq!(thermal_label(&env_with_level(0), &env_with_level(0)), "sustained");
+        assert_eq!(thermal_label(&env_with_level(0), &env_with_level(10)), "throttled");
+        assert_eq!(thermal_label(&env_with_level(20), &env_with_level(0)), "throttled");
+
+        // A level reading wins even where the Intel speed limit says otherwise.
+        let mut cool_pct = env_with_thermal(Some(100));
+        cool_pct.thermal_level = Some(20);
+        assert_eq!(thermal_label(&cool_pct, &cool_pct), "throttled");
     }
 
     #[test]

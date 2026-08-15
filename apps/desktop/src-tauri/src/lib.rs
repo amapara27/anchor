@@ -322,6 +322,9 @@ const CHAT_TITLE_LEN: usize = 60;
 #[derive(Clone, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ChatEvent {
+    /// The model isn't resident yet, so the wait before the first token is a
+    /// load from disk rather than generation. Only sent for a cold model.
+    Loading { model: String },
     /// One streamed response delta.
     Token { text: String },
     /// One streamed reasoning delta (thinking-capable models only).
@@ -421,6 +424,17 @@ async fn run_chat(
     let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
 
+    // A cold model spends several seconds loading before the first token, which
+    // otherwise reads as a hung app. Only announced when the model really is
+    // cold — a resident one goes straight to prompt eval. Best-effort: an
+    // unreachable /api/ps just skips the notice.
+    if !anchor_hub::status::running(&registry)
+        .await
+        .is_ok_and(|list| list.iter().any(|r| r.name == req.model))
+    {
+        let _ = on_event.send(ChatEvent::Loading { model: req.model.clone() });
+    }
+
     // Registered only for the generation itself, and removed however it ends,
     // so a stale flag can never abort the *next* turn in this conversation.
     let cancel = std::sync::Arc::new(AtomicBool::new(false));
@@ -472,6 +486,24 @@ fn stop_chat(app: AppHandle, conversation_id: String) {
     if let Some(flag) = app.state::<ServerState>().chats.lock().unwrap().get(&conversation_id) {
         flag.store(true, Ordering::Relaxed);
     }
+}
+
+/// Rewinds a conversation to the prompt behind `message_id` and returns it, so
+/// the frontend can re-send it — the whole of Regenerate.
+///
+/// Deliberately not a "regenerate" command that re-runs the turn itself: the
+/// re-run is an ordinary [`run_chat`], so a regenerated turn is identical to a
+/// fresh one (same preset resolution, same cancel plumbing, same persistence).
+/// `None` means nothing matched and nothing was deleted.
+#[tauri::command]
+async fn rewind_to_prompt(
+    app: AppHandle,
+    conversation_id: String,
+    message_id: String,
+) -> Result<Option<String>, String> {
+    registry(&app)?
+        .rewind_to_prompt(&conversation_id, &message_id)
+        .map_err(|e| e.to_string())
 }
 
 /// Lists chat conversations, most-recently-updated first.
@@ -858,6 +890,7 @@ pub fn run() {
             compare_models,
             run_chat,
             stop_chat,
+            rewind_to_prompt,
             list_conversations,
             create_conversation,
             conversation_messages,

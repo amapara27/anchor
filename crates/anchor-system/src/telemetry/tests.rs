@@ -57,3 +57,15 @@ fn parses_free_memory_from_vm_stat() {
 fn free_memory_degrades_to_none_when_unparseable() {
     assert_eq!(parse_free_memory_bytes("garbage\n"), None);
 }
+
+// This source exists because `pmset -g therm` reports nothing on Apple Silicon,
+// so a `None` here would put us back to "unknown" on every benchmark — the
+// failure this replaced. Reads the live OS state; no fixture can stand in.
+#[test]
+fn thermal_level_reads_a_documented_pressure_level() {
+    let level = thermal_level().expect("macOS publishes a thermal pressure level");
+    assert!(
+        matches!(level, 0 | 10 | 20 | 30 | 40),
+        "unexpected OSThermalPressureLevel {level}"
+    );
+}

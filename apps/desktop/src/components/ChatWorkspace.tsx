@@ -78,8 +78,22 @@ export function ChatWorkspace() {
   const { profile } = useHardwareProfile();
   const { presets } = usePresets();
   const { models: resident, residentBytes } = useResidency();
-  const { conversations, activeId, messages, running, error, select, create, rename, remove, send, stop, setPreset } =
-    useChat();
+  const {
+    conversations,
+    activeId,
+    messages,
+    running,
+    loadingModel,
+    error,
+    select,
+    create,
+    rename,
+    remove,
+    send,
+    stop,
+    regenerate,
+    setPreset,
+  } = useChat();
 
   const [model, setModel] = useState("");
   const [presetId, setPresetId] = useState(DEFAULT_PRESET_ID);
@@ -217,7 +231,15 @@ export function ChatWorkspace() {
           onRename={(title) => activeConvo && rename(activeConvo.id, title)}
         />
 
-        <MessageList messages={messages} running={running} error={error} />
+        <MessageList
+          messages={messages}
+          running={running}
+          loadingModel={loadingModel}
+          error={error}
+          onRegenerate={
+            activeId && model && !running ? (messageId) => void regenerate(activeId, model, messageId) : undefined
+          }
+        />
 
         <div className="shrink-0 border-t border-hair bg-canvas px-6 pb-[18px] pt-3.5">
           <Composer
@@ -227,6 +249,7 @@ export function ChatWorkspace() {
             onStop={() => activeId && stop(activeId)}
             disabled={!model}
             running={running}
+            loadingModel={loadingModel}
           />
           <p className="data mx-auto mt-2.5 flex max-w-[760px] items-center gap-2 text-[10.5px] text-fg-subtle">
             <span className="size-[5px] rounded-full bg-ok" aria-hidden />
@@ -465,11 +488,15 @@ function ThreadHeader({
 function MessageList({
   messages,
   running,
+  loadingModel,
   error,
+  onRegenerate,
 }: {
   messages: ReturnType<typeof useChat>["messages"];
   running: boolean;
+  loadingModel: boolean;
   error?: string;
+  onRegenerate?: (messageId: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   // Layout effect so the jump happens before paint (no visible flash).
@@ -495,13 +522,20 @@ function MessageList({
   return (
     <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto pb-2 pt-6">
       <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-6">
-        {messages.map((m, i) => (
-          <ChatMessage
-            key={m.id}
-            message={m}
-            streaming={running && i === messages.length - 1 && m.role === "assistant"}
-          />
-        ))}
+        {messages.map((m, i) => {
+          const last = i === messages.length - 1 && m.role === "assistant";
+          return (
+            <ChatMessage
+              key={m.id}
+              message={m}
+              streaming={running && last}
+              loadingModel={loadingModel}
+              // Only the newest answer: rewinding an earlier one would discard
+              // every turn after it, which no button should do by surprise.
+              onRegenerate={last && onRegenerate ? () => onRegenerate(m.id) : undefined}
+            />
+          );
+        })}
         {error && (
           <p className="rounded-[9px] border border-danger/40 bg-inset px-3.5 py-3 text-sm text-danger">{error}</p>
         )}
@@ -521,6 +555,7 @@ function Composer({
   onStop,
   disabled,
   running,
+  loadingModel,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -528,6 +563,7 @@ function Composer({
   onStop: () => void;
   disabled: boolean;
   running: boolean;
+  loadingModel: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   // Grow to fit content, capped so a long paste doesn't eat the thread.
@@ -556,7 +592,9 @@ function Composer({
         className="scrollbar-slim max-h-52 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-sm leading-[1.6] text-fg placeholder:text-fg-subtle focus:outline-none"
       />
       <div className="flex items-center gap-2 px-3 pb-2.5 pt-2">
-        <span className="data ml-auto text-[10.5px] text-fg-subtle">{running ? "generating…" : "↩ to send"}</span>
+        <span className="data ml-auto text-[10.5px] text-fg-subtle">
+          {running ? (loadingModel ? "loading model…" : "generating…") : "↩ to send"}
+        </span>
         {running ? (
           <button
             type="button"

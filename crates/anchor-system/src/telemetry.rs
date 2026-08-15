@@ -13,6 +13,7 @@ use anchor_core::EnvTelemetry;
 pub fn snapshot() -> EnvTelemetry {
     EnvTelemetry {
         thermal_pressure_pct: thermal_pressure_pct(),
+        thermal_level: thermal_level(),
         on_ac_power: on_ac_power(),
         uptime_secs: uptime_secs(),
         free_memory_bytes: free_memory_bytes(),
@@ -23,6 +24,42 @@ pub fn snapshot() -> EnvTelemetry {
 fn run(cmd: &str, args: &[&str]) -> Option<String> {
     let output = std::process::Command::new(cmd).args(args).output().ok()?;
     String::from_utf8(output.stdout).ok()
+}
+
+/// The OS thermal pressure level — the only thermal signal Apple Silicon
+/// publishes, and the same one `ProcessInfo.thermalState` reads.
+///
+/// `pmset -g therm` is Intel-era: on an Apple Silicon Mac it prints "No CPU
+/// power status has been recorded" and [`thermal_pressure_pct`] is always
+/// `None`, which left every benchmark labelled "unknown" on the app's primary
+/// target. This reads libSystem's notify state instead: a register/get/cancel
+/// triple with no subprocess and no new dependency.
+///
+/// Values are Apple's `OSThermalPressureLevel` (`<libkern/OSThermalNotification.h>`):
+/// 0 nominal, 10 moderate, 20 heavy, 30 trapping, 40 sleeping.
+fn thermal_level() -> Option<u8> {
+    /// `kOSThermalNotificationPressureLevelName`.
+    const KEY: &[u8] = b"com.apple.system.thermalpressurelevel\0";
+    const NOTIFY_STATUS_OK: u32 = 0;
+
+    extern "C" {
+        fn notify_register_check(name: *const std::ffi::c_char, out_token: *mut i32) -> u32;
+        fn notify_get_state(token: i32, state: *mut u64) -> u32;
+        fn notify_cancel(token: i32) -> u32;
+    }
+
+    let mut token: i32 = 0;
+    let mut state: u64 = 0;
+    // SAFETY: `KEY` is a NUL-terminated literal, both out-params are stack
+    // locals we own, and the token is cancelled on every path out.
+    unsafe {
+        if notify_register_check(KEY.as_ptr().cast(), &mut token) != NOTIFY_STATUS_OK {
+            return None;
+        }
+        let rc = notify_get_state(token, &mut state);
+        notify_cancel(token);
+        (rc == NOTIFY_STATUS_OK).then(|| state.min(u8::MAX as u64) as u8)
+    }
 }
 
 /// `pmset -g therm`'s `CPU_Speed_Limit`, percent. 100 = unthrottled.

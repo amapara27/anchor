@@ -1,6 +1,7 @@
 import type { BenchRun } from "../../types";
 import { numCtxFor, SCENARIOS_BY_COST, type Scenario } from "../../lib/scenarios";
 import { Meter } from "./SegmentedBar";
+import { WarningIcon } from "../icons";
 
 /** One scenario's result, or its absence. */
 export interface ScenarioRow {
@@ -48,7 +49,17 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
               style={{ gridTemplateColumns: cols }}
             >
               <span className="flex min-w-0 flex-col gap-0.5 self-stretch bg-surface px-3 py-2.5">
-                <span className="text-[12.5px] font-medium text-fg">{s.id}</span>
+                <span className="flex items-center gap-1.5 text-[12.5px] font-medium text-fg">
+                  {s.id}
+                  {/* Per-scenario, not per-suite: a long run can heat up partway,
+                      so only some rows were measured under pressure. */}
+                  {row?.run?.thermal_label === "throttled" && (
+                    <WarningIcon
+                      className="size-3 shrink-0 text-warn"
+                      title="Measured under thermal pressure"
+                    />
+                  )}
+                </span>
                 <span className="truncate text-[10.5px] text-fg-subtle">{s.label}</span>
               </span>
               <span className="data self-stretch bg-surface px-3 py-2.5 text-right text-[12px] text-fg-muted">

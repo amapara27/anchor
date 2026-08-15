@@ -432,6 +432,11 @@ impl Registry {
         db::delete_conversation(&self.connect()?, id)
     }
 
+    /// Rewinds to the prompt behind a message, returning it. Backs Regenerate.
+    pub fn rewind_to_prompt(&self, conversation_id: &str, message_id: &str) -> Result<Option<String>> {
+        db::rewind_to_prompt(&self.connect()?, conversation_id, message_id)
+    }
+
     // --- The public Ollama library: everything installable, not just installed. ---
 
     /// The full Ollama library listing, served from cache when it's younger than

@@ -574,6 +574,14 @@ const BENCH_COLUMNS: &str = "id, hw_key, chip_key, chip, cpu_cores, gpu_cores, m
 /// `prompt_id` (a scenario id) to pin a leaderboard to one shape, so rows from
 /// a retired suite are never blended into numbers the caller expects to be
 /// one suite's.
+///
+/// **One row per measurement, not per attempt**: a run is superseded by any
+/// newer run of the same machine + model + scenario + context, so re-benchmarking
+/// replaces a model's entry instead of ranking it twice. The upsert in
+/// [`upsert_bench_with_samples`] already collapses an identical re-run, but a
+/// suite-version bump changes the row id, and without this clause the old row
+/// stayed on the leaderboard beside the new one. Superseded rows are hidden,
+/// never deleted — the History panel still shows them chronologically.
 pub fn bench_runs_for(
     conn: &Connection,
     hw: &HwIdentity,
@@ -584,16 +592,27 @@ pub fn bench_runs_for(
 ) -> Result<Vec<BenchRun>> {
     let sql = format!(
         "SELECT {BENCH_COLUMNS},
-                CASE WHEN hw_key = ?1                                THEN 1
-                     WHEN memory_gb IS ?3 AND memory_gb IS NOT NULL  THEN 2
+                CASE WHEN b.hw_key = ?1                                THEN 1
+                     WHEN b.memory_gb IS ?3 AND b.memory_gb IS NOT NULL THEN 2
                      ELSE 3
                 END AS match_tier
-           FROM bench_runs
-          WHERE visible = TRUE AND chip_key = ?2
-            AND (?4 IS NULL OR model_digest = ?4)
-            AND (?5 IS NULL OR suite_id = ?5)
-            AND (?6 IS NULL OR prompt_id IS ?6)
-            AND (?7 IS NULL OR num_ctx = ?7)
+           FROM bench_runs b
+          WHERE b.visible = TRUE AND b.chip_key = ?2
+            AND (?4 IS NULL OR b.model_digest = ?4)
+            AND (?5 IS NULL OR b.suite_id = ?5)
+            AND (?6 IS NULL OR b.prompt_id IS ?6)
+            AND (?7 IS NULL OR b.num_ctx = ?7)
+            AND NOT EXISTS (
+                SELECT 1 FROM bench_runs n
+                 WHERE n.visible = TRUE
+                   AND n.hw_key       = b.hw_key
+                   AND n.model_digest = b.model_digest
+                   AND n.suite_id     = b.suite_id
+                   AND n.prompt_id    IS b.prompt_id
+                   AND n.num_ctx      = b.num_ctx
+                   AND (n.updated_at > b.updated_at
+                        OR (n.updated_at = b.updated_at AND n.id > b.id))
+            )
           ORDER BY match_tier, decode_tps_median DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -856,6 +875,48 @@ pub fn messages_for(conn: &Connection, conversation_id: &str) -> Result<Vec<Stor
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+/// Rewinds a conversation to the prompt behind `message_id`, returning that
+/// prompt's text. The prompt and everything after it is deleted.
+///
+/// This is what Regenerate is built on: "ask again" rather than "edit history",
+/// so re-sending the returned text rebuilds the turn against exactly the context
+/// the first attempt saw. Returns `None` — and deletes nothing — when the
+/// message isn't in this conversation or has no user turn before it.
+pub fn rewind_to_prompt(
+    conn: &Connection,
+    conversation_id: &str,
+    message_id: &str,
+) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+
+    let target_ms: Option<i64> = conn
+        .query_row(
+            "SELECT created_ms FROM messages WHERE id = ?1 AND conversation_id = ?2",
+            rusqlite::params![message_id, conversation_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(target_ms) = target_ms else { return Ok(None) };
+
+    // The newest user turn at or before the target — the prompt it answered.
+    let prompt: Option<(String, i64)> = conn
+        .query_row(
+            "SELECT content, created_ms FROM messages
+             WHERE conversation_id = ?1 AND role = 'user' AND created_ms <= ?2
+             ORDER BY created_ms DESC LIMIT 1",
+            rusqlite::params![conversation_id, target_ms],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((content, from_ms)) = prompt else { return Ok(None) };
+
+    conn.execute(
+        "DELETE FROM messages WHERE conversation_id = ?1 AND created_ms >= ?2",
+        rusqlite::params![conversation_id, from_ms],
+    )?;
+    Ok(Some(content))
 }
 
 /// A named bundle of generation settings. Mirrored on the frontend as `Preset`.

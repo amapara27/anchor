@@ -24,6 +24,20 @@ function useChatState() {
   // backend keeps going regardless of which conversation is on screen).
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const running = activeId != null && runningIds.has(activeId);
+  // Conversations whose model is still loading into memory (cold start). Set
+  // from the backend's `loading` event and cleared by the first token, so the
+  // several-second wait on a cold model reads as loading rather than a stall.
+  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
+  const loadingModel = activeId != null && loadingIds.has(activeId);
+  const markLoading = useCallback((id: string, on: boolean) => {
+    setLoadingIds((s) => {
+      if (s.has(id) === on) return s;
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
   // Mirrors `runningIds` for `send`'s synchronous re-entrancy check — reading
   // the state directly there would close over whatever it was when the
   // `send` callback was created, not its current value.
@@ -157,18 +171,23 @@ function useChatState() {
     const channel = new Channel<ChatEvent>();
     channel.onmessage = (event) => {
       const isActive = activeIdRef.current === convId;
-      if (event.kind === "token") {
+      if (event.kind === "loading") {
+        markLoading(convId, true);
+      } else if (event.kind === "token") {
+        markLoading(convId, false);
         if (!isActive) return;
         setMessages((m) =>
           m.map((msg) => (msg.id === streamId ? { ...msg, content: msg.content + event.text } : msg)),
         );
       } else if (event.kind === "thinking") {
+        markLoading(convId, false);
         if (!isActive) return;
         setMessages((m) =>
           m.map((msg) => (msg.id === streamId ? { ...msg, thinking: (msg.thinking ?? "") + event.text } : msg)),
         );
       } else if (event.kind === "result") {
         markRunning(convId, false);
+        markLoading(convId, false);
         // Re-fetch rather than patch by id: if the user navigated away and
         // back, the optimistic placeholder this run started with is long
         // gone from `messages` (replaced by `loadMessages` on the switch),
@@ -178,6 +197,7 @@ function useChatState() {
         reloadConversations(); // title + updated_ms ordering changed
       } else if (event.kind === "failed") {
         markRunning(convId, false);
+        markLoading(convId, false);
         if (isActive) {
           setError(event.message);
           loadMessages(convId); // drops the optimistic pair; nothing was persisted for it
@@ -187,12 +207,34 @@ function useChatState() {
 
     invoke("run_chat", { conversationId: convId, model, content, onEvent: channel }).catch((e) => {
       markRunning(convId, false);
+      markLoading(convId, false);
       if (activeIdRef.current === convId) {
         setError(String(e));
         loadMessages(convId);
       }
     });
-  }, [loadMessages, markRunning, reloadConversations]);
+  }, [loadMessages, markRunning, markLoading, reloadConversations]);
+
+  /** Re-runs the turn an assistant message belongs to.
+   *
+   *  The backend rewinds the conversation to the prompt behind that message and
+   *  hands the prompt back; re-sending it is an ordinary `send`, so a
+   *  regenerated turn behaves exactly like a fresh one. Messages are reloaded
+   *  from the DB first — the rewind deleted rows still on screen. */
+  const regenerate = useCallback(
+    async (convId: string, model: string, messageId: string) => {
+      if (runningIdsRef.current.has(convId)) return;
+      const prompt = await invoke<string | null>("rewind_to_prompt", {
+        conversationId: convId,
+        messageId,
+      }).catch(() => null);
+      if (!prompt) return;
+      const list = await invoke<ChatMessage[]>("conversation_messages", { id: convId }).catch(() => null);
+      if (list && activeIdRef.current === convId) setMessages(list);
+      send(convId, model, prompt);
+    },
+    [send],
+  );
 
   // Closing the app must not strand a resident model.
   // ponytail: unload only on unmount, which is now app teardown rather than a
@@ -205,6 +247,7 @@ function useChatState() {
     activeId,
     messages,
     running,
+    loadingModel,
     error,
     select,
     create,
@@ -212,6 +255,7 @@ function useChatState() {
     remove,
     send,
     stop,
+    regenerate,
     setPreset,
   };
 }

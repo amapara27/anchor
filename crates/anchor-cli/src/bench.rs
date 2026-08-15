@@ -274,7 +274,34 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
     }
     println!();
     print_runs(&finished, false);
+    if let Some(line) = conditions_line(&finished) {
+        println!("\n{line}");
+    }
     Ok(())
+}
+
+/// What the suite was measured under, in one line. `None` when the machine
+/// reported no thermal state at all (pre-Apple-Silicon-fix rows, or a Mac
+/// where the pressure level can't be read) — better silent than "unknown".
+///
+/// Worth printing even when nothing went wrong: a decode rate is only
+/// comparable against another run measured under the same conditions, and the
+/// reader can't tell a cool run from a hot one by the number alone.
+fn conditions_line(runs: &[BenchRun]) -> Option<String> {
+    let known: Vec<&BenchRun> = runs.iter().filter(|r| r.thermal_label.as_deref() != Some("unknown")).collect();
+    if known.is_empty() {
+        return None;
+    }
+    let hot = known.iter().filter(|r| r.thermal_label.as_deref() == Some("throttled")).count();
+    let mut line = if hot > 0 {
+        format!("thermal pressure during {hot} of {} scenarios — expect lower numbers than a cool run", known.len())
+    } else {
+        "thermal nominal throughout".to_string()
+    };
+    if known.iter().any(|r| r.env_start.as_ref().and_then(|e| e.on_ac_power) == Some(false)) {
+        line.push_str("; ran on battery");
+    }
+    Some(line)
 }
 
 impl From<Repeats> for RepeatsMode {
@@ -429,5 +456,78 @@ mod tests {
     fn the_repeats_flag_maps_onto_the_engines_mode() {
         assert_eq!(RepeatsMode::from(Repeats::Thorough), RepeatsMode::Thorough);
         assert_eq!(RepeatsMode::from(Repeats::Fast), RepeatsMode::Fast);
+    }
+
+    fn run_with(thermal: Option<&str>, on_ac: bool) -> BenchRun {
+        let mut r = BenchRun {
+            id: "r".into(),
+            hw: anchor_core::HwIdentity {
+                hw_key: "hw".into(),
+                chip_key: "chip".into(),
+                chip: "Apple M4".into(),
+                cpu_cores: None,
+                gpu_cores: None,
+                memory_gb: None,
+                os_version: None,
+            },
+            model_name: "m".into(),
+            model_digest: "d".into(),
+            quant: None,
+            num_ctx: 2048,
+            kv_cache_type: "f16".into(),
+            flash_attn: false,
+            ollama_version: None,
+            suite_id: "anchor-scenarios".into(),
+            suite_version: 2,
+            prefill_tps_median: None,
+            decode_tps_median: None,
+            load_ms: None,
+            peak_rss_bytes: None,
+            repeats: 1,
+            install_id: "i".into(),
+            rating: None,
+            review: None,
+            visible: true,
+            created_at: 0,
+            updated_at: 0,
+            source: anchor_core::BenchSource::Local,
+            synced_at: None,
+            match_quality: None,
+            prompt_id: None,
+            prompt_version: None,
+            ttft_ms_median: None,
+            env_start: None,
+            env_end: None,
+            thermal_label: thermal.map(str::to_string),
+            notes: None,
+        };
+        r.env_start = Some(anchor_core::EnvTelemetry {
+            thermal_pressure_pct: None,
+            thermal_level: Some(0),
+            on_ac_power: Some(on_ac),
+            uptime_secs: None,
+            free_memory_bytes: None,
+            resident_model_count: None,
+        });
+        r
+    }
+
+    // A rate is only comparable against a run measured under the same
+    // conditions, so a clean suite has to say so rather than staying silent.
+    #[test]
+    fn the_conditions_line_reports_a_clean_run_and_a_hot_one() {
+        assert_eq!(conditions_line(&[]), None);
+        assert_eq!(
+            conditions_line(&[run_with(Some("unknown"), true)]),
+            None,
+            "no readable thermal state says nothing at all"
+        );
+        assert_eq!(
+            conditions_line(&[run_with(Some("sustained"), true)]).as_deref(),
+            Some("thermal nominal throughout")
+        );
+        let hot = conditions_line(&[run_with(Some("throttled"), false), run_with(Some("sustained"), false)]).unwrap();
+        assert!(hot.starts_with("thermal pressure during 1 of 2 scenarios"), "{hot}");
+        assert!(hot.ends_with("ran on battery"), "{hot}");
     }
 }

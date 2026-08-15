@@ -6,6 +6,26 @@ import { el } from "./domCard";
 import { formatTokSec } from "./format";
 import { savePng } from "./savePng";
 
+/**
+ * Rasterizes a card that isn't on screen.
+ *
+ * The card is parked inside an off-screen *wrapper* rather than being offset
+ * itself: html-to-image copies the exported node's own computed style onto the
+ * clone it drops into the export SVG, so a card sitting at `left: -9999px`
+ * landed 9999px outside the SVG viewport and every PNG came out blank. Only the
+ * wrapper moves; the card keeps a neutral position and renders at the origin.
+ */
+async function rasterize(node: HTMLElement, options: Parameters<typeof toPng>[1]): Promise<string> {
+  const parked = el("div", { position: "fixed", left: "-99999px", top: "0" });
+  parked.append(node);
+  document.body.appendChild(parked);
+  try {
+    return await toPng(node, options);
+  } finally {
+    parked.remove();
+  }
+}
+
 export interface ComparisonExport {
   aName: string;
   bName: string;
@@ -113,9 +133,6 @@ function bars(d: ComparisonExport): HTMLElement {
  *  :root once appended to the document) + tabular-nums so it matches the app. */
 function buildCard(d: ComparisonExport): HTMLElement {
   const card = el("div", {
-    position: "fixed",
-    left: "-9999px",
-    top: "0",
     width: "760px",
     boxSizing: "border-box",
     padding: "28px",
@@ -154,14 +171,8 @@ function buildCard(d: ComparisonExport): HTMLElement {
 
 /** Render the comparison card off-screen and save it as a PNG (native dialog). */
 export async function exportComparison(d: ComparisonExport): Promise<void> {
-  const node = buildCard(d);
-  document.body.appendChild(node);
-  try {
-    const url = await toPng(node, { pixelRatio: 2, cacheBust: true, backgroundColor: "#0b0c0e" });
-    await savePng(url, `anchor-compare-${Date.now()}.png`);
-  } finally {
-    node.remove();
-  }
+  const url = await rasterize(buildCard(d), { pixelRatio: 2, cacheBust: true, backgroundColor: "#0b0c0e" });
+  await savePng(url, "anchor_comparison.png");
 }
 
 export interface BenchmarkCardData {
@@ -206,9 +217,8 @@ const SANS = "var(--font-sans)";
  */
 function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
   const card = el("div", {
-    position: "fixed",
-    left: "-9999px",
-    top: "0",
+    // Positioned so the glow below anchors to the card, not the page.
+    position: "relative",
     width: "1600px",
     height: "1000px",
     boxSizing: "border-box",
@@ -363,13 +373,7 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
  *  callers decide what to do with it (in-app preview, save, share) rather
  *  than this function saving straight to disk. */
 export async function renderBenchmarkCard(d: BenchmarkCardData): Promise<string> {
-  const node = buildBenchmarkCard(d);
-  document.body.appendChild(node);
-  try {
-    // Already a native 1600×1000 export canvas (unlike the compact on-screen
-    // comparison card) — pixelRatio 1 is plenty crisp without a huge file.
-    return await toPng(node, { pixelRatio: 1, cacheBust: true, backgroundColor: CARD_BG });
-  } finally {
-    node.remove();
-  }
+  // Already a native 1600×1000 export canvas (unlike the compact on-screen
+  // comparison card) — pixelRatio 1 is plenty crisp without a huge file.
+  return rasterize(buildBenchmarkCard(d), { pixelRatio: 1, cacheBust: true, backgroundColor: CARD_BG });
 }

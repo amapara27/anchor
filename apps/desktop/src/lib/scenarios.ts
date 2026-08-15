@@ -47,5 +47,19 @@ export const SCENARIOS_BY_COST = [...SCENARIOS].sort(
   (a, b) => numCtxFor(a) - numCtxFor(b) || a.genTokens - b.genTokens,
 );
 
+/** The catalog split into context tiers, cheapest first — the same batching the
+ *  suite itself runs in (`grouped_by_ctx` in `prompts.rs`), and the only axis
+ *  along which two scenarios are even close to comparable. `SCENARIOS_BY_COST`
+ *  is already ordered by context, so one pass builds the tiers. */
+export const SCENARIOS_BY_CTX: { numCtx: number; scenarios: Scenario[] }[] = SCENARIOS_BY_COST.reduce<
+  { numCtx: number; scenarios: Scenario[] }[]
+>((tiers, s) => {
+  const numCtx = numCtxFor(s);
+  const tier = tiers.at(-1);
+  if (tier?.numCtx === numCtx) tier.scenarios.push(s);
+  else tiers.push({ numCtx, scenarios: [s] });
+  return tiers;
+}, []);
+
 export const scenarioLabel = (id: string | null): string =>
   SCENARIOS.find((s) => s.id === id)?.label ?? id ?? "—";

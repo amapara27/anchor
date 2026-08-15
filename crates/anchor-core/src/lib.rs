@@ -270,7 +270,14 @@ pub enum BenchSource {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EnvTelemetry {
     /// `pmset -g therm`'s `CPU_Speed_Limit`, percent. 100 = unthrottled.
+    /// Intel-era only — Apple Silicon never publishes it (always `None` there).
     pub thermal_pressure_pct: Option<u8>,
+    /// macOS's own thermal pressure level, the signal Apple Silicon *does*
+    /// publish: 0 nominal, 10 moderate, 20 heavy, 30 trapping, 40 sleeping
+    /// (Apple's `OSThermalPressureLevel`). `default` because rows stored before
+    /// this field existed carry JSON without it.
+    #[serde(default)]
+    pub thermal_level: Option<u8>,
     pub on_ac_power: Option<bool>,
     pub uptime_secs: Option<u64>,
     pub free_memory_bytes: Option<u64>,

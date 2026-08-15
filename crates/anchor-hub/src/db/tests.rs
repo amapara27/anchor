@@ -161,6 +161,7 @@ fn bench(id: &str, hw: HwIdentity, tps: f64) -> BenchRun {
 fn env(thermal_pct: u8, on_ac: bool) -> EnvTelemetry {
     EnvTelemetry {
         thermal_pressure_pct: Some(thermal_pct),
+        thermal_level: Some(0),
         on_ac_power: Some(on_ac),
         uptime_secs: Some(3600),
         free_memory_bytes: Some(4 * 1024_u64.pow(3)),
@@ -234,6 +235,39 @@ fn bench_runs_round_trip_and_rerun_replaces_rather_than_duplicates() {
     let read = bench_runs_for(&conn, &mine, Some("sha256:abc"), None, None, None).unwrap();
     assert_eq!(read.len(), 1, "re-running must not duplicate the row");
     assert_eq!(read[0].decode_tps_median, Some(45.0));
+}
+
+// The upsert only collapses a byte-identical re-run; a suite-version bump gives
+// the new row a different id, and the leaderboard used to show both.
+#[test]
+fn a_newer_run_supersedes_the_old_one_on_the_same_machine() {
+    let mut conn = in_memory();
+    let mine = hw("apple-m4", 10, 10, 16);
+
+    let mut old = bench("old", mine.clone(), 42.0);
+    old.prompt_id = Some("balanced".to_string());
+    let mut new = bench("new", mine.clone(), 51.0);
+    new.prompt_id = Some("balanced".to_string());
+    new.suite_version = 2;
+    new.updated_at = old.updated_at + 1;
+    // Another machine in the same chip family measured the same model: a
+    // genuinely different entry, not a stale one.
+    let mut theirs = bench("theirs", hw("apple-m4", 10, 10, 24), 44.0);
+    theirs.prompt_id = Some("balanced".to_string());
+
+    for r in [&old, &new, &theirs] {
+        upsert_bench_with_samples(&mut conn, r, &[]).unwrap();
+    }
+
+    let runs = bench_runs_for(&conn, &mine, None, Some("anchor-scenarios"), Some("balanced"), None).unwrap();
+    assert_eq!(
+        runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        ["new", "theirs"],
+        "the older run of this machine's own model is superseded, another machine's is not"
+    );
+
+    // Superseded, not deleted — history still has it.
+    assert_eq!(bench_history(&conn, &mine.hw_key, None, 10).unwrap().len(), 2);
 }
 
 #[test]
@@ -397,6 +431,54 @@ fn conversation_messages_round_trip_and_delete_cascades() {
     delete_conversation(&conn, "c1").unwrap();
     assert!(list_conversations(&conn).unwrap().is_empty());
     assert!(messages_for(&conn, "c1").unwrap().is_empty());
+}
+
+// Regenerate is built on this: it must hand back the prompt and leave the
+// conversation exactly as it stood before that prompt was ever sent.
+#[test]
+fn rewind_to_prompt_returns_the_prompt_and_drops_the_turn_it_started() {
+    let conn = in_memory();
+    insert_conversation(
+        &conn,
+        &Conversation {
+            id: "c1".to_string(),
+            title: "chat".to_string(),
+            model: "llama3.1:8b".to_string(),
+            preset_id: None,
+            created_ms: 1_000,
+            updated_ms: 1_000,
+        },
+    )
+    .unwrap();
+    let msg = |id: &str, role: &str, at: i64| StoredMessage {
+        id: id.to_string(),
+        role: role.to_string(),
+        content: format!("{id} body"),
+        thinking: None,
+        stats_json: None,
+        created_ms: at,
+    };
+    for m in [
+        msg("m1", "user", 1_100),
+        msg("m2", "assistant", 1_200),
+        msg("m3", "user", 1_300),
+        msg("m4", "assistant", 1_400),
+    ] {
+        append_message(&conn, "c1", &m).unwrap();
+    }
+
+    let prompt = rewind_to_prompt(&conn, "c1", "m4").unwrap();
+    assert_eq!(prompt.as_deref(), Some("m3 body"), "the prompt comes back for re-sending");
+    assert_eq!(
+        messages_for(&conn, "c1").unwrap().iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+        ["m1", "m2"],
+        "the prompt and its answer are gone; earlier turns are untouched"
+    );
+
+    // A message from another conversation (or none at all) deletes nothing.
+    assert_eq!(rewind_to_prompt(&conn, "c2", "m2").unwrap(), None);
+    assert_eq!(rewind_to_prompt(&conn, "c1", "nope").unwrap(), None);
+    assert_eq!(messages_for(&conn, "c1").unwrap().len(), 2);
 }
 
 #[test]

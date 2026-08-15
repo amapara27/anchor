@@ -13,8 +13,15 @@ import { Tabs } from "./ui/Tabs";
 import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Meter } from "./ui/SegmentedBar";
 import { ScenarioTable, type ScenarioRow } from "./ui/ScenarioTable";
-import { HEADLINE_SCENARIO, SCENARIOS_BY_COST, SUITE_ID, scenarioLabel } from "../lib/scenarios";
-import { ZapIcon, DownloadIcon, CloseIcon, WarningIcon } from "./icons";
+import {
+  HEADLINE_SCENARIO,
+  SCENARIOS_BY_COST,
+  SCENARIOS_BY_CTX,
+  SUITE_ID,
+  numCtxFor,
+  scenarioLabel,
+} from "../lib/scenarios";
+import { ZapIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard" | "community";
 
@@ -42,14 +49,43 @@ function formatElapsed(ms: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-/** Flags a run whose numbers dropped mid-run from thermal throttling
- *  (`pmset -g therm`, sampled at run start/end). Silent otherwise — a
- *  "sustained" run needs no badge, only the exception is worth a flag. */
+/** Flags a run measured under thermal pressure. Silent otherwise — in a dense
+ *  table only the exception is worth a flag; the full reading lives in the
+ *  live-run card's `ThermalReadout`. */
 function ThermalBadge({ label }: { label: string | null }) {
   if (label !== "throttled") return null;
   return (
-    <span title="Thermal throttling kicked in during this run — numbers may be lower than a cool run.">
+    <span title="The Mac was under thermal pressure during this run — numbers may be lower than a cool run.">
       <WarningIcon className="size-3 shrink-0 text-warn" />
+    </span>
+  );
+}
+
+/** macOS `OSThermalPressureLevel`, as words. Anything above nominal means the
+ *  system was actively shedding heat while the run was measured. */
+const THERMAL_LEVELS: Record<number, { word: string; tone: string }> = {
+  0: { word: "nominal", tone: "bg-ok" },
+  10: { word: "moderate", tone: "bg-warn" },
+  20: { word: "heavy", tone: "bg-warn" },
+  30: { word: "trapping", tone: "bg-danger" },
+  40: { word: "sleeping", tone: "bg-danger" },
+};
+
+/** The conditions a stored run was measured under: thermal pressure at the end
+ *  of the run, plus the power source. Stated even when everything was fine —
+ *  "was my Mac hot?" deserves an answer either way, not only a warning icon
+ *  that appears once in a blue moon. Renders nothing for a run recorded before
+ *  thermal state was readable. */
+function ThermalReadout({ run }: { run: BenchRun | undefined }) {
+  const level = run?.env_end?.thermal_level ?? run?.env_start?.thermal_level ?? null;
+  const state = level != null ? THERMAL_LEVELS[level] : undefined;
+  if (!state) return null;
+  const onBattery = run?.env_start?.on_ac_power === false;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5" title="Thermal pressure macOS reported as this run finished">
+      <span className={`size-1.5 rounded-full ${state.tone}`} aria-hidden />
+      thermal {state.word}
+      {onBattery && <span className="text-warn">· on battery</span>}
     </span>
   );
 }
@@ -131,6 +167,10 @@ export function BenchmarksPage() {
     () => (groups.find((g) => g.quality === "exact")?.runs ?? []).filter((r) => r.source === "local"),
     [groups],
   );
+
+  // The shape behind the leaderboard's current scenario, spelled out under the
+  // chips now that the chips themselves only carry the name.
+  const activeScenario = SCENARIOS_BY_COST.find((s) => s.id === scenarioFilter);
 
   // A live run's rows win over stored ones, so the table fills in as it goes
   // rather than showing the previous run's numbers until the whole suite ends.
@@ -291,22 +331,34 @@ export function BenchmarksPage() {
 
       {tab === "leaderboard" && (
         <div className="flex flex-col gap-3.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {SCENARIOS_BY_COST.map((sc) => (
-              <button
-                key={sc.id}
-                type="button"
-                title={sc.label}
-                onClick={() => setScenarioFilter(sc.id)}
-                className={[
-                  "data rounded-full border px-2.5 py-1 text-[10.5px]",
-                  scenarioFilter === sc.id
-                    ? "border-accent bg-accent-soft text-accent-text"
-                    : "border-hair text-fg-muted hover:text-fg",
-                ].join(" ")}
-              >
-                {sc.id} · {sc.promptTokens}/{sc.genTokens}
-              </button>
+          {/* One row per context tier rather than nine chips wrapped wherever
+              the width runs out. The tiers are how the suite actually batches
+              its runs, so each row is a set of genuinely near-comparable shapes
+              — and no row is long enough to wrap. The token shape moved to the
+              tooltip and the sentence below: it made every chip a different
+              width, which is what left `codegen` dangling on its own line. */}
+          <div className="flex flex-col gap-1.5" role="group" aria-label="Scenario to rank by">
+            {SCENARIOS_BY_CTX.map(({ numCtx, scenarios }) => (
+              <div key={numCtx} className="flex flex-wrap items-center gap-1.5">
+                <span className="data w-9 shrink-0 text-right text-[10px] text-fg-subtle">{numCtx / 1024}k</span>
+                {scenarios.map((sc) => (
+                  <button
+                    key={sc.id}
+                    type="button"
+                    aria-pressed={scenarioFilter === sc.id}
+                    title={`${sc.label} · ${sc.promptTokens} in / ${sc.genTokens} out`}
+                    onClick={() => setScenarioFilter(sc.id)}
+                    className={[
+                      "data min-w-[86px] rounded-full border px-3 py-1 text-[10.5px] transition-colors",
+                      scenarioFilter === sc.id
+                        ? "border-accent bg-accent-soft text-accent-text"
+                        : "border-hair text-fg-muted hover:border-hair2 hover:text-fg",
+                    ].join(" ")}
+                  >
+                    {sc.id}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
           {groups.length === 0 ? (
@@ -319,9 +371,13 @@ export function BenchmarksPage() {
             ))
           )}
           <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
-            Ranked by decode tok/s on <span className="text-fg-muted">{scenarioFilter}</span> —{" "}
-            {scenarioLabel(scenarioFilter).toLowerCase()} — within each hardware-match tier, so a number from
-            a looser match is never shown as if it came from an identical Mac.
+            Ranked by decode tok/s on <span className="text-fg-muted">{scenarioFilter}</span>
+            {activeScenario &&
+              ` (${activeScenario.promptTokens} tokens in, ${activeScenario.genTokens} out, ${
+                numCtxFor(activeScenario) / 1024
+              }k context)`}{" "}
+            — {scenarioLabel(scenarioFilter).toLowerCase()} — within each hardware-match tier, so a number
+            from a looser match is never shown as if it came from an identical Mac.
           </p>
         </div>
       )}
@@ -549,9 +605,9 @@ function LiveRunCard({
             </span>
           ))}
         </div>
-        <div className="data flex items-center justify-between text-[11px] text-fg-subtle">
+        <div className="data flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
           <span className="truncate">{footer}</span>
-          {running && <span>{formatElapsed(elapsedMs)}</span>}
+          {running ? <span>{formatElapsed(elapsedMs)}</span> : <ThermalReadout run={mine} />}
         </div>
       </div>
     </div>
@@ -628,6 +684,7 @@ function HistoryCard({
         <span className="data truncate text-[11px] text-fg-subtle">{footer}</span>
         <div className="flex shrink-0 gap-1.5">
           <GhostButton onClick={onShare} disabled={!canShare} className="h-7 text-[11.5px]">
+            <ShareIcon className="size-3.5" />
             Share
           </GhostButton>
         </div>
@@ -693,9 +750,10 @@ function Group({
                 onClick={() => onShareRun(r, group.runs)}
                 disabled={r.decode_tps_median == null}
                 title="Share a card of this result"
+                aria-label={`Share ${r.model_name} result`}
                 className="flex size-7 items-center justify-center rounded-md text-fg-subtle transition-colors hover:text-fg disabled:pointer-events-none disabled:opacity-30"
               >
-                <DownloadIcon className="size-3.5" />
+                <ShareIcon className="size-3.5" />
               </button>
             </div>
           );
@@ -727,7 +785,9 @@ function ShareCardModal({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const filename = `anchor-benchmark-${data.modelName.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${Date.now()}.png`;
+  // One predictable name the save dialog pre-fills, rather than a timestamped
+  // one nobody can guess at; the dialog is where a different name is chosen.
+  const filename = "anchor_benchmark.png";
   const tweetText = `${data.modelName} runs at ${data.decodeTps.toFixed(1)} tok/s on ${data.chip} — benchmarked locally with Anchor.`;
   const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
 

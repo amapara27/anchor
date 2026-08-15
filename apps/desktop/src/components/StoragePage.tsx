@@ -293,7 +293,11 @@ export function StoragePage() {
         }
         confirmLabel="Remove"
         onConfirm={() => {
-          pendingRemove?.forEach((m) => removeModel(m.id));
+          // Removing weights changes the store on disk, so every figure drawn
+          // from the scan (dedupe, locations, orphans) is stale the moment it
+          // lands — rescan rather than leaving the user to press the button.
+          const removals = (pendingRemove ?? []).map((m) => removeModel(m.id));
+          void Promise.all(removals).then(() => rescan());
           setPendingRemove(null);
           setSelected({});
         }}

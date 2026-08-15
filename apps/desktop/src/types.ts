@@ -392,6 +392,9 @@ export interface ChatMessage {
  * `ChatEvent` (serde-tagged on `kind`).
  */
 export type ChatEvent =
+  /** The model is being loaded into memory; the wait before the first token is
+   *  a disk load, not generation. Only sent for a cold model. */
+  | { kind: "loading"; model: string }
   /** One streamed response delta. */
   | { kind: "token"; text: string }
   /** One streamed reasoning delta (thinking-capable models only). */
@@ -483,8 +486,12 @@ export type BenchSource = "local" | "community";
 
 /** Mirrors `anchor_core::EnvTelemetry` — a live snapshot taken around a run. */
 export interface EnvTelemetry {
-  /** `pmset -g therm`'s CPU_Speed_Limit, percent. 100 = unthrottled. */
+  /** `pmset -g therm`'s CPU_Speed_Limit, percent. 100 = unthrottled.
+   *  Intel-era only — always null on Apple Silicon. */
   thermal_pressure_pct: number | null;
+  /** macOS thermal pressure: 0 nominal, 10 moderate, 20 heavy, 30 trapping,
+   *  40 sleeping. The signal Apple Silicon actually publishes. */
+  thermal_level: number | null;
   on_ac_power: boolean | null;
   uptime_secs: number | null;
   free_memory_bytes: number | null;

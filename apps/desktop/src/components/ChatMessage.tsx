@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ChatMessage as ChatMessageT, GenerationStats } from "../types";
 import { formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
 import { Markdown } from "./ui/Markdown";
-import { ChevronRightIcon, CopyIcon } from "./icons";
+import { ChevronRightIcon, CopyIcon, RefreshIcon } from "./icons";
 
 /** Parse the persisted stats JSON once; every footer figure derives from it. */
 function parseStats(stats_json: string | null): GenerationStats | null {
@@ -98,7 +98,19 @@ function Action({
  * as an avatar plus a body of typed Markdown blocks (see `ui/Markdown`) with a
  * throughput/actions footer. `streaming` marks the live turn.
  */
-export function ChatMessage({ message, streaming }: { message: ChatMessageT; streaming?: boolean }) {
+export function ChatMessage({
+  message,
+  streaming,
+  loadingModel,
+  onRegenerate,
+}: {
+  message: ChatMessageT;
+  streaming?: boolean;
+  /** The model is still loading into memory — no tokens yet, and not a stall. */
+  loadingModel?: boolean;
+  /** Re-runs this turn. Absent while another turn is generating. */
+  onRegenerate?: () => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   if (message.role === "user") {
@@ -137,7 +149,7 @@ export function ChatMessage({ message, streaming }: { message: ChatMessageT; str
         {streaming ? (
           <span className="data flex items-center gap-2 text-[11px] text-fg-subtle">
             <span className="size-[5px] animate-pulse-dot rounded-full bg-accent-text" aria-hidden />
-            generating
+            {loadingModel ? "loading model into memory" : "generating"}
             <span className="animate-blink text-accent-text">▍</span>
           </span>
         ) : (
@@ -158,10 +170,16 @@ export function ChatMessage({ message, streaming }: { message: ChatMessageT; str
                 )}
                 <span>{formatDuration(firstToken)} to first token</span>
               </span>
-              {/* Only actions that do something. Regenerate/Branch/Compare
-                  shipped here permanently disabled, which reads as a broken app
-                  rather than a roadmap — they come back when they work. */}
+              {/* Only actions that do something — nothing ships disabled. */}
               <div className="ml-auto flex gap-1">
+                {onRegenerate && (
+                  <Action
+                    label="Regenerate"
+                    Icon={RefreshIcon}
+                    onClick={onRegenerate}
+                    title="Ask again — replaces this answer"
+                  />
+                )}
                 <Action label={copied ? "Copied" : "Copy"} Icon={CopyIcon} onClick={copy} />
               </div>
             </div>

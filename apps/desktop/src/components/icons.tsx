@@ -42,6 +42,14 @@ export const DownloadIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const ShareIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 15V3" />
+    <path d="m8 7 4-4 4 4" />
+    <path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5" />
+  </Svg>
+);
+
 export const CheckIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M20 6 9 17l-5-5" />
