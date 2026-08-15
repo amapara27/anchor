@@ -749,9 +749,17 @@ fn chat_body(req: &ChatRequest) -> serde_json::Value {
 /// Mirrors [`generate`] but hits `/api/chat` with a message array, so the model's
 /// chat template handles the roles. A mid-stream `{"error": ...}` frame surfaces
 /// as an error; a thinking-only stream falls back to the reasoning text.
+/// Streams a chat turn, stopping early if `cancel` is set.
+///
+/// Unlike a cancelled pull — where the partial bytes are worthless — a cancelled
+/// turn returns the text generated so far as a normal `Ok`. That is the whole
+/// point of a Stop button: the user wants what has been written, just not the
+/// rest of it. Ollama has no cancel endpoint, so stopping means dropping the
+/// response mid-stream, which closes the connection and ends the generation.
 pub async fn chat<F>(
     host: &str,
     req: &ChatRequest,
+    cancel: &std::sync::atomic::AtomicBool,
     mut on_token: F,
 ) -> Result<(String, String, GenerationStats)>
 where
@@ -774,7 +782,12 @@ where
     let mut thinking = String::new();
     let mut stats = GenerationStats::default();
 
-    for_each_ndjson_line(resp, MAX_GENERATE_LINE_BYTES, |line| {
+    let outcome = for_each_ndjson_line(resp, MAX_GENERATE_LINE_BYTES, |line| {
+        // Checked per line rather than per token: Ollama emits one frame per
+        // token, so a stop lands within a token or two.
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Cancelled);
+        }
         if let Ok(frame) = serde_json::from_slice::<ChatChunk>(line) {
             if let Some(err) = frame.error {
                 return Err(Error::Ollama(err));
@@ -793,7 +806,13 @@ where
         }
         Ok(())
     })
-    .await?;
+    .await;
+    // A stop is a normal terminal state carrying real output; every other error
+    // means we have nothing trustworthy to hand back.
+    match outcome {
+        Ok(()) | Err(Error::Cancelled) => {}
+        Err(e) => return Err(e),
+    }
 
     // A model that thought but produced no answer: promote reasoning to the
     // answer (and don't also show it as separate thinking) rather than a blank.

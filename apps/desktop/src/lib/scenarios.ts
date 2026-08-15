@@ -10,7 +10,7 @@
 export const SUITE_ID = "anchor-scenarios";
 
 /** The scenario the page header, the share card, and the hardware-truth engine
- *  all read — one canonical number per model instead of eight. */
+ *  all read — one canonical number per model instead of nine. */
 export const HEADLINE_SCENARIO = "balanced";
 
 export interface Scenario {

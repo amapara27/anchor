@@ -19,6 +19,7 @@ mod chat;
 mod fit;
 mod models;
 mod ops;
+mod ui;
 
 /// The desktop app's bundle identifier, from
 /// `apps/desktop/src-tauri/tauri.conf.json`. Tauri's `app_data_dir()` resolves
@@ -223,7 +224,7 @@ pub fn progress_done() {
     }
 }
 
-fn is_terminal() -> bool {
+pub fn is_terminal() -> bool {
     std::io::IsTerminal::is_terminal(&std::io::stdout())
 }
 

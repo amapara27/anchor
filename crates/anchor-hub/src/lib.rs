@@ -363,12 +363,13 @@ impl Registry {
     pub async fn chat<F>(
         &self,
         req: &ChatRequest,
+        cancel: &std::sync::atomic::AtomicBool,
         on_token: F,
     ) -> Result<(String, String, GenerationStats)>
     where
         F: FnMut(bool, &str) + Send,
     {
-        ollama::chat(&self.host, req, on_token).await
+        ollama::chat(&self.host, req, cancel, on_token).await
     }
 
     // --- Chat persistence: thin wrappers over `db`, one connection each. ---

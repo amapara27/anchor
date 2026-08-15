@@ -1,11 +1,11 @@
 // Owns the benchmark page's backend calls: running the standard suite, loading
-// results matched to this machine, and the weekly written-review allowance.
+// results matched to this machine, and this machine's run history.
 //
 // Follows the same channel idiom as useComparison — a `runId` ref drops events
 // from a superseded run so a stale stream can't overwrite fresh state.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { BenchProgress, BenchRepeatsMode, BenchRun, MatchQuality, ReviewAllowance } from "../types";
+import type { BenchProgress, BenchRepeatsMode, BenchRun, MatchQuality } from "../types";
 import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
 import { recordUse } from "./lastUsed";
 import { saveMeasuredRun } from "./measured";
@@ -79,8 +79,6 @@ export function useBenchmarks(modelId: string | null) {
   const [progress, setProgress] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [allowance, setAllowance] = useState<ReviewAllowance | null>(null);
-  const [unlocked, setUnlocked] = useState<Set<string>>(new Set());
   const [scenarios, setScenarios] = useState<ScenarioProgress[]>([]);
   // Real instantaneous decode-tps readings from the backend's `sample` events
   // (token-arrival timing, not a client-side simulation) — the running
@@ -88,9 +86,9 @@ export function useBenchmarks(modelId: string | null) {
   // the graphic reads as "last run" rather than vanishing.
   const [waveform, setWaveform] = useState<number[]>([]);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
-  // The latest measured repeat's index/total, for the segmented progress bar
-  // — structured data from the `run` event rather than parsed back out of
-  // the human-readable `progress` string.
+  // How far through the suite the run is, for the segmented progress bar —
+  // scenario index/total, not repeat index/total. The repeat counter resets
+  // once per scenario, so a bar driven by it never showed overall progress.
   const [runProgress, setRunProgress] = useState<{ index: number; total: number } | null>(null);
   const [history, setHistory] = useState<BenchRun[]>([]);
   const [historyScope, setHistoryScope] = useState<"this" | "all">("this");
@@ -145,10 +143,6 @@ export function useBenchmarks(modelId: string | null) {
     };
   }, [modelId, version]);
 
-  useEffect(() => {
-    invoke<ReviewAllowance>("review_allowance").then(setAllowance).catch(() => {});
-  }, []);
-
   // History panel: chronological (`bench_history`), distinct from the
   // rank-by-speed queries above. `limit` is fetched generously (50) even
   // though only a handful render, so the panel's own summary line ("N runs ·
@@ -189,19 +183,21 @@ export function useBenchmarks(modelId: string | null) {
             break;
           case "run":
             setProgress(`run ${event.index} of ${event.total} · ${event.decode_tps.toFixed(1)} tok/s`);
-            setRunProgress({ index: event.index, total: event.total });
             break;
           case "sample":
             setWaveform((w) => [...w, event.tps].slice(-WAVEFORM_LENGTH));
             break;
           case "scenario_started":
             setProgress(`scenario ${event.index} of ${event.total} · ${event.scenario_id} @ ${event.num_ctx}`);
+            // The bar fills as scenarios complete, so `index - 1` are done.
+            setRunProgress({ index: event.index - 1, total: event.total });
             setScenarios((ss) => [
               ...ss,
               { scenarioId: event.scenario_id, numCtx: event.num_ctx, index: event.index, total: event.total },
             ]);
             break;
           case "scenario_done":
+            setRunProgress({ index: event.index, total: event.total });
             // Only the headline scenario feeds the hardware-truth engine: it is
             // the shape the model pickers' tok/s estimate is calibrated against.
             if (event.run.prompt_id === HEADLINE_SCENARIO) recordMeasured(event.run);
@@ -235,22 +231,12 @@ export function useBenchmarks(modelId: string | null) {
     [],
   );
 
-  /** Opens one written review, spending a slot unless it's already unlocked. */
-  const unlockReview = useCallback(async (id: string) => {
-    const result = await invoke<ReviewAllowance>("unlock_review", { runId: id });
-    setAllowance(result);
-    if (result.unlocked) setUnlocked((s) => new Set(s).add(id));
-    return result.unlocked;
-  }, []);
-
   return {
     groups,
     headlineGroups,
     progress,
     running,
     error,
-    allowance,
-    unlocked,
     scenarios,
     waveform,
     runStartedAt,
@@ -260,7 +246,6 @@ export function useBenchmarks(modelId: string | null) {
     setHistoryScope,
     version,
     run,
-    unlockReview,
     load,
   };
 }

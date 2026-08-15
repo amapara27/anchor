@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ChatMessage as ChatMessageT, GenerationStats } from "../types";
 import { formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
 import { Markdown } from "./ui/Markdown";
-import { BranchIcon, ChevronRightIcon, ColumnsIcon, CopyIcon, RefreshIcon } from "./icons";
+import { ChevronRightIcon, CopyIcon } from "./icons";
 
 /** Parse the persisted stats JSON once; every footer figure derives from it. */
 function parseStats(stats_json: string | null): GenerationStats | null {
@@ -158,11 +158,11 @@ export function ChatMessage({ message, streaming }: { message: ChatMessageT; str
                 )}
                 <span>{formatDuration(firstToken)} to first token</span>
               </span>
+              {/* Only actions that do something. Regenerate/Branch/Compare
+                  shipped here permanently disabled, which reads as a broken app
+                  rather than a roadmap — they come back when they work. */}
               <div className="ml-auto flex gap-1">
                 <Action label={copied ? "Copied" : "Copy"} Icon={CopyIcon} onClick={copy} />
-                <Action label="Regenerate" Icon={RefreshIcon} disabled title="Not wired up yet" />
-                <Action label="Branch" Icon={BranchIcon} disabled title="Not wired up yet" />
-                <Action label="Compare model" Icon={ColumnsIcon} disabled title="Not wired up yet" />
               </div>
             </div>
           )

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, HardwareProfile, LibraryModel, ReviewAllowance } from "../types";
+import type { BenchRepeatsMode, BenchRun, HardwareProfile, LibraryModel } from "../types";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
@@ -14,7 +14,7 @@ import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Meter } from "./ui/SegmentedBar";
 import { ScenarioTable, type ScenarioRow } from "./ui/ScenarioTable";
 import { HEADLINE_SCENARIO, SCENARIOS_BY_COST, SUITE_ID, scenarioLabel } from "../lib/scenarios";
-import { LockIcon, ZapIcon, DownloadIcon, CloseIcon, WarningIcon } from "./icons";
+import { ZapIcon, DownloadIcon, CloseIcon, WarningIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard" | "community";
 
@@ -60,7 +60,7 @@ function ThermalBadge({ label }: { label: string | null }) {
  * result.
  *
  * Top section (run setup / live run / history) is always visible, above the
- * suite/leaderboard/community tabs. One suite, run in full every time: eight
+ * suite/leaderboard/community tabs. One suite, run in full every time: nine
  * scenarios, each a (prompt tokens, generation tokens) shape with a use case
  * attached, at a context derived from what the scenario needs. The Leaderboard
  * ranks **models** against each other (not a separate leaderboard per model)
@@ -87,8 +87,6 @@ export function BenchmarksPage() {
     progress,
     running,
     error,
-    allowance,
-    unlocked,
     scenarios,
     waveform,
     runStartedAt,
@@ -98,12 +96,11 @@ export function BenchmarksPage() {
     setHistoryScope,
     version,
     run,
-    unlockReview,
     load,
   } = useBenchmarks(modelId);
 
   // `groups` is driven entirely by which view is on screen: the Suite tab is
-  // about one model's eight scenarios, while the Leaderboard ranks every model
+  // about one model's nine scenarios, while the Leaderboard ranks every model
   // against every other one (`model: null`) at one scenario, so tok/s compares
   // like for like.
   useEffect(() => {
@@ -220,8 +217,6 @@ export function BenchmarksPage() {
               <span>
                 {yours?.runs.length ?? 0} run{(yours?.runs.length ?? 0) === 1 ? "" : "s"}
               </span>
-              <span>·</span>
-              <span>{allowance ? allowance.allowance - allowance.used : "—"} reviews left</span>
             </div>
           </div>
         }
@@ -252,7 +247,6 @@ export function BenchmarksPage() {
           history={history}
           historyScope={historyScope}
           setHistoryScope={setHistoryScope}
-          allowance={allowance}
           onShare={handleShare}
           canShare={!!mine}
         />
@@ -321,14 +315,7 @@ export function BenchmarksPage() {
             </p>
           ) : (
             groups.map((g) => (
-              <Group
-                key={g.quality}
-                group={g}
-                unlocked={unlocked}
-                canUnlock={!!allowance && allowance.used < allowance.allowance}
-                onUnlock={unlockReview}
-                onShareRun={handleShareRun}
-              />
+              <Group key={g.quality} group={g} onShareRun={handleShareRun} />
             ))
           )}
           <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
@@ -510,7 +497,8 @@ function LiveRunCard({
       ? `median of ${mine.repeats} run${mine.repeats === 1 ? "" : "s"}`
       : "run a benchmark to see it here";
 
-  const totalSegments = runProgress?.total ?? mine?.repeats ?? 3;
+  // One segment per scenario in the suite, filling as each finishes.
+  const totalSegments = runProgress?.total ?? SCENARIOS_BY_COST.length;
   const filledSegments = running ? (runProgress?.index ?? 0) : totalSegments;
 
   return (
@@ -576,14 +564,12 @@ function HistoryCard({
   history,
   historyScope,
   setHistoryScope,
-  allowance,
   onShare,
   canShare,
 }: {
   history: BenchRun[];
   historyScope: "this" | "all";
   setHistoryScope: (s: "this" | "all") => void;
-  allowance: ReviewAllowance | null;
   onShare: () => void;
   canShare: boolean;
 }) {
@@ -593,9 +579,7 @@ function HistoryCard({
   const footer =
     historyScope === "all"
       ? `${history.length} run${history.length === 1 ? "" : "s"} · ${modelCount} model${modelCount === 1 ? "" : "s"}`
-      : allowance
-        ? `${history.length} run${history.length === 1 ? "" : "s"} · ${allowance.allowance - allowance.used}/${allowance.allowance} reviews left`
-        : `${history.length} run${history.length === 1 ? "" : "s"}`;
+      : `${history.length} run${history.length === 1 ? "" : "s"}`;
 
   return (
     <div className="card flex flex-col overflow-hidden md:aspect-square">
@@ -654,15 +638,9 @@ function HistoryCard({
 
 function Group({
   group,
-  unlocked,
-  canUnlock,
-  onUnlock,
   onShareRun,
 }: {
   group: MatchGroup;
-  unlocked: Set<string>;
-  canUnlock: boolean;
-  onUnlock: (id: string) => Promise<boolean>;
   onShareRun: (run: BenchRun, groupRuns: BenchRun[]) => void;
 }) {
   const median = medianTps(group.runs);
@@ -684,7 +662,7 @@ function Group({
             <div
               key={r.id}
               className={[
-                "grid grid-cols-[26px_minmax(0,1fr)_minmax(0,1.3fr)_78px_minmax(0,1fr)_34px] items-center gap-3 border-b border-hair px-4 py-2.5 last:border-b-0",
+                "grid grid-cols-[26px_minmax(0,1fr)_minmax(0,1.6fr)_78px_34px] items-center gap-3 border-b border-hair px-4 py-2.5 last:border-b-0",
                 mine ? "bg-accent-soft" : "",
               ].join(" ")}
             >
@@ -710,12 +688,6 @@ function Group({
               <span className={`data text-right text-[12.5px] ${mine ? "text-accent-text" : "text-fg"}`}>
                 {r.decode_tps_median != null ? `${r.decode_tps_median.toFixed(1)} t/s` : "—"}
               </span>
-              <ReviewCell
-                run={r}
-                isUnlocked={mine || unlocked.has(r.id)}
-                canUnlock={canUnlock}
-                onUnlock={onUnlock}
-              />
               <button
                 type="button"
                 onClick={() => onShareRun(r, group.runs)}
@@ -730,49 +702,6 @@ function Group({
         })}
       </div>
     </section>
-  );
-}
-
-/**
- * A written review, gated behind the weekly allowance.
- *
- * Ratings and every measured number stay visible — only the prose is gated, and
- * your own results are never gated at all.
- */
-function ReviewCell({
-  run,
-  isUnlocked,
-  canUnlock,
-  onUnlock,
-}: {
-  run: BenchRun;
-  isUnlocked: boolean;
-  canUnlock: boolean;
-  onUnlock: (id: string) => Promise<boolean>;
-}) {
-  const stars = run.rating != null ? "★".repeat(run.rating) + "☆".repeat(5 - run.rating) : null;
-  if (!run.review) {
-    return <span className="text-[11px] text-warn">{stars ?? ""}</span>;
-  }
-  if (isUnlocked) {
-    return (
-      <span className="min-w-0 truncate text-[11px] text-fg-muted" title={run.review}>
-        {stars && <span className="mr-1.5 text-warn">{stars}</span>}
-        {run.review}
-      </span>
-    );
-  }
-  return (
-    <GhostButton
-      disabled={!canUnlock}
-      onClick={() => void onUnlock(run.id)}
-      title={canUnlock ? "Open this review" : "You've opened every review in this week's allowance"}
-      className="h-7 text-[11px]"
-    >
-      <LockIcon className="size-3" />
-      {stars && <span className="text-warn">{stars}</span>}
-      {canUnlock ? "Read review" : "Limit reached"}
-    </GhostButton>
   );
 }
 

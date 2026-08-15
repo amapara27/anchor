@@ -13,7 +13,7 @@ import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ChatMessage } from "./ChatMessage";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
-import { PencilIcon, PlusIcon, SearchIcon, SendIcon, TrashIcon } from "./icons";
+import { PencilIcon, PlusIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from "./icons";
 
 /** A solid, widely-installed default (matches the Research Assistant's pick). */
 const DEFAULT_MODEL = "llama3.1:8b";
@@ -78,7 +78,7 @@ export function ChatWorkspace() {
   const { profile } = useHardwareProfile();
   const { presets } = usePresets();
   const { models: resident, residentBytes } = useResidency();
-  const { conversations, activeId, messages, running, error, select, create, rename, remove, send, setPreset } =
+  const { conversations, activeId, messages, running, error, select, create, rename, remove, send, stop, setPreset } =
     useChat();
 
   const [model, setModel] = useState("");
@@ -92,11 +92,14 @@ export function ChatWorkspace() {
   // clicked through a won't-fit warning for — don't re-ask every message.
   const warnedConvos = useRef<Set<string>>(new Set());
 
-  // Default the model once the library loads (prefer the suggested general one).
+  // Default the model once the library loads. `models` is the catalog joined
+  // with install state, so it carries entries that aren't installed — picking
+  // the suggested one unconditionally preselected a model Ollama doesn't have
+  // and the first message failed. Only an installed model may be the default.
   useEffect(() => {
     if (model || models.length === 0) return;
-    const suggested = models.find((m) => m.id === DEFAULT_MODEL);
-    setModel(suggested?.id ?? models.find((m) => m.status === "installed")?.id ?? "");
+    const installed = models.filter((m) => m.status === "installed");
+    setModel(installed.find((m) => m.id === DEFAULT_MODEL)?.id ?? installed[0]?.id ?? "");
   }, [models, model]);
 
   // Follow the active conversation's model and preset when switching threads.
@@ -217,7 +220,14 @@ export function ChatWorkspace() {
         <MessageList messages={messages} running={running} error={error} />
 
         <div className="shrink-0 border-t border-hair bg-canvas px-6 pb-[18px] pt-3.5">
-          <Composer value={input} onChange={setInput} onSend={handleSend} disabled={!model} running={running} />
+          <Composer
+            value={input}
+            onChange={setInput}
+            onSend={handleSend}
+            onStop={() => activeId && stop(activeId)}
+            disabled={!model}
+            running={running}
+          />
           <p className="data mx-auto mt-2.5 flex max-w-[760px] items-center gap-2 text-[10.5px] text-fg-subtle">
             <span className="size-[5px] rounded-full bg-ok" aria-hidden />
             This conversation never leaves this Mac
@@ -501,17 +511,21 @@ function MessageList({
   );
 }
 
-/** Auto-growing composer: Enter sends, Shift+Enter inserts a newline. */
+/** Auto-growing composer: Enter sends, Shift+Enter inserts a newline. While a
+ *  turn is generating the send button becomes Stop — the partial answer is kept,
+ *  so stopping shortens a turn rather than discarding it. */
 function Composer({
   value,
   onChange,
   onSend,
+  onStop,
   disabled,
   running,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
+  onStop: () => void;
   disabled: boolean;
   running: boolean;
 }) {
@@ -542,16 +556,28 @@ function Composer({
         className="scrollbar-slim max-h-52 w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-sm leading-[1.6] text-fg placeholder:text-fg-subtle focus:outline-none"
       />
       <div className="flex items-center gap-2 px-3 pb-2.5 pt-2">
-        <span className="data ml-auto text-[10.5px] text-fg-subtle">↩ to send</span>
-        <button
-          type="button"
-          onClick={onSend}
-          disabled={disabled || running || !value.trim()}
-          aria-label="Send message"
-          className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] bg-accent text-accent-fg transition-[filter,transform] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-        >
-          <SendIcon className="size-4" />
-        </button>
+        <span className="data ml-auto text-[10.5px] text-fg-subtle">{running ? "generating…" : "↩ to send"}</span>
+        {running ? (
+          <button
+            type="button"
+            onClick={onStop}
+            aria-label="Stop generating"
+            title="Stop generating — keeps what's been written"
+            className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] border border-hair2 bg-inset text-fg transition-colors duration-150 ease-out hover:border-danger hover:text-danger"
+          >
+            <StopIcon className="size-3" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onSend}
+            disabled={disabled || !value.trim()}
+            aria-label="Send message"
+            className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] bg-accent text-accent-fg transition-[filter,transform] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+          >
+            <SendIcon className="size-4" />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -719,69 +719,6 @@ fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
     })
 }
 
-/// Marks a review as unlocked, and reports how many of the weekly allowance
-/// remain afterwards.
-///
-/// Unlocking is idempotent: re-reading a review already opened doesn't spend
-/// another slot. `now_ms` is passed in rather than read from the clock so the
-/// window boundary is testable.
-pub fn unlock_review(
-    conn: &Connection,
-    run_id: &str,
-    now_ms: i64,
-    allowance: u32,
-) -> Result<ReviewAllowance> {
-    let already: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM review_views WHERE run_id = ?1)",
-        [run_id],
-        |r| r.get(0),
-    )?;
-    if !already && reviews_used(conn, now_ms)? >= allowance {
-        return Ok(ReviewAllowance {
-            unlocked: false,
-            used: allowance,
-            allowance,
-        });
-    }
-    conn.execute(
-        "INSERT OR IGNORE INTO review_views (run_id, viewed_at) VALUES (?1, ?2)",
-        rusqlite::params![run_id, now_ms],
-    )?;
-    Ok(ReviewAllowance {
-        unlocked: true,
-        used: reviews_used(conn, now_ms)?,
-        allowance,
-    })
-}
-
-/// Reviews unlocked within the trailing seven days.
-pub fn reviews_used(conn: &Connection, now_ms: i64) -> Result<u32> {
-    const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
-    Ok(conn.query_row(
-        "SELECT count(*) FROM review_views WHERE viewed_at > ?1",
-        [now_ms - WEEK_MS],
-        |r| r.get(0),
-    )?)
-}
-
-/// Whether a given review has already been unlocked (and so reads for free).
-pub fn review_is_unlocked(conn: &Connection, run_id: &str) -> Result<bool> {
-    Ok(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM review_views WHERE run_id = ?1)",
-        [run_id],
-        |r| r.get(0),
-    )?)
-}
-
-/// The state of the rolling weekly review allowance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub struct ReviewAllowance {
-    /// False when the request was refused for being over the allowance.
-    pub unlocked: bool,
-    pub used: u32,
-    pub allowance: u32,
-}
-
 /// A persisted chat conversation. Mirrored on the frontend as `Conversation`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Conversation {

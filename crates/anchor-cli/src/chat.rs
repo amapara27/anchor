@@ -207,8 +207,12 @@ async fn turn(
     };
 
     let mut in_thinking = false;
+    // The terminal's stop is Ctrl-C, which ends the process and drops the
+    // response — so nothing here ever trips the flag. The app's Stop button is
+    // what it exists for.
+    let never = std::sync::atomic::AtomicBool::new(false);
     let result = registry
-        .chat(&req, |is_thinking, tok| {
+        .chat(&req, &never, |is_thinking, tok| {
             // Reasoning is dimmed rather than hidden: a terminal has no
             // collapsible block, and silently dropping it would make a thinking
             // model look frozen.

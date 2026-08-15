@@ -126,6 +126,13 @@ function useChatState() {
     [activeId],
   );
 
+  /** Ends the in-flight turn in a conversation, keeping what it generated so
+   *  far. The backend persists the partial answer and emits its usual `result`,
+   *  so nothing special is needed here beyond asking it to stop. */
+  const stop = useCallback((convId: string) => {
+    invoke("stop_chat", { conversationId: convId }).catch(() => {}); // best-effort
+  }, []);
+
   const send = useCallback((convId: string, model: string, content: string) => {
     if (!content.trim() || runningIdsRef.current.has(convId)) return;
     markRunning(convId, true);
@@ -204,6 +211,7 @@ function useChatState() {
     rename,
     remove,
     send,
+    stop,
     setPreset,
   };
 }

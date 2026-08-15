@@ -225,21 +225,6 @@ impl Registry {
         crate::db::update_bench_notes(&self.connect()?, run_id, notes)
     }
 
-    /// Opens one written review against the rolling weekly allowance.
-    pub fn unlock_review(
-        &self,
-        run_id: &str,
-        now_ms: i64,
-        allowance: u32,
-    ) -> Result<crate::db::ReviewAllowance> {
-        crate::db::unlock_review(&self.connect()?, run_id, now_ms, allowance)
-    }
-
-    /// Reviews opened within the trailing seven days.
-    pub fn reviews_used(&self, now_ms: i64) -> Result<u32> {
-        crate::db::reviews_used(&self.connect()?, now_ms)
-    }
-
     /// Runs the suite against `model`, storing each scenario as its own row.
     ///
     /// Scenarios are grouped by derived `num_ctx` and run in ascending order so

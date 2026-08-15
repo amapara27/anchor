@@ -263,7 +263,7 @@ export type StatusFilter = "all" | ModelStatus;
 export type SortKey = "name" | "size" | "params";
 
 // ---------------------------------------------------------------------------
-// Navigation & workflows.
+// Navigation.
 // ---------------------------------------------------------------------------
 
 /** The top-level sections selectable from the sidebar. */
@@ -402,111 +402,6 @@ export type ChatEvent =
   | { kind: "result"; response: string; thinking: string; stats: GenerationStats }
   /** The turn failed (the user message stays persisted for a retry). */
   | { kind: "failed"; message: string };
-
-/**
- * A tool a workflow can enable. Mirrors `anchor_workflows::Tool`
- * (`rename_all = "snake_case"`). The crate is a stub today, so these only drive
- * the frontend mock library until the registry/executor lands.
- */
-export type Tool = "web_search" | "file_reader" | "memory";
-
-/**
- * A workflow template shown in the Workflow Library. Superset of the Rust
- * `anchor_workflows::Workflow { id, name, tools }` with frontend-only display
- * fields; the extra fields move onto the wire when the backend is implemented.
- */
-export interface WorkflowTemplate {
-  id: string;
-  name: string;
-  description: string;
-  /** Suggested model id (e.g. a catalog id like "llama3.1:8b"). */
-  model: string;
-  tools: Tool[];
-}
-
-// ---------------------------------------------------------------------------
-// Research Assistant workflow. Mirrors the `anchor_workflows::research` types;
-// driven by the `run_research` command over a Tauri Channel.
-// ---------------------------------------------------------------------------
-
-/** How thorough a brief to produce. Mirrors `anchor_workflows::Depth`. */
-export type ResearchDepth = "brief" | "standard" | "deep";
-
-/** Output shape for the brief. Mirrors `anchor_workflows::Format`. */
-export type ResearchFormat = "report" | "outline" | "qa";
-
-/** Setup for a Research Assistant run. Mirrors `anchor_workflows::ResearchConfig`. */
-export interface ResearchConfig {
-  model: string;
-  focus: string;
-  depth: ResearchDepth;
-  format: ResearchFormat;
-  /** Audience/tone hint, e.g. "explain for a beginner". Empty = default. */
-  audience?: string;
-  /** Extra instructions appended to the system prompt. Empty = none. */
-  system_override?: string;
-  /** Tavily API key; falls back to the backend's TAVILY_API_KEY env var. */
-  api_key?: string;
-}
-
-/** A web source cited in the brief. Mirrors `anchor_workflows::Source`. */
-export interface ResearchSource {
-  title: string;
-  url: string;
-  content: string;
-}
-
-/** Lifecycle phase of a research run. Mirrors `anchor_workflows::Phase`. */
-export type ResearchPhase = "planning" | "searching" | "synthesizing" | "done";
-
-/**
- * One streamed event from the `run_research` command, mirrored from
- * `anchor_workflows::ResearchEvent` (serde-tagged on `kind`).
- */
-export type ResearchEvent =
-  /** A lifecycle transition. */
-  | { kind: "status"; phase: ResearchPhase }
-  /** A planned search query (emitted before it's run). */
-  | { kind: "query"; text: string }
-  /** A source found and kept for synthesis. */
-  | { kind: "source"; title: string; url: string }
-  /** One streamed synthesis delta. */
-  | { kind: "token"; text: string }
-  /** The finished brief, its stats, and the sources it drew on. */
-  | { kind: "result"; response: string; stats: GenerationStats; sources: ResearchSource[] }
-  /** The run failed. */
-  | { kind: "failed"; message: string };
-
-/**
- * One finished agent run, as stored. Mirrors `anchor_hub::AgentRun` — the row
- * travels in both directions, since the frontend owns the streamed run and
- * assembles it for storage.
- */
-export interface AgentRun {
-  id: string;
-  /** Which agent produced it, e.g. `research-assistant`. */
-  agent_id: string;
-  model: string;
-  /** What was asked — the research focus. */
-  task: string;
-  status: "completed" | "failed";
-  started_ms: number;
-  duration_ms: number;
-  tokens: number | null;
-  /** JSON of `AgentRunDetail`; parsed on demand by the run inspector. */
-  detail_json: string | null;
-}
-
-/** The payload inside `AgentRun.detail_json` — everything only the inspector reads. */
-export interface AgentRunDetail {
-  /** The brief the run produced (empty on failure). */
-  output: string;
-  queries: string[];
-  sources: { title: string; url: string }[];
-  /** Real wall time per lifecycle phase, in order — the run's trace. */
-  phases: { phase: string; ms: number }[];
-  error?: string;
-}
 
 // ---------------------------------------------------------------------------
 // Hardware-truth engine — fit, quant, and throughput. Consumed by the fit
@@ -699,14 +594,6 @@ export type BenchProgress =
   | { kind: "failed"; message: string }
   /** A live instantaneous decode-rate reading, throttled (~90ms), for the running graphic. */
   | { kind: "sample"; tps: number };
-
-/** State of the rolling weekly written-review allowance. */
-export interface ReviewAllowance {
-  /** False when a request was refused for being over the allowance. */
-  unlocked: boolean;
-  used: number;
-  allowance: number;
-}
 
 /** Fit tier, re-exported shape kept in sync with `lib/fit.ts`. */
 export type FitTier = "ok" | "tight" | "wont_fit" | "unknown";

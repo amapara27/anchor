@@ -149,17 +149,35 @@ fn walk_files(dir: &Path, f: &mut impl FnMut(&Path)) -> std::io::Result<()> {
 /// Takes the scan back (not "clean whatever's orphaned now") so a stale scan
 /// can't delete a blob that's since become referenced by a new pull.
 ///
+/// The scan crosses the IPC boundary before coming back here, so neither its
+/// `root` nor its digests are trusted: the root is re-resolved from the
+/// environment (a caller cannot redirect the deletion at another directory) and
+/// every digest must be exactly 64 hex characters. A digest is a fixed-shape
+/// content address; anything else — a `..`, a slash, a name of any other length
+/// — is not one, and this is the only place in the app that deletes a file by a
+/// name it was handed. Returns 0 when the store can't be resolved.
+///
 /// ponytail: scan-then-delete with no lock against a concurrent pull — a pull
 /// that starts after the scan and is still writing its blob when the user
 /// confirms cleanup moments later could race. User-triggered, behind a confirm
 /// dialog; add a pull-in-progress guard if it bites in practice.
 pub fn clean_orphaned(scan: &StorageScan) -> u64 {
-    let blobs_dir = Path::new(&scan.root).join("blobs");
+    match models_root() {
+        Some(root) => clean_orphaned_at(&root, scan),
+        None => 0,
+    }
+}
+
+fn clean_orphaned_at(root: &Path, scan: &StorageScan) -> u64 {
+    let blobs_dir = root.join("blobs");
     let mut freed = 0u64;
     for blob in &scan.orphaned_blobs {
         let Some(hex) = blob.digest.strip_prefix("sha256:") else {
             continue;
         };
+        if hex.len() != SHA256_HEX_LEN || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
         let path = blobs_dir.join(format!("sha256-{hex}"));
         if std::fs::remove_file(&path).is_ok() {
             freed += blob.size_bytes;
@@ -167,6 +185,9 @@ pub fn clean_orphaned(scan: &StorageScan) -> u64 {
     }
     freed
 }
+
+/// A SHA-256 digest in hex. Nothing else is a blob name.
+const SHA256_HEX_LEN: usize = 64;
 
 #[cfg(test)]
 mod tests {
@@ -181,6 +202,12 @@ mod tests {
         dir
     }
 
+    /// A blob name is a 64-char hex digest; the tests use readable stand-ins
+    /// padded to that length, since `clean_orphaned` now rejects anything else.
+    fn hex(seed: &str) -> String {
+        format!("{seed:0>64}").replace(|c: char| !c.is_ascii_hexdigit(), "0")
+    }
+
     fn write_blob(root: &Path, digest_hex: &str, bytes: &[u8]) {
         fs::write(root.join("blobs").join(format!("sha256-{digest_hex}")), bytes).unwrap();
     }
@@ -190,17 +217,17 @@ mod tests {
             .iter()
             .map(|(d, s)| serde_json::json!({ "digest": format!("sha256:{d}"), "size": s }))
             .collect();
-        let body = serde_json::json!({ "config": { "digest": "sha256:cfg", "size": 3 }, "layers": layers_json });
+        let body = serde_json::json!({ "config": { "digest": format!("sha256:{}", hex("cfc")), "size": 3 }, "layers": layers_json });
         fs::write(root.join("manifests").join(rel), body.to_string()).unwrap();
     }
 
     #[test]
     fn dedup_savings_counts_shared_blobs_once_per_extra_reference() {
         let root = tmp("dedup");
-        write_blob(&root, "aaaa", &[0u8; 100]);
-        write_blob(&root, "cfg", &[0u8; 3]); // shared "config" blob too
-        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[("aaaa", 100)]);
-        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b-q4", &[("aaaa", 100)]);
+        write_blob(&root, &hex("aaaa"), &[0u8; 100]);
+        write_blob(&root, &hex("cfc"), &[0u8; 3]); // shared "config" blob too
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[(&hex("aaaa"), 100)]);
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b-q4", &[(&hex("aaaa"), 100)]);
 
         let scan = scan_at(&root).unwrap();
         // "aaaa" referenced twice: 1 extra ref * 100 bytes; "cfg" referenced
@@ -213,28 +240,65 @@ mod tests {
     #[test]
     fn unreferenced_blob_is_orphaned_and_cleanable() {
         let root = tmp("orphan");
-        write_blob(&root, "aaaa", &[0u8; 100]);
-        write_blob(&root, "bbbb", &[0u8; 50]); // never referenced by any manifest
-        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[("aaaa", 100)]);
+        write_blob(&root, &hex("aaaa"), &[0u8; 100]);
+        write_blob(&root, &hex("bbbb"), &[0u8; 50]); // never referenced by any manifest
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[(&hex("aaaa"), 100)]);
 
         let scan = scan_at(&root).unwrap();
         assert_eq!(scan.orphaned_blobs.len(), 1);
-        assert_eq!(scan.orphaned_blobs[0].digest, "sha256:bbbb");
+        assert_eq!(scan.orphaned_blobs[0].digest, format!("sha256:{}", hex("bbbb")));
         assert_eq!(scan.orphaned_bytes, 50);
 
-        let freed = clean_orphaned(&scan);
+        let freed = clean_orphaned_at(&root, &scan);
         assert_eq!(freed, 50);
-        assert!(!root.join("blobs/sha256-bbbb").exists());
-        assert!(root.join("blobs/sha256-aaaa").exists()); // referenced blob untouched
+        assert!(!root.join(format!("blobs/sha256-{}", hex("bbbb"))).exists());
+        assert!(root.join(format!("blobs/sha256-{}", hex("aaaa"))).exists()); // referenced blob untouched
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // The scan round-trips through the frontend before coming back to be acted
+    // on, so its digests are caller-supplied strings, not values this module
+    // produced. A digest that isn't a digest must delete nothing — without the
+    // shape check, `sha256:../<name>` escapes `blobs/` and removes an arbitrary
+    // file as the user.
+    #[test]
+    fn a_digest_that_is_not_a_digest_deletes_nothing() {
+        let root = tmp("traversal");
+        let outside = root.join("precious.txt");
+        fs::write(&outside, b"do not delete me").unwrap();
+        write_blob(&root, &hex("aaaa"), &[0u8; 10]);
+
+        let scan = StorageScan {
+            root: root.to_string_lossy().to_string(),
+            blobs_bytes: 10,
+            manifests_bytes: 0,
+            dedup_savings_bytes: 0,
+            orphaned_bytes: 999,
+            unreadable_manifests: 0,
+            orphaned_blobs: vec![
+                // Escapes blobs/ entirely.
+                StorageBlob { digest: "sha256:../precious.txt".into(), size_bytes: 16 },
+                // Right length, wrong alphabet.
+                StorageBlob { digest: format!("sha256:{}", "z".repeat(64)), size_bytes: 1 },
+                // Real hex, but not a full digest — the old code accepted this.
+                StorageBlob { digest: "sha256:aaaa".into(), size_bytes: 1 },
+                // Not a sha256 digest at all.
+                StorageBlob { digest: "/etc/hosts".into(), size_bytes: 1 },
+            ],
+        };
+
+        assert_eq!(clean_orphaned_at(&root, &scan), 0, "nothing matched a real blob name");
+        assert!(outside.exists(), "a path-traversing digest must not reach outside blobs/");
+        assert!(root.join(format!("blobs/sha256-{}", hex("aaaa"))).exists());
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn an_unparseable_manifest_suppresses_orphan_reporting() {
         let root = tmp("badmanifest");
-        write_blob(&root, "aaaa", &[0u8; 100]);
-        write_blob(&root, "bbbb", &[0u8; 50]);
-        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[("aaaa", 100)]);
+        write_blob(&root, &hex("aaaa"), &[0u8; 100]);
+        write_blob(&root, &hex("bbbb"), &[0u8; 50]);
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[(&hex("aaaa"), 100)]);
         // A truncated / corrupt manifest: its layers can't be read, so "bbbb"
         // may well be live. Reporting it as orphaned would offer real model data
         // for permanent deletion.
@@ -246,24 +310,24 @@ mod tests {
         assert_eq!(scan.orphaned_bytes, 0);
 
         // And cleanup against that scan is a no-op, so nothing is lost.
-        assert_eq!(clean_orphaned(&scan), 0);
-        assert!(root.join("blobs/sha256-bbbb").exists());
+        assert_eq!(clean_orphaned_at(&root, &scan), 0);
+        assert!(root.join(format!("blobs/sha256-{}", hex("bbbb"))).exists());
         fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn a_dotfile_under_manifests_is_not_counted_as_an_unreadable_manifest() {
         let root = tmp("manifestdotfile");
-        write_blob(&root, "aaaa", &[0u8; 100]);
-        write_blob(&root, "bbbb", &[0u8; 50]);
-        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[("aaaa", 100)]);
+        write_blob(&root, &hex("aaaa"), &[0u8; 100]);
+        write_blob(&root, &hex("bbbb"), &[0u8; 50]);
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[(&hex("aaaa"), 100)]);
         // Real macOS junk, non-UTF-8 — present in the wild under manifests/.
         fs::write(root.join("manifests/.DS_Store"), [0x00, 0xff, 0xfe, 0x01]).unwrap();
 
         let scan = scan_at(&root).unwrap();
         assert_eq!(scan.unreadable_manifests, 0, "OS junk must not disable cleanup");
         assert_eq!(scan.orphaned_blobs.len(), 1, "genuine orphan still reported");
-        assert_eq!(scan.orphaned_blobs[0].digest, "sha256:bbbb");
+        assert_eq!(scan.orphaned_blobs[0].digest, format!("sha256:{}", hex("bbbb")));
         fs::remove_dir_all(&root).ok();
     }
 

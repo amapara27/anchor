@@ -189,13 +189,23 @@ async fn pull(id: &str) -> Result<(), String> {
     let never = Arc::new(AtomicBool::new(false));
     registry()?
         .pull(id, &never, |p| {
-            let pct = match (p.completed, p.total) {
+            // A determinate bar once Ollama reports byte counts; before that
+            // (manifest fetch, digest verification) it reports a status string
+            // and nothing to measure, so a spinner carries it instead.
+            match (p.completed, p.total) {
                 (Some(done), Some(total)) if total > 0 => {
-                    format!(" {:>5.1}% ({} of {})", 100.0 * done as f64 / total as f64, fmt_bytes(done), fmt_bytes(total))
+                    let fraction = done as f64 / total as f64;
+                    progress_line(&format!(
+                        "{} {:>5.1}%  {}  {} / {}",
+                        crate::ui::bar(fraction, 24),
+                        100.0 * fraction,
+                        p.status,
+                        fmt_bytes(done),
+                        fmt_bytes(total),
+                    ));
                 }
-                _ => String::new(),
-            };
-            progress_line(&format!("{}{pct}", p.status));
+                _ => progress_line(&format!("{} {}", crate::ui::spinner(), p.status)),
+            }
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -240,8 +250,31 @@ async fn discover(query: &str, limit: usize, json: bool) -> Result<(), String> {
     // local ONNX embedder, a couple of seconds. Cache the vectors next to the
     // embedding model if that ever grates. The first run downloads BGE-small
     // into the same `embeddings/` cache the app uses.
-    let index = anchor_search::SemanticIndex::build(dir.join("embeddings"))
-        .map_err(|e| e.to_string())?;
+    //
+    // `build` is synchronous and gives no progress, so the spinner is ticked by
+    // a companion task rather than by the work: for a first run, which downloads
+    // the embedding model, a silent minute reads as a hang.
+    let building = std::sync::Arc::new(AtomicBool::new(true));
+    let ticker = tokio::spawn({
+        let building = building.clone();
+        let first_run = !dir.join("embeddings").exists();
+        async move {
+            let note = if first_run { "downloading the embedding model (first run only)" } else { "embedding the catalog" };
+            while building.load(std::sync::atomic::Ordering::Relaxed) {
+                progress_line(&format!("{} {note}", crate::ui::spinner()));
+                tokio::time::sleep(std::time::Duration::from_millis(90)).await;
+            }
+        }
+    });
+    let built = tokio::task::spawn_blocking({
+        let cache = dir.join("embeddings");
+        move || anchor_search::SemanticIndex::build(cache)
+    })
+    .await;
+    building.store(false, std::sync::atomic::Ordering::Relaxed);
+    let _ = ticker.await;
+    progress_done();
+    let index = built.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
     let results = index.search(query, limit).map_err(|e| e.to_string())?;
 
     // Best-effort, exactly as in the app: a failed history write must not sink

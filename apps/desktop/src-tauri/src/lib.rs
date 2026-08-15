@@ -10,8 +10,7 @@ use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use anchor_core::{BenchRun, BenchSample, HardwareProfile, HwIdentity, Model, StorageScan};
-use anchor_hub::db::ReviewAllowance;
+use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model, StorageScan};
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
     BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats, Preset,
@@ -41,12 +40,16 @@ mod tray;
 /// - `pulls` maps a model id to the flag its in-flight download watches, so
 ///   [`cancel_download`] can stop a pull that [`download_model`] is still
 ///   awaiting. Entries are removed by the pull that owns them.
+/// - `chats` is the same idea for generation: a conversation id to the flag its
+///   in-flight turn watches, so [`stop_chat`] can end a turn the user no longer
+///   wants. Keyed per conversation, since two conversations can generate at once.
 #[derive(Default)]
 struct ServerState {
     child: Mutex<Option<Child>>,
     start_lock: tokio::sync::Mutex<()>,
     compare_lock: tokio::sync::Mutex<()>,
     pulls: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
+    chats: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
 }
 
 /// Holds the semantic-search index built at launch.
@@ -417,8 +420,13 @@ async fn run_chat(
 
     let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
+
+    // Registered only for the generation itself, and removed however it ends,
+    // so a stale flag can never abort the *next* turn in this conversation.
+    let cancel = std::sync::Arc::new(AtomicBool::new(false));
+    state.chats.lock().unwrap().insert(conversation_id.clone(), cancel.clone());
     let result = registry
-        .chat(&req, |is_thinking, tok| {
+        .chat(&req, &cancel, |is_thinking, tok| {
             // Best-effort: a dropped channel (UI navigated away) shouldn't error.
             let _ = on_event.send(if is_thinking {
                 ChatEvent::Thinking { text: tok.to_string() }
@@ -427,6 +435,7 @@ async fn run_chat(
             });
         })
         .await;
+    state.chats.lock().unwrap().remove(&conversation_id);
 
     match result {
         Ok((text, thinking, stats)) => {
@@ -448,6 +457,20 @@ async fn run_chat(
             let _ = on_event.send(ChatEvent::Failed { message: e.to_string() });
             Ok(())
         }
+    }
+}
+
+/// Stops the in-flight turn in a conversation, keeping what it generated.
+///
+/// Ollama exposes no cancel endpoint, so this trips the flag the chat stream
+/// loop checks; dropping the response closes the connection and ends the
+/// generation. The partial answer still lands in the DB — a stopped turn is a
+/// short turn, not a discarded one, so the thread stays coherent for a
+/// follow-up. Unknown or already-finished conversations are a no-op.
+#[tauri::command]
+fn stop_chat(app: AppHandle, conversation_id: String) {
+    if let Some(flag) = app.state::<ServerState>().chats.lock().unwrap().get(&conversation_id) {
+        flag.store(true, Ordering::Relaxed);
     }
 }
 
@@ -570,54 +593,6 @@ async fn clean_orphaned_blobs(scan: StorageScan) -> Result<u64, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Reports which installed models have a newer version upstream as
-/// `(model_id, update_available)` pairs, by diffing manifest digests against
-/// the Ollama registry (heavily cached, best-effort — see [`anchor_hub::updates`]).
-/// Currently uninvoked: the update badge UI was pulled pending an "apply" flow.
-#[tauri::command]
-async fn check_updates(app: AppHandle) -> Result<Vec<(String, bool)>, String> {
-    ensure_server(&app).await?;
-    let registry = registry(&app)?;
-    anchor_hub::updates::check_updates(&registry)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Keychain service name every Anchor secret is filed under.
-const KEYCHAIN_SERVICE: &str = "com.anchor.desktop";
-
-/// Reads a secret from the macOS Keychain, or `None` if it was never stored.
-///
-/// API keys used to live in `localStorage`, which is an unencrypted SQLite file
-/// any process running as the user can read and which survives deleting the app.
-/// A Keychain item is scoped to Anchor and removed with it.
-#[tauri::command]
-fn get_secret(key: String) -> Result<Option<String>, String> {
-    match keyring::Entry::new(KEYCHAIN_SERVICE, &key) {
-        Ok(entry) => match entry.get_password() {
-            Ok(v) => Ok(Some(v)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e.to_string()),
-        },
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// Stores a secret in the macOS Keychain. An empty value deletes the item.
-#[tauri::command]
-fn set_secret(key: String, value: String) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, &key).map_err(|e| e.to_string())?;
-    if value.is_empty() {
-        // Deleting a key that was never set is the normal "cleared an empty
-        // field" path, not an error.
-        return match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.to_string()),
-        };
-    }
-    entry.set_password(&value).map_err(|e| e.to_string())
-}
-
 /// Builds a [`Profiler`] backed by `hardware.json` in the app's data directory.
 fn profiler(app: &AppHandle) -> Result<Profiler, String> {
     let dir = app
@@ -684,9 +659,6 @@ async fn get_server_status(app: AppHandle) -> Result<ServerStatus, String> {
     let local = anchor_hub::is_local_host(&host);
     Ok(ServerStatus { reachable, version, managed, host, local })
 }
-
-/// How many written community reviews a free install may open per week.
-const REVIEW_ALLOWANCE: u32 = 3;
 
 /// This install's anonymous id — see [`anchor_hub::install_id`], which the CLI
 /// shares so both front-ends attribute benchmark rows to the same install.
@@ -797,12 +769,6 @@ async fn bench_runs_for_model(
         .map_err(|e| e.to_string())
 }
 
-/// Raw per-repeat samples behind a stored run's medians.
-#[tauri::command]
-async fn bench_samples_for_run(app: AppHandle, run_id: String) -> Result<Vec<BenchSample>, String> {
-    registry(&app)?.bench_samples_for(&run_id).map_err(|e| e.to_string())
-}
-
 /// Recent benchmark runs on this exact machine, newest first — the History
 /// panel's feed. `model: None` mixes every model together; `Some(id)` scopes
 /// to one. Distinct from `bench_runs_for_model`, which ranks by speed rather
@@ -821,39 +787,6 @@ async fn bench_history(app: AppHandle, model: Option<String>, limit: u32) -> Res
         None => None,
     };
     registry.bench_history(&hw, digest.as_deref(), limit).map_err(|e| e.to_string())
-}
-
-/// Updates a run's free-text notes, e.g. after the user edits an
-/// auto-populated anomaly note.
-#[tauri::command]
-async fn update_bench_notes(app: AppHandle, run_id: String, notes: Option<String>) -> Result<(), String> {
-    registry(&app)?
-        .update_bench_notes(&run_id, notes.as_deref())
-        .map_err(|e| e.to_string())
-}
-
-/// Opens one written review, spending a slot from the weekly allowance.
-///
-/// Re-opening a review already unlocked is free. Returns the allowance state so
-/// the UI can show what's left without a second call.
-#[tauri::command]
-async fn unlock_review(app: AppHandle, run_id: String) -> Result<ReviewAllowance, String> {
-    registry(&app)?
-        .unlock_review(&run_id, now_ms(), REVIEW_ALLOWANCE)
-        .map_err(|e| e.to_string())
-}
-
-/// The current state of the weekly review allowance.
-#[tauri::command]
-async fn review_allowance(app: AppHandle) -> Result<ReviewAllowance, String> {
-    let used = registry(&app)?
-        .reviews_used(now_ms())
-        .map_err(|e| e.to_string())?;
-    Ok(ReviewAllowance {
-        unlocked: false,
-        used,
-        allowance: REVIEW_ALLOWANCE,
-    })
 }
 
 fn now_ms() -> i64 {
@@ -894,8 +827,8 @@ fn build_semantic_index(app: AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // File picking for the agents that read documents (Batch Processor, Code
-        // Reviewer, Knowledge Base). `fs` backs the dialog's scope grants.
+        // The native save dialog + file write behind `savePng` (benchmark card
+        // export). Only saving — nothing in the app opens a file any more.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(ServerState::default())
@@ -924,6 +857,7 @@ pub fn run() {
             cancel_download,
             compare_models,
             run_chat,
+            stop_chat,
             list_conversations,
             create_conversation,
             conversation_messages,
@@ -949,16 +883,9 @@ pub fn run() {
             get_hardware_profile,
             refresh_hardware_profile,
             get_server_status,
-            check_updates,
             run_benchmark,
             bench_runs_for_model,
-            bench_samples_for_run,
-            bench_history,
-            update_bench_notes,
-            unlock_review,
-            review_allowance,
-            get_secret,
-            set_secret
+            bench_history
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -997,25 +924,4 @@ fn unload_all_resident(app: &AppHandle) {
             let _ = registry.unload(&model.name).await;
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Exercises the real macOS Keychain, so it is `#[ignore]`d — run it with
-    /// `cargo test -p anchor-desktop -- --ignored keychain` after touching
-    /// `get_secret`/`set_secret` or bumping `keyring`. Writes and deletes one
-    /// item under Anchor's own service name.
-    #[test]
-    #[ignore]
-    fn keychain_round_trips_and_clears_a_secret() {
-        let key = "anchor.selftest".to_string();
-        set_secret(key.clone(), "hunter2".into()).expect("write");
-        assert_eq!(get_secret(key.clone()).expect("read"), Some("hunter2".into()));
-        // Empty value deletes; a second delete is a no-op, not an error.
-        set_secret(key.clone(), String::new()).expect("delete");
-        assert_eq!(get_secret(key.clone()).expect("read after delete"), None);
-        set_secret(key, String::new()).expect("delete of a missing item is fine");
-    }
 }

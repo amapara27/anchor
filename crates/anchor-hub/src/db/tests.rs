@@ -356,34 +356,6 @@ fn bench_history_is_chronological_not_ranked_by_speed() {
 }
 
 #[test]
-fn review_allowance_caps_at_three_per_week_but_rereads_are_free() {
-    let conn = in_memory();
-    let now = 1_700_000_000_000_i64;
-    const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
-
-    for (i, id) in ["a", "b", "c"].iter().enumerate() {
-        let r = unlock_review(&conn, id, now, 3).unwrap();
-        assert!(r.unlocked, "review {id} within allowance");
-        assert_eq!(r.used, i as u32 + 1);
-    }
-
-    // Fourth distinct review this week is refused.
-    let refused = unlock_review(&conn, "d", now, 3).unwrap();
-    assert!(!refused.unlocked);
-    assert!(!review_is_unlocked(&conn, "d").unwrap());
-
-    // Re-reading one already unlocked doesn't spend another slot.
-    let reread = unlock_review(&conn, "a", now, 3).unwrap();
-    assert!(reread.unlocked);
-    assert_eq!(reread.used, 3, "re-read must not consume allowance");
-
-    // A week later the window has rolled and the allowance is free again.
-    let later = unlock_review(&conn, "d", now + WEEK + 1, 3).unwrap();
-    assert!(later.unlocked);
-    assert_eq!(later.used, 1, "old unlocks fall out of the trailing window");
-}
-
-#[test]
 fn conversation_messages_round_trip_and_delete_cascades() {
     let conn = in_memory();
     let conv = Conversation {

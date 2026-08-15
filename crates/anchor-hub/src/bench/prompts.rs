@@ -8,8 +8,10 @@
 //! Pure and I/O-free on purpose: the sizing and grouping logic is the part
 //! most worth unit-testing in isolation, without a live Ollama server.
 //!
-//! **Mirrored in `apps/desktop/src/components/BenchmarksPage.tsx` (`SCENARIOS`)**
-//! for display only — ids, token counts, and labels must stay in sync.
+//! **Mirrored in `apps/desktop/src/lib/scenarios.ts` (`SCENARIOS`)** for display
+//! only — ids, token counts, and labels must stay in sync, and
+//! `the_typescript_mirror_matches_this_catalog` below reads that file and fails
+//! on drift.
 
 /// Bump when the catalog's *structure* changes (scenarios added/removed,
 /// context derivation, repeat policy).

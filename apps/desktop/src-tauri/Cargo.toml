@@ -25,7 +25,6 @@ anchor-system = { workspace = true }
 # registered (see the note in lib.rs's invoke_handler), so linking it would ship
 # the file-reading tool code with nothing able to call it. Restore this line when
 # the agents feature comes back.
-keyring = { version = "4.1.6", default-features = false, features = ["apple-native-keyring-store", "v1"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

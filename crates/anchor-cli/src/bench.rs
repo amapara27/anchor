@@ -189,6 +189,10 @@ fn scenarios(json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Sparkline cells in the live line. Sized so the whole status line — scenario
+/// counter, waveform, rate — stays inside the 78 columns `progress_line` pads to.
+const WAVEFORM_WIDTH: usize = 24;
+
 async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> {
     ensure_server().await?;
     let registry = registry()?;
@@ -196,31 +200,70 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
     let install_id = anchor_hub::install_id(&crate::data_dir()?).map_err(|e| e.to_string())?;
     let mut finished: Vec<BenchRun> = Vec::new();
 
-    let on_progress = |event: BenchProgress| match event {
-        BenchProgress::Status { message } => progress_line(&message),
+    // A suite is minutes of near-silence between finished runs, so the live
+    // decode-rate samples the engine already emits (the app's waveform) are what
+    // the terminal shows too: same data, drawn in blocks instead of bars. On a
+    // redirected stdout none of this is drawn — see the `is_terminal` gates.
+    let animated = crate::is_terminal();
+    let mut waveform: Vec<f64> = Vec::new();
+    // The scenario being measured, kept so a sample can redraw the whole line.
+    let mut current = String::new();
+
+    let mut on_progress = |event: BenchProgress| match event {
+        BenchProgress::Status { message } => {
+            current = message.clone();
+            waveform.clear();
+            progress_line(&format!("{} {message}", crate::ui::spinner()));
+        }
         BenchProgress::Run {
             index,
             total,
             decode_tps,
-        } => progress_line(&format!("run {index} of {total}: {decode_tps:.1} tok/s")),
+        } => progress_line(&format!("  {current} · run {index}/{total} · {decode_tps:.1} tok/s")),
         BenchProgress::ScenarioStarted {
             scenario_id,
             num_ctx,
             index,
             total,
-        } => progress_line(&format!(
-            "scenario {index}/{total}: {scenario_id} at {num_ctx} ctx"
-        )),
-        BenchProgress::ScenarioDone { run, .. } => finished.push(*run),
+        } => {
+            current = format!("{index}/{total} {scenario_id} @ {num_ctx} ctx");
+            waveform.clear();
+            progress_line(&format!("{} {current}", crate::ui::spinner()));
+        }
+        BenchProgress::ScenarioDone { run, index, total } => {
+            let rate = run
+                .decode_tps_median
+                .map(|v| format!("{v:.1} tok/s"))
+                .unwrap_or_else(|| "no reading".into());
+            // Committed with a newline: finished scenarios scroll up as a log
+            // while the animated line keeps redrawing beneath them.
+            crate::progress_done();
+            println!(
+                "  ✓ {:<10} {:>7} ctx  {:>12}",
+                run.prompt_id.as_deref().unwrap_or("—"),
+                run.num_ctx,
+                rate,
+            );
+            let _ = (index, total);
+            finished.push(*run);
+        }
         BenchProgress::Done { runs } => finished = runs,
         BenchProgress::Failed { message } => eprintln!("\n{message}"),
-        // Live tok/s readings drive the app's running graphic; a terminal
-        // already sees the per-run lines.
-        BenchProgress::Sample { .. } => {}
+        BenchProgress::Sample { tps } => {
+            if !animated {
+                return;
+            }
+            waveform.push(tps);
+            progress_line(&format!(
+                "{} {current}  {}  {tps:>6.1} tok/s",
+                crate::ui::spinner(),
+                crate::ui::sparkline(&waveform, WAVEFORM_WIDTH),
+            ));
+        }
     };
 
     let result = registry
-        .run_benchmark(model, &hw, &install_id, repeats.into(), on_progress)
+        .run_benchmark(model, &hw, &install_id, repeats.into(), &mut on_progress)
         .await
         .map(|_| ());
     crate::progress_done();
@@ -229,6 +272,7 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
     if json {
         return print_json(&finished);
     }
+    println!();
     print_runs(&finished, false);
     Ok(())
 }
