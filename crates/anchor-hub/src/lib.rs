@@ -19,13 +19,9 @@ pub mod ollama;
 pub mod server;
 pub mod status;
 pub mod storage;
-pub mod updates;
 
 pub use bench::{BenchProgress, RepeatsMode, Scenario, CATALOG, SUITE_ID, SUITE_VERSION};
-pub use db::{
-    AgentMemory, AgentRun, Conversation, KbChunk, KbDocument, Preset, StoredMessage,
-    DEFAULT_PRESET_ID,
-};
+pub use db::{Conversation, Preset, StoredMessage, DEFAULT_PRESET_ID};
 pub use ollama::{ChatMessage, ChatRequest, GenerateRequest, GenerationStats, PullProgress};
 
 use serde::Serialize;
@@ -347,6 +343,10 @@ impl Registry {
 
     /// Runs a streaming generation, forwarding each token delta to `on_token` and
     /// returning the full text plus final [`GenerationStats`].
+    ///
+    /// Uncancellable by design: every caller is a short fixed-size call (an
+    /// eviction, a comparison turn). The benchmark suite, which does need to
+    /// stop, calls [`ollama::generate`] directly with a real flag.
     pub async fn generate<F>(
         &self,
         req: &GenerateRequest,
@@ -355,7 +355,7 @@ impl Registry {
     where
         F: FnMut(&str) + Send,
     {
-        ollama::generate(&self.host, req, on_token).await
+        ollama::generate(&self.host, req, &ollama::NEVER_CANCEL, on_token).await
     }
 
     /// Runs a streaming multi-turn chat, forwarding each token delta to
@@ -530,60 +530,6 @@ impl Registry {
     /// The preset a conversation runs under (its own, else the default).
     pub fn preset_for_conversation(&self, conversation_id: &str) -> Result<Option<Preset>> {
         db::preset_for_conversation(&self.connect()?, conversation_id)
-    }
-
-    /// Stores a finished agent run.
-    pub fn save_agent_run(&self, run: &AgentRun) -> Result<()> {
-        db::insert_agent_run(&self.connect()?, run)
-    }
-
-    /// Reads agent run history, newest first.
-    pub fn agent_runs(&self, limit: u32) -> Result<Vec<AgentRun>> {
-        db::list_agent_runs(&self.connect()?, limit)
-    }
-
-    // --- Agent memory: facts an agent keeps across sessions. ---
-
-    /// Stores a remembered fact.
-    pub fn remember(&self, memory: &AgentMemory) -> Result<()> {
-        db::insert_memory(&self.connect()?, memory)
-    }
-
-    /// Reads an agent's memories for one scope, newest first.
-    pub fn recall(&self, agent_id: &str, scope: &str, limit: u32) -> Result<Vec<AgentMemory>> {
-        db::list_memories(&self.connect()?, agent_id, scope, limit)
-    }
-
-    /// Forgets one fact.
-    pub fn forget(&self, id: &str) -> Result<()> {
-        db::delete_memory(&self.connect()?, id)
-    }
-
-    // --- Knowledge base: ingested documents and their embedded chunks. ---
-
-    /// Registers (or re-registers) an ingested document.
-    pub fn add_kb_document(&self, doc: &KbDocument) -> Result<()> {
-        db::insert_kb_document(&self.connect()?, doc)
-    }
-
-    /// Lists ingested documents, newest first.
-    pub fn kb_documents(&self) -> Result<Vec<KbDocument>> {
-        db::list_kb_documents(&self.connect()?)
-    }
-
-    /// Drops a document and everything indexed from it.
-    pub fn forget_kb_document(&self, id: &str) -> Result<()> {
-        db::delete_kb_document(&self.connect()?, id)
-    }
-
-    /// Replaces a document's chunks with a freshly embedded set.
-    pub fn replace_kb_chunks(&self, doc_id: &str, chunks: &[KbChunk]) -> Result<()> {
-        db::replace_kb_chunks(&mut self.connect()?, doc_id, chunks)
-    }
-
-    /// Reads every stored chunk, for a similarity scan.
-    pub fn kb_chunks(&self) -> Result<Vec<KbChunk>> {
-        db::list_kb_chunks(&self.connect()?)
     }
 
     /// Evicts a model's weights from Ollama with a zero-length, `keep_alive: 0`

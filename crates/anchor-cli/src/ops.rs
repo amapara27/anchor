@@ -5,10 +5,6 @@ use clap::Subcommand;
 
 use crate::{confirm, data_dir, fmt_bytes, hardware, print_json, registry};
 
-/// Keychain service name every Anchor secret is filed under — the same one the
-/// desktop app uses, so a key set here is the key the app reads.
-const KEYCHAIN_SERVICE: &str = "com.anchor.desktop";
-
 #[derive(Subcommand)]
 pub enum StorageCmd {
     /// What Ollama's model store holds: sharing savings and orphaned blobs.
@@ -96,11 +92,6 @@ pub enum SettingsCmd {
         #[command(subcommand)]
         cmd: PresetCmd,
     },
-    /// Secrets in the macOS Keychain, shared with the app.
-    Secret {
-        #[command(subcommand)]
-        cmd: SecretCmd,
-    },
     /// Where Anchor keeps its state.
     Paths,
 }
@@ -110,36 +101,6 @@ pub enum PresetCmd {
     Ls,
     Show { id: String },
     Rm { id: String },
-}
-
-#[derive(Subcommand)]
-pub enum SecretCmd {
-    /// Print a stored secret.
-    Get { key: String },
-    /// Store a secret. With no value it is read from stdin, so the key never
-    /// lands in shell history; passing an explicit empty string deletes it.
-    Set { key: String, value: Option<String> },
-}
-
-/// What an incoming secret value means.
-#[derive(Debug, PartialEq)]
-enum SecretAction {
-    Store,
-    Clear,
-}
-
-/// Clearing is destructive and unrecoverable, so it has to be asked for
-/// explicitly. An empty line arriving on stdin is far more often a closed pipe
-/// or an empty file than a deliberate delete, so that case is an error rather
-/// than a silent wipe of a key the app still needs.
-fn secret_action(value: &str, from_stdin: bool) -> Result<SecretAction, String> {
-    if !value.is_empty() {
-        Ok(SecretAction::Store)
-    } else if from_stdin {
-        Err("no value on stdin; pass an explicit \"\" to clear the key".into())
-    } else {
-        Ok(SecretAction::Clear)
-    }
 }
 
 pub async fn settings(cmd: SettingsCmd, json: bool) -> Result<(), String> {
@@ -177,7 +138,6 @@ pub async fn settings(cmd: SettingsCmd, json: bool) -> Result<(), String> {
             Ok(())
         }
         SettingsCmd::Presets { cmd } => presets(cmd, json),
-        SettingsCmd::Secret { cmd } => secret(cmd),
         SettingsCmd::Paths => {
             let dir = data_dir()?;
             println!("data dir     {}", dir.display());
@@ -285,56 +245,6 @@ fn presets(cmd: PresetCmd, json: bool) -> Result<(), String> {
     }
 }
 
-fn secret(cmd: SecretCmd) -> Result<(), String> {
-    match cmd {
-        SecretCmd::Get { key } => {
-            let entry =
-                keyring::Entry::new(KEYCHAIN_SERVICE, &key).map_err(|e| e.to_string())?;
-            match entry.get_password() {
-                Ok(value) => {
-                    println!("{value}");
-                    Ok(())
-                }
-                Err(keyring::Error::NoEntry) => Err(format!("no secret stored under {key}")),
-                Err(e) => Err(e.to_string()),
-            }
-        }
-        SecretCmd::Set { key, value } => {
-            let from_stdin = value.is_none();
-            let value = match value {
-                Some(v) => v,
-                None => {
-                    let mut buf = String::new();
-                    std::io::stdin()
-                        .read_line(&mut buf)
-                        .map_err(|e| e.to_string())?;
-                    buf.trim().to_string()
-                }
-            };
-            let entry =
-                keyring::Entry::new(KEYCHAIN_SERVICE, &key).map_err(|e| e.to_string())?;
-            match secret_action(&value, from_stdin)? {
-                SecretAction::Clear => {
-                    // Deleting a key that was never set is the normal "cleared an
-                    // empty field" path, not an error.
-                    match entry.delete_credential() {
-                        Ok(()) | Err(keyring::Error::NoEntry) => {
-                            println!("cleared {key}");
-                            Ok(())
-                        }
-                        Err(e) => Err(e.to_string()),
-                    }
-                }
-                SecretAction::Store => {
-                    entry.set_password(&value).map_err(|e| e.to_string())?;
-                    println!("stored {key}");
-                    Ok(())
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,28 +256,5 @@ mod tests {
         assert_eq!(opt(None::<u64>), "—");
         assert_eq!(opt(Some(0)), "0", "zero is a real reading, not a gap");
         assert_eq!(opt(Some(42)), "42");
-    }
-
-    #[test]
-    fn a_non_empty_value_is_always_stored() {
-        assert_eq!(secret_action("sk-abc", false), Ok(SecretAction::Store));
-        assert_eq!(secret_action("sk-abc", true), Ok(SecretAction::Store));
-    }
-
-    // `anchor settings secret set KEY ""` is the deliberate delete.
-    #[test]
-    fn an_explicit_empty_argument_clears_the_key() {
-        assert_eq!(secret_action("", false), Ok(SecretAction::Clear));
-    }
-
-    // `anchor settings secret set KEY < /dev/null` used to print "cleared KEY"
-    // and wipe a live credential. A closed pipe must not be able to do that.
-    #[test]
-    fn an_empty_read_from_stdin_is_an_error_not_a_wipe() {
-        let err = secret_action("", true).unwrap_err();
-        assert!(
-            err.contains("no value on stdin"),
-            "expected a refusal explaining how to clear on purpose, got {err:?}"
-        );
     }
 }

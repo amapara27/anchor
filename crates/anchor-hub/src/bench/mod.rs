@@ -243,12 +243,19 @@ impl Registry {
     /// context group gets one discarded warmup, whose `eval_duration` includes
     /// weight loading: counting it would understate throughput on exactly the
     /// machines that load slowest.
+    ///
+    /// Setting `cancel` ends the suite at the next scenario boundary, or mid
+    /// generation via [`ollama::generate`]. A stop is a normal terminal state,
+    /// not an error: the scenarios that already finished were measured at full
+    /// rigor and keep their rows, the interrupted one is discarded rather than
+    /// stored half-measured, and the model is still unloaded on the way out.
     pub async fn run_benchmark<F>(
         &self,
         model: &str,
         hw: &HwIdentity,
         install_id: &str,
         repeats: RepeatsMode,
+        cancel: &std::sync::atomic::AtomicBool,
         mut on_progress: F,
     ) -> Result<Vec<BenchRun>>
     where
@@ -272,7 +279,7 @@ impl Registry {
         // the live graphic reads as one continuous feed, not a reset per row.
         let mut sampler = LiveSampler::new();
 
-        for (num_ctx, scenarios) in groups {
+        'suite: for (num_ctx, scenarios) in groups {
             on_progress(BenchProgress::Status {
                 message: format!("unloading model before {num_ctx} context"),
             });
@@ -284,17 +291,25 @@ impl Registry {
             let warmup_predict = scenarios[0].gen_tokens.min(64) as u64;
             let warmup_request =
                 GenerateRequest::for_benchmark(model, scenarios[0].text(), warmup_predict, num_ctx);
-            let (_, warmup) = ollama::generate(&self.host, &warmup_request, |_tok| {
+            let warmup = match ollama::generate(&self.host, &warmup_request, cancel, |_tok| {
                 if let Some(tps) = sampler.on_token() {
                     on_progress(BenchProgress::Sample { tps });
                 }
             })
-            .await?;
+            .await
+            {
+                Ok((_, warmup)) => warmup,
+                Err(crate::Error::Cancelled) => break 'suite,
+                Err(e) => return Err(e),
+            };
             // Every scenario in this group loaded under this warmup, so they
             // all report its load cost rather than leaving the column empty.
             let load_ms = warmup.load_duration_ns.map(|ns| ns / 1_000_000);
 
             for scenario in scenarios {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    break 'suite;
+                }
                 index += 1;
                 on_progress(BenchProgress::ScenarioStarted {
                     scenario_id: scenario.id.to_string(),
@@ -329,12 +344,19 @@ impl Registry {
                 let mut ttft = Vec::new();
                 for i in 1..=repeat_count {
                     let wall_start = now_ms();
-                    let (_, stats) = ollama::generate(&self.host, &request, |_tok| {
+                    let stats = match ollama::generate(&self.host, &request, cancel, |_tok| {
                         if let Some(tps) = sampler.on_token() {
                             on_progress(BenchProgress::Sample { tps });
                         }
                     })
-                    .await?;
+                    .await
+                    {
+                        Ok((_, stats)) => stats,
+                        // Dropping out here skips this scenario's upsert, so a
+                        // partly-measured row never reaches the leaderboard.
+                        Err(crate::Error::Cancelled) => break 'suite,
+                        Err(e) => return Err(e),
+                    };
                     if let Some(d) = tps(stats.eval_count, stats.eval_duration_ns) {
                         decode.push(d);
                         on_progress(BenchProgress::Run { index: i, total: repeat_count, decode_tps: d });
@@ -471,9 +493,14 @@ mod tests {
         };
 
         let runs = registry
-            .run_benchmark("llama3.2:1b", &hw, "test-install", RepeatsMode::Fast, |p| {
-                println!("{p:?}");
-            })
+            .run_benchmark(
+                "llama3.2:1b",
+                &hw,
+                "test-install",
+                RepeatsMode::Fast,
+                &std::sync::atomic::AtomicBool::new(false),
+                |p| println!("{p:?}"),
+            )
             .await
             .expect("benchmark should complete");
 

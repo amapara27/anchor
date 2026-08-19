@@ -21,7 +21,7 @@ import {
   numCtxFor,
   scenarioLabel,
 } from "../lib/scenarios";
-import { ZapIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon } from "./icons";
+import { ZapIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon, StopIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard" | "community";
 
@@ -132,6 +132,7 @@ export function BenchmarksPage() {
     setHistoryScope,
     version,
     run,
+    stop,
     load,
   } = useBenchmarks(modelId);
 
@@ -274,6 +275,7 @@ export function BenchmarksPage() {
           repeatsMode={repeatsMode}
           setRepeatsMode={setRepeatsMode}
           onRun={() => modelId && run(modelId, repeatsMode)}
+          onStop={stop}
         />
         <LiveRunCard
           running={running}
@@ -460,6 +462,7 @@ function RunSetupCard({
   repeatsMode,
   setRepeatsMode,
   onRun,
+  onStop,
 }: {
   modelId: string | null;
   setSelected: (id: string) => void;
@@ -469,6 +472,7 @@ function RunSetupCard({
   repeatsMode: BenchRepeatsMode;
   setRepeatsMode: (m: BenchRepeatsMode) => void;
   onRun: () => void;
+  onStop: () => void;
 }) {
   return (
     <div className="card flex flex-col overflow-hidden md:aspect-square">
@@ -510,10 +514,24 @@ function RunSetupCard({
         </div>
       </div>
       <div className="px-5 pb-5">
-        <PrimaryButton className="w-full justify-center" onClick={onRun} disabled={!modelId || running}>
-          {running ? <Spinner small /> : <ZapIcon className="size-3.5" />}
-          {running ? "Running…" : "Run suite"}
-        </PrimaryButton>
+        {/* A suite is minutes long and holds the generation lock the whole time,
+            so the only control that matters mid-run is the one that ends it. */}
+        {running ? (
+          <GhostButton
+            className="w-full justify-center"
+            onClick={onStop}
+            tone="danger"
+            title="Stop the suite — keeps the scenarios already measured"
+          >
+            <StopIcon className="size-3" />
+            Stop
+          </GhostButton>
+        ) : (
+          <PrimaryButton className="w-full justify-center" onClick={onRun} disabled={!modelId}>
+            <ZapIcon className="size-3.5" />
+            Run suite
+          </PrimaryButton>
+        )}
       </div>
     </div>
   );
@@ -821,15 +839,5 @@ function ShareCardModal({
         </p>
       </div>
     </div>
-  );
-}
-
-/** Local copy of the app's small spinner (mirrors `ModelComparison.tsx`'s). */
-function Spinner({ small }: { small?: boolean }) {
-  return (
-    <span
-      className={`${small ? "size-3 border" : "size-4 border-2"} animate-spin rounded-full border-hair2 border-t-current`}
-      aria-hidden
-    />
   );
 }

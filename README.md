@@ -76,7 +76,7 @@ anchor settings server --start
 
 Every command takes `--json` for scripting, and `--host` to point at a non-default Ollama.
 
-Anything that deletes — `models rm`, `chat rm`, `storage clean` — asks first, and takes `--yes` to skip the prompt. The prompt reads from stdin, so a piped or redirected invocation without `--yes` declines rather than proceeding; scripts need the flag. Clearing a stored secret is likewise explicit: `anchor settings secret set KEY ""` deletes it, while an empty value arriving on stdin is an error rather than a silent wipe.
+Anything that deletes — `models rm`, `chat rm`, `storage clean` — asks first, and takes `--yes` to skip the prompt. The prompt reads from stdin, so a piped or redirected invocation without `--yes` declines rather than proceeding; scripts need the flag. Ctrl-C during `bench run` is a stop rather than a kill: the suite ends after the scenario in flight, keeps what it measured, and unloads the model — press it twice to quit immediately.
 
 One caveat: the app serialises memory-heavy work internally, but a separate CLI process can't see that lock. Don't benchmark from the terminal while the app is generating — the run would measure the contention rather than the model.
 
@@ -94,8 +94,7 @@ anchor/
     ├── anchor-core/        # shared domain types + the memory-fit engine; UI- and Tauri-free
     ├── anchor-hub/         # model registry, SQLite, Ollama REST, server lifecycle
     ├── anchor-search/      # semantic search: BGE-small embeddings + cosine
-    ├── anchor-system/      # macOS hardware profiling via system_profiler
-    └── anchor-workflows/   # agent pipelines + tools; built and tested, not wired into the app
+    └── anchor-system/      # macOS hardware profiling via system_profiler
 ```
 
 | Layer | Technology |
@@ -108,7 +107,7 @@ anchor/
 | Embeddings | `fastembed` (BGE-small, 384-dim), cosine in Rust |
 | Hardware | `system_profiler` subprocess |
 
-All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads: with agents unwired there is no web-search path in this build, so everything else runs fully offline.
+All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads — there is no web-search or telemetry path anywhere in the app, so everything else runs fully offline.
 
 ## Getting started
 
@@ -152,7 +151,7 @@ pnpm dev                                     # run the app (Vite on :1420)
 pnpm --filter @anchor/desktop build          # typecheck + frontend build (fast, no Rust)
 cargo run -p anchor-cli -- models ls         # run the CLI from the workspace
 cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-search \
-           -p anchor-system -p anchor-workflows   # logic tests, no webview
+           -p anchor-system                       # logic tests, no webview
 node --experimental-strip-types \
   apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures
 ```

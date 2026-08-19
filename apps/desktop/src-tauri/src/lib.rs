@@ -43,6 +43,9 @@ mod tray;
 /// - `chats` is the same idea for generation: a conversation id to the flag its
 ///   in-flight turn watches, so [`stop_chat`] can end a turn the user no longer
 ///   wants. Keyed per conversation, since two conversations can generate at once.
+/// - `bench_cancel` is [`stop_benchmark`]'s flag. ponytail: one flag, not a map
+///   — `compare_lock` and the disabled Run button already mean at most one suite
+///   is ever in flight, so there is nothing to key it by.
 #[derive(Default)]
 struct ServerState {
     child: Mutex<Option<Child>>,
@@ -50,6 +53,7 @@ struct ServerState {
     compare_lock: tokio::sync::Mutex<()>,
     pulls: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     chats: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
+    bench_cancel: AtomicBool,
 }
 
 /// Holds the semantic-search index built at launch.
@@ -343,12 +347,17 @@ enum ChatEvent {
 /// history is loaded and sent to `/api/chat` (so the model's chat template frames
 /// the roles), tokens stream back over `on_event`, and the assistant message +
 /// stats are persisted on success. Serialized behind `compare_lock` (shared with
-/// compare/research/benchmark) so a turn never competes for RAM with those.
+/// compare and benchmark) so a turn never competes for RAM with those.
 ///
 /// Generation settings come from the conversation's [`Preset`] (falling back to
 /// the default one), read here rather than passed over IPC — so the frontend
 /// can't drift from what's stored, and every caller of a conversation gets the
 /// same settings.
+///
+/// The cancel flag is registered before anything else runs. Stop is on screen
+/// for the whole turn, including the seconds spent starting a cold server,
+/// queueing on `compare_lock`, and loading weights — registering it later (as
+/// this once did) left the button inert for exactly those waits.
 #[tauri::command]
 async fn run_chat(
     app: AppHandle,
@@ -357,21 +366,58 @@ async fn run_chat(
     content: String,
     on_event: Channel<ChatEvent>,
 ) -> Result<(), String> {
-    ensure_server(&app).await?;
-    let registry = registry(&app)?;
+    let cancel = std::sync::Arc::new(AtomicBool::new(false));
+    app.state::<ServerState>()
+        .chats
+        .lock()
+        .unwrap()
+        .insert(conversation_id.clone(), cancel.clone());
+    // One exit point, so the flag is always removed however the turn ends — a
+    // stale flag would abort the *next* turn in this conversation.
+    let outcome = chat_turn(&app, &conversation_id, model, content, &cancel, &on_event).await;
+    app.state::<ServerState>().chats.lock().unwrap().remove(&conversation_id);
+    outcome
+}
+
+/// The body of [`run_chat`], split out so its caller owns flag registration.
+async fn chat_turn(
+    app: &AppHandle,
+    conversation_id: &str,
+    model: String,
+    content: String,
+    cancel: &AtomicBool,
+    on_event: &Channel<ChatEvent>,
+) -> Result<(), String> {
+    /// Ends a turn that was stopped before it generated anything. No assistant
+    /// message is persisted — a blank bubble is worse than none — but `Result`
+    /// still goes out so the frontend clears `running` and reloads from the DB.
+    fn stopped_early(on_event: &Channel<ChatEvent>) -> Result<(), String> {
+        let _ = on_event.send(ChatEvent::Result {
+            response: String::new(),
+            thinking: String::new(),
+            stats: GenerationStats::default(),
+        });
+        Ok(())
+    }
+
+    ensure_server(app).await?;
+    if cancel.load(Ordering::Relaxed) {
+        return stopped_early(on_event);
+    }
+    let registry = registry(app)?;
 
     // First message in an empty conversation names it (and it may switch models).
-    let prior = registry.messages_for(&conversation_id).map_err(|e| e.to_string())?;
+    let prior = registry.messages_for(conversation_id).map_err(|e| e.to_string())?;
     if prior.is_empty() {
         let title: String = content.trim().chars().take(CHAT_TITLE_LEN).collect();
-        let _ = registry.rename_conversation(&conversation_id, if title.is_empty() { "New chat" } else { &title });
+        let _ = registry.rename_conversation(conversation_id, if title.is_empty() { "New chat" } else { &title });
     }
-    let _ = registry.set_conversation_model(&conversation_id, &model);
+    let _ = registry.set_conversation_model(conversation_id, &model);
 
     // Persist the user turn, then build the message array from full history.
     registry
         .append_message(
-            &conversation_id,
+            conversation_id,
             &StoredMessage {
                 id: rand_hex(8)?,
                 role: "user".into(),
@@ -383,7 +429,7 @@ async fn run_chat(
         )
         .map_err(|e| e.to_string())?;
     let mut messages: Vec<ChatMessage> = registry
-        .messages_for(&conversation_id)
+        .messages_for(conversation_id)
         .map_err(|e| e.to_string())?
         .into_iter()
         .map(|m| ChatMessage { role: m.role, content: m.content })
@@ -391,7 +437,7 @@ async fn run_chat(
 
     // Preset resolution is best-effort: a DB hiccup falls back to Ollama's own
     // defaults rather than failing a turn the user is waiting on.
-    let preset = registry.preset_for_conversation(&conversation_id).ok().flatten();
+    let preset = registry.preset_for_conversation(conversation_id).ok().flatten();
 
     // The system turn is prepended per request, never persisted — storing it
     // would re-prepend a second copy on the next turn, and again on the one
@@ -423,6 +469,11 @@ async fn run_chat(
 
     let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
+    // The queue behind this lock is the other window Stop has to work in: a
+    // benchmark ahead of us holds it for minutes.
+    if cancel.load(Ordering::Relaxed) {
+        return stopped_early(on_event);
+    }
 
     // A cold model spends several seconds loading before the first token, which
     // otherwise reads as a hung app. Only announced when the model really is
@@ -435,12 +486,8 @@ async fn run_chat(
         let _ = on_event.send(ChatEvent::Loading { model: req.model.clone() });
     }
 
-    // Registered only for the generation itself, and removed however it ends,
-    // so a stale flag can never abort the *next* turn in this conversation.
-    let cancel = std::sync::Arc::new(AtomicBool::new(false));
-    state.chats.lock().unwrap().insert(conversation_id.clone(), cancel.clone());
     let result = registry
-        .chat(&req, &cancel, |is_thinking, tok| {
+        .chat(&req, cancel, |is_thinking, tok| {
             // Best-effort: a dropped channel (UI navigated away) shouldn't error.
             let _ = on_event.send(if is_thinking {
                 ChatEvent::Thinking { text: tok.to_string() }
@@ -449,12 +496,14 @@ async fn run_chat(
             });
         })
         .await;
-    state.chats.lock().unwrap().remove(&conversation_id);
 
     match result {
+        // A stop during the model load returns an empty turn: nothing was
+        // generated, so nothing is stored.
+        Ok((text, _, _)) if text.is_empty() => stopped_early(on_event),
         Ok((text, thinking, stats)) => {
             let _ = registry.append_message(
-                &conversation_id,
+                conversation_id,
                 &StoredMessage {
                     id: rand_hex(8)?,
                     role: "assistant".into(),
@@ -733,9 +782,10 @@ impl From<BenchRepeatsMode> for RepeatsMode {
 
 /// Runs the benchmark suite against a model and stores one row per scenario.
 ///
-/// Takes `compare_lock` (shared with `compare_models` and `run_research`) so a
-/// benchmark can never run alongside another RAM-heavy generation — a contended
-/// run would measure the contention, not the model.
+/// Takes `compare_lock` (shared with `compare_models`) so a benchmark can never
+/// run alongside another RAM-heavy generation — a contended run would measure
+/// the contention, not the model. That also means a nine-scenario suite can
+/// keep a chat turn waiting for minutes, which is why it has to be stoppable.
 #[tauri::command]
 async fn run_benchmark(
     app: AppHandle,
@@ -743,19 +793,36 @@ async fn run_benchmark(
     repeats: BenchRepeatsMode,
     on_event: Channel<BenchProgress>,
 ) -> Result<(), String> {
+    let state = app.state::<ServerState>();
+    // Cleared here rather than on stop: a Stop pressed after the previous suite
+    // ended would otherwise abort this one before it started.
+    state.bench_cancel.store(false, Ordering::Relaxed);
+
+    // A stop is a normal terminal state, so it emits `Done` (with whatever
+    // completed) the same as a finished suite — the frontend needs no new case.
+    let stopped = |on_event: &Channel<BenchProgress>| {
+        let _ = on_event.send(BenchProgress::Done { runs: Vec::new() });
+        Ok(())
+    };
+
     ensure_server(&app).await?;
+    if state.bench_cancel.load(Ordering::Relaxed) {
+        return stopped(&on_event);
+    }
     let registry = registry(&app)?;
     let hw = hw_identity(&app)?;
     let id = install_id(&app)?;
-    let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
+    if state.bench_cancel.load(Ordering::Relaxed) {
+        return stopped(&on_event);
+    }
 
     let on_progress = |event: BenchProgress| {
         // Best-effort: a dropped channel (UI navigated away) shouldn't error.
         let _ = on_event.send(event);
     };
     let result = registry
-        .run_benchmark(&model, &hw, &id, repeats.into(), on_progress)
+        .run_benchmark(&model, &hw, &id, repeats.into(), &state.bench_cancel, on_progress)
         .await
         .map(|_| ());
     if let Err(e) = result {
@@ -765,6 +832,18 @@ async fn run_benchmark(
         return Err(e.to_string());
     }
     Ok(())
+}
+
+/// Stops the running benchmark suite, keeping the scenarios it already measured.
+///
+/// Same mechanism as [`stop_chat`] — Ollama has no cancel endpoint, so this
+/// trips the flag the suite checks between scenarios and the generation stream
+/// reads while waiting for bytes. The interrupted scenario is discarded rather
+/// than stored half-measured, and the model is unloaded on the way out. A no-op
+/// when nothing is running.
+#[tauri::command]
+fn stop_benchmark(app: AppHandle) {
+    app.state::<ServerState>().bench_cancel.store(true, Ordering::Relaxed);
 }
 
 /// Benchmark results from machines resembling this one, best match first.
@@ -900,14 +979,12 @@ pub fn run() {
             save_preset,
             delete_preset,
             set_conversation_preset,
-            // ponytail: the agents + Research Assistant commands are deliberately
-            // NOT registered. Their panels still exist under `src/agents/` but no
-            // UI reaches them, and they read arbitrary files off a caller-supplied
-            // path whose only guard was "the native picker is the trust boundary" —
-            // an assumption that stops holding once nothing opens a picker. To
-            // re-enable the feature, restore `mod agents;`, `src-tauri/src/agents.rs`,
-            // the `run_research` / `save_agent_run` / `agent_runs` commands, and
-            // these entries — re-adding a nav item alone is not enough.
+            // ponytail: the agents + Research Assistant feature is gone — crate,
+            // commands, panels, and storage layer all deleted. It read arbitrary
+            // files off a caller-supplied path whose only guard was "the native
+            // picker is the trust boundary", an assumption that stopped holding
+            // once nothing opened a picker. Bringing it back means rebuilding it,
+            // not re-adding a nav item.
             unload_model,
             running_models,
             remove_model,
@@ -917,6 +994,7 @@ pub fn run() {
             refresh_hardware_profile,
             get_server_status,
             run_benchmark,
+            stop_benchmark,
             bench_runs_for_model,
             bench_history
         ])

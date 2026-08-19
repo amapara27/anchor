@@ -131,6 +131,10 @@ const V3: &str = "ALTER TABLE messages ADD COLUMN thinking TEXT;";
 
 /// Version 4: agent run history — one row per finished agent run.
 ///
+/// **Vestigial.** The agents feature is gone and nothing reads or writes this
+/// table any more. Kept because a shipped migration is never edited; the table
+/// is empty and inert.
+///
 /// `detail_json` holds the run's payload (output, queries, sources, phase
 /// timings) as a single column, for the same reason `models.arch` does: nothing
 /// queries inside it, it is only ever read back whole, and a widening detail
@@ -151,6 +155,9 @@ const V4: &str = "
 ";
 
 /// Version 5: durable state for the memory-backed agents.
+///
+/// **Vestigial**, for the same reason as [`V4`] — these tables outlived the
+/// agents that used them and are no longer read or written.
 ///
 /// Both tables land in one migration on purpose — the Local Memory Chat and
 /// Knowledge Base agents are built in parallel, and two migrations racing for the
@@ -1124,248 +1131,6 @@ pub fn read_library(conn: &Connection) -> Result<(Vec<crate::library::LibraryEnt
 /// Reads a JSON string array back, degrading to empty on anything unparseable.
 fn json_strings(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
-}
-
-/// One finished agent run. Mirrored on the frontend as `AgentRun`.
-///
-/// Deserialize as well as Serialize: unlike chat, the whole row is assembled on
-/// the frontend (which owns the streamed run) and handed back to be stored.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AgentRun {
-    pub id: String,
-    /// Which agent produced it, e.g. `research-assistant`.
-    pub agent_id: String,
-    pub model: String,
-    /// What was asked — the research focus, shown as the run's subtitle.
-    pub task: String,
-    /// `completed` or `failed`.
-    pub status: String,
-    pub started_ms: i64,
-    pub duration_ms: i64,
-    /// Tokens generated, when the model reported them.
-    pub tokens: Option<i64>,
-    /// Run payload (output, queries, sources, phase timings) as raw JSON.
-    pub detail_json: Option<String>,
-}
-
-/// Stores a finished run. Upsert so a re-save of the same id can't duplicate it.
-pub fn insert_agent_run(conn: &Connection, r: &AgentRun) -> Result<()> {
-    conn.execute(
-        "INSERT INTO agent_runs
-            (id, agent_id, model, task, status, started_ms, duration_ms, tokens, detail_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT(id) DO UPDATE SET
-            status      = excluded.status,
-            duration_ms = excluded.duration_ms,
-            tokens      = excluded.tokens,
-            detail_json = excluded.detail_json",
-        rusqlite::params![
-            r.id,
-            r.agent_id,
-            r.model,
-            r.task,
-            r.status,
-            r.started_ms,
-            r.duration_ms,
-            r.tokens,
-            r.detail_json,
-        ],
-    )?;
-    Ok(())
-}
-
-/// Reads run history, newest first.
-pub fn list_agent_runs(conn: &Connection, limit: u32) -> Result<Vec<AgentRun>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, agent_id, model, task, status, started_ms, duration_ms, tokens, detail_json
-         FROM agent_runs ORDER BY started_ms DESC LIMIT ?1",
-    )?;
-    let rows = stmt.query_map([limit], |row| {
-        Ok(AgentRun {
-            id: row.get(0)?,
-            agent_id: row.get(1)?,
-            model: row.get(2)?,
-            task: row.get(3)?,
-            status: row.get(4)?,
-            started_ms: row.get(5)?,
-            duration_ms: row.get(6)?,
-            tokens: row.get(7)?,
-            detail_json: row.get(8)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
-}
-
-/// One remembered fact. Mirrored on the frontend as `AgentMemory`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AgentMemory {
-    pub id: String,
-    /// Which agent owns it, e.g. `local-memory-chat`.
-    pub agent_id: String,
-    /// Partitions memories within one agent (a conversation id, a project name).
-    pub scope: String,
-    pub content: String,
-    pub created_ms: i64,
-}
-
-/// Stores a fact. Upsert so re-saving the same id can't duplicate it.
-pub fn insert_memory(conn: &Connection, m: &AgentMemory) -> Result<()> {
-    conn.execute(
-        "INSERT INTO agent_memory (id, agent_id, scope, content, created_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(id) DO UPDATE SET content = excluded.content",
-        rusqlite::params![m.id, m.agent_id, m.scope, m.content, m.created_ms],
-    )?;
-    Ok(())
-}
-
-/// Reads an agent's memories for one scope, newest first.
-pub fn list_memories(
-    conn: &Connection,
-    agent_id: &str,
-    scope: &str,
-    limit: u32,
-) -> Result<Vec<AgentMemory>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, agent_id, scope, content, created_ms FROM agent_memory
-         WHERE agent_id = ?1 AND scope = ?2 ORDER BY created_ms DESC LIMIT ?3",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![agent_id, scope, limit], |row| {
-        Ok(AgentMemory {
-            id: row.get(0)?,
-            agent_id: row.get(1)?,
-            scope: row.get(2)?,
-            content: row.get(3)?,
-            created_ms: row.get(4)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
-}
-
-/// Forgets one fact.
-pub fn delete_memory(conn: &Connection, id: &str) -> Result<()> {
-    conn.execute("DELETE FROM agent_memory WHERE id = ?1", [id])?;
-    Ok(())
-}
-
-/// One ingested knowledge-base document. Mirrored on the frontend as `KbDocument`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct KbDocument {
-    pub id: String,
-    pub title: String,
-    /// Source path on disk, when it came from a file.
-    pub path: Option<String>,
-    /// How many chunks it was split into.
-    pub chunks: i64,
-    pub added_ms: i64,
-}
-
-/// One chunk of a document plus its embedding vector.
-#[derive(Debug, Clone)]
-pub struct KbChunk {
-    pub id: String,
-    pub doc_id: String,
-    /// Position within the document, 0-based.
-    pub ord: i64,
-    pub text: String,
-    /// BGE-small vector; empty when the chunk was stored without one.
-    pub embedding: Vec<f32>,
-}
-
-/// Registers a document. Upsert so a re-ingest of the same id replaces it.
-pub fn insert_kb_document(conn: &Connection, d: &KbDocument) -> Result<()> {
-    conn.execute(
-        "INSERT INTO kb_documents (id, title, path, chunks, added_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title, path = excluded.path, chunks = excluded.chunks",
-        rusqlite::params![d.id, d.title, d.path, d.chunks, d.added_ms],
-    )?;
-    Ok(())
-}
-
-/// Lists ingested documents, newest first.
-pub fn list_kb_documents(conn: &Connection) -> Result<Vec<KbDocument>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, title, path, chunks, added_ms FROM kb_documents ORDER BY added_ms DESC",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(KbDocument {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            path: row.get(2)?,
-            chunks: row.get(3)?,
-            added_ms: row.get(4)?,
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
-}
-
-/// Drops a document and its chunks. Deletes chunks by hand rather than trusting
-/// `ON DELETE CASCADE`, which needs a per-connection pragma — same reason
-/// [`delete_conversation`] does.
-pub fn delete_kb_document(conn: &Connection, id: &str) -> Result<()> {
-    conn.execute("DELETE FROM kb_chunks WHERE doc_id = ?1", [id])?;
-    conn.execute("DELETE FROM kb_documents WHERE id = ?1", [id])?;
-    Ok(())
-}
-
-/// Stores a document's chunks in one transaction, replacing any it already had.
-pub fn replace_kb_chunks(conn: &mut Connection, doc_id: &str, chunks: &[KbChunk]) -> Result<()> {
-    let tx = conn.transaction()?;
-    tx.execute("DELETE FROM kb_chunks WHERE doc_id = ?1", [doc_id])?;
-    {
-        let mut stmt = tx.prepare(
-            "INSERT INTO kb_chunks (id, doc_id, ord, text, embedding) VALUES (?1, ?2, ?3, ?4, ?5)",
-        )?;
-        for c in chunks {
-            stmt.execute(rusqlite::params![
-                c.id,
-                c.doc_id,
-                c.ord,
-                c.text,
-                embedding_to_blob(&c.embedding),
-            ])?;
-        }
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-/// Reads every chunk, for a linear cosine scan.
-///
-/// ponytail: whole-table read + brute-force similarity. Fine into tens of
-/// thousands of chunks; add an ANN index only if a real corpus outgrows it.
-pub fn list_kb_chunks(conn: &Connection) -> Result<Vec<KbChunk>> {
-    let mut stmt = conn.prepare("SELECT id, doc_id, ord, text, embedding FROM kb_chunks")?;
-    let rows = stmt.query_map([], |row| {
-        let blob: Option<Vec<u8>> = row.get(4)?;
-        Ok(KbChunk {
-            id: row.get(0)?,
-            doc_id: row.get(1)?,
-            ord: row.get(2)?,
-            text: row.get(3)?,
-            embedding: blob.as_deref().map(blob_to_embedding).unwrap_or_default(),
-        })
-    })?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(Into::into)
-}
-
-/// Packs an embedding into little-endian bytes for the `BLOB` column.
-fn embedding_to_blob(v: &[f32]) -> Vec<u8> {
-    v.iter().flat_map(|f| f.to_le_bytes()).collect()
-}
-
-/// Unpacks a stored embedding. A truncated blob yields the floats that survive
-/// rather than failing the read — a bad vector just ranks poorly.
-fn blob_to_embedding(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
 }
 
 fn bench_source_to_str(s: BenchSource) -> &'static str {

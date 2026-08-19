@@ -3,6 +3,9 @@
 //! Rows land in the same table the desktop app's Benchmarks page reads, keyed by
 //! the same install id and hardware identity, so a run here shows up there.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use anchor_core::{BenchRun, HwIdentity};
 use anchor_hub::{BenchProgress, RepeatsMode};
 use clap::{Subcommand, ValueEnum};
@@ -193,12 +196,35 @@ fn scenarios(json: bool) -> Result<(), String> {
 /// counter, waveform, rate — stays inside the 78 columns `progress_line` pads to.
 const WAVEFORM_WIDTH: usize = 24;
 
+/// Turns Ctrl-C into the suite's Stop button rather than a kill.
+///
+/// A killed `anchor bench` strands the weights in Ollama — the process dies
+/// before the run can unload them, and the next thing to need that RAM finds it
+/// taken. Stopping cleanly keeps the scenarios already measured, discards the
+/// interrupted one, and still unloads. A second Ctrl-C exits immediately, since
+/// installing a handler otherwise takes the escape hatch away.
+fn watch_for_interrupt() -> Arc<AtomicBool> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = cancel.clone();
+    tokio::spawn(async move {
+        while tokio::signal::ctrl_c().await.is_ok() {
+            if flag.swap(true, Ordering::Relaxed) {
+                std::process::exit(130);
+            }
+            crate::progress_done();
+            eprintln!("stopping after this scenario — Ctrl-C again to quit now");
+        }
+    });
+    cancel
+}
+
 async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> {
     ensure_server().await?;
     let registry = registry()?;
     let hw = hw()?;
     let install_id = anchor_hub::install_id(&crate::data_dir()?).map_err(|e| e.to_string())?;
     let mut finished: Vec<BenchRun> = Vec::new();
+    let cancel = watch_for_interrupt();
 
     // A suite is minutes of near-silence between finished runs, so the live
     // decode-rate samples the engine already emits (the app's waveform) are what
@@ -263,7 +289,7 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
     };
 
     let result = registry
-        .run_benchmark(model, &hw, &install_id, repeats.into(), &mut on_progress)
+        .run_benchmark(model, &hw, &install_id, repeats.into(), &cancel, &mut on_progress)
         .await
         .map(|_| ());
     crate::progress_done();
@@ -273,6 +299,13 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
         return print_json(&finished);
     }
     println!();
+    if cancel.load(Ordering::Relaxed) {
+        println!(
+            "stopped early — {} of {} scenarios measured\n",
+            finished.len(),
+            anchor_hub::CATALOG.len()
+        );
+    }
     print_runs(&finished, false);
     if let Some(line) = conditions_line(&finished) {
         println!("\n{line}");

@@ -162,6 +162,13 @@ export function useBenchmarks(modelId: string | null) {
     };
   }, [modelId, historyScope, version]);
 
+  /** Ends the running suite, keeping the scenarios it already measured. The
+   *  backend unloads the model and emits its usual `done`, so nothing special
+   *  is needed here beyond asking it to stop. */
+  const stop = useCallback(() => {
+    invoke("stop_benchmark").catch(() => {}); // best-effort
+  }, []);
+
   const run = useCallback(
     (id: string, repeats: BenchRepeatsMode) => {
       const myRun = ++runId.current;
@@ -246,6 +253,7 @@ export function useBenchmarks(modelId: string | null) {
     setHistoryScope,
     version,
     run,
+    stop,
     load,
   };
 }

@@ -334,3 +334,150 @@ async fn catalog_arch_matches_live_metadata() {
     }
     assert!(checked > 0, "no catalog model installed — nothing was verified");
 }
+
+// --- Cancellation ---
+//
+// `for_each_ndjson_line` is the one place every streaming endpoint enforces
+// Stop, and the case that used to be broken is unreachable from a normal test
+// server: a cold model produces *no bytes at all* for tens of seconds, so a
+// per-chunk check never runs. These feed a synthetic stream to reproduce
+// exactly that gap.
+
+/// A stream that yields `head`, then stalls for `stall` before ending — a stand
+/// in for Ollama accepting a request and going quiet while it loads weights.
+fn stalling_stream(
+    head: &'static [u8],
+    stall: Duration,
+) -> impl futures_util::Stream<Item = reqwest::Result<&'static [u8]>> + Unpin {
+    Box::pin(futures_util::stream::once(async move { Ok(head) }).chain(
+        futures_util::stream::once(async move {
+            tokio::time::sleep(stall).await;
+            Ok(&b""[..])
+        }),
+    ))
+}
+
+#[tokio::test]
+async fn a_flag_set_up_front_stops_before_a_single_line_is_read() {
+    let cancel = std::sync::atomic::AtomicBool::new(true);
+    let mut seen = 0;
+    let err = for_each_ndjson_line(
+        stalling_stream(b"{\"response\":\"hi\"}\n", Duration::from_secs(30)),
+        MAX_GENERATE_LINE_BYTES,
+        &cancel,
+        |_| {
+            seen += 1;
+            Ok(())
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(err, Error::Cancelled), "got {err:?}");
+    assert_eq!(seen, 0, "a pre-cancelled stream must not deliver frames");
+}
+
+#[tokio::test]
+async fn a_flag_set_mid_load_stops_without_waiting_for_a_frame() {
+    // The regression this guards: the stream is silent (the model is loading),
+    // so nothing arrives to hang a per-chunk check on. Only the poll timer can
+    // see the flag — without it Stop did nothing for the whole load.
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let started = std::time::Instant::now();
+    let err = for_each_ndjson_line(
+        stalling_stream(b"{\"response\":\"hi\"}\n", Duration::from_secs(30)),
+        MAX_GENERATE_LINE_BYTES,
+        &cancel,
+        |_| Ok(()),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(err, Error::Cancelled), "got {err:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "stop should land on the poll interval, not the stream; took {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn an_uncancelled_stream_still_drains_every_line() {
+    // The poll loop rewrote the read path, so re-assert what it must not break:
+    // split frames reassemble, blank lines are skipped, and a trailing line with
+    // no newline still lands.
+    let chunks: Vec<reqwest::Result<&'static [u8]>> =
+        vec![Ok(&b"{\"a\":1}\n\n{\"b\":"[..]), Ok(&b"2}\n{\"c\":3}"[..])];
+    let mut seen: Vec<String> = Vec::new();
+    for_each_ndjson_line(
+        Box::pin(futures_util::stream::iter(chunks)),
+        MAX_GENERATE_LINE_BYTES,
+        &NEVER_CANCEL,
+        |line| {
+            seen.push(String::from_utf8_lossy(line).into_owned());
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(seen, ["{\"a\":1}", "{\"b\":2}", "{\"c\":3}"]);
+}
+
+/// The whole point of the two guards, against a real server. Ignored by
+/// default: it needs Ollama running with a model big enough to spend real time
+/// loading, and it deliberately makes it cold first.
+///   cargo test -p anchor-hub -- --ignored --nocapture stop_during_a_cold
+#[tokio::test]
+#[ignore = "needs a live Ollama server with qwen3.5:9b"]
+async fn stop_during_a_cold_model_load_returns_promptly_and_empty() {
+    const MODEL: &str = "qwen3.5:9b";
+    let host = crate::ollama_host();
+
+    // Evict it, so the next request pays the full load — the window where Stop
+    // used to do nothing. A measured 7.1s on an M-series Mac, all of it spent
+    // inside `send()` before a single byte of the response exists.
+    let evict = GenerateRequest {
+        model: MODEL.into(),
+        prompt: String::new(),
+        system: None,
+        num_predict: Some(0),
+        num_ctx: None,
+        temperature: None,
+        keep_alive_secs: 0,
+        think: None,
+    };
+    let _ = generate(&host, &evict, &NEVER_CANCEL, |_| {}).await;
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    let req = ChatRequest {
+        model: MODEL.into(),
+        messages: vec![ChatMessage { role: "user".into(), content: "Write a long essay.".into() }],
+        keep_alive_secs: 0,
+        think: None,
+        num_ctx: None,
+        temperature: None,
+        top_p: None,
+    };
+    let started = std::time::Instant::now();
+    let (text, _, _) = chat(&host, &req, &cancel, |_, _| {}).await.expect("a stop is not a failure");
+    let elapsed = started.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "stop should land on the poll interval, not after the load; took {elapsed:?}"
+    );
+    assert!(text.is_empty(), "nothing was generated, so nothing should come back: {text:?}");
+}

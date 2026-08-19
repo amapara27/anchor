@@ -16,6 +16,11 @@ use crate::{Error, Result};
 /// `/api/delete`). The streaming pull uses its own timeouts (see [`pull`]).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How often a streaming read wakes up to check its cancel flag while no bytes
+/// are arriving — the model-loading window, where Stop would otherwise do
+/// nothing until the first token.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+
 /// How long to wait to connect when pulling.
 const PULL_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -451,25 +456,53 @@ pub(crate) fn details_from_info(info: &serde_json::Map<String, serde_json::Value
     }
 }
 
-/// Drains an NDJSON response body, invoking `on_line` for each complete
-/// non-blank line (including a trailing line with no terminating newline).
+/// Drains an NDJSON stream, invoking `on_line` for each complete non-blank line
+/// (including a trailing line with no terminating newline).
 ///
 /// Bounds the per-line buffer at `max_line_bytes`: a single line past the cap
 /// means a malformed/hostile stream — bail rather than buffer unboundedly.
 /// Callers skip lines that don't parse, so one odd frame can't abort an
 /// otherwise-healthy stream.
-async fn for_each_ndjson_line<F>(
-    resp: reqwest::Response,
+///
+/// This is also the single place cancellation is enforced for every streaming
+/// endpoint. `cancel` is read once per chunk *and* on a poll timer, because the
+/// two stalls that matter look completely different: a fast generation delivers
+/// a frame per token (so the per-chunk read catches a stop within a token or
+/// two), while a cold model spends tens of seconds loading before the first
+/// frame ever arrives — nothing to read, so only the timer sees the flag. A
+/// check per chunk alone made Stop inert for exactly the wait users press it
+/// during. Returning drops the response, which closes the connection and is the
+/// only abort Ollama offers.
+///
+/// Generic over the chunk type purely so tests can feed a synthetic stalling
+/// stream; every real caller passes `resp.bytes_stream()`.
+async fn for_each_ndjson_line<S, B, F>(
+    mut stream: S,
     max_line_bytes: usize,
+    cancel: &std::sync::atomic::AtomicBool,
     mut on_line: F,
 ) -> Result<()>
 where
+    S: futures_util::Stream<Item = reqwest::Result<B>> + Unpin,
+    B: AsRef<[u8]>,
     F: FnMut(&[u8]) -> Result<()> + Send,
 {
-    let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk?);
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Cancelled);
+        }
+        // ponytail: poll the flag rather than plumb a Notify/watch through every
+        // caller. 100ms is imperceptible next to a model load; swap in a real
+        // wakeup only if something needs sub-frame stop latency.
+        let chunk = match tokio::time::timeout(CANCEL_POLL, stream.next()).await {
+            Ok(Some(chunk)) => chunk?,
+            Ok(None) => break,
+            // `StreamExt::next` is cancel-safe: the dropped future had not taken
+            // a chunk off `stream`, so nothing is lost by re-polling.
+            Err(_elapsed) => continue,
+        };
+        buf.extend_from_slice(chunk.as_ref());
         // Drain every complete line from the buffer, leaving any partial tail.
         while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = buf.drain(..=nl).collect();
@@ -490,6 +523,37 @@ where
     }
     Ok(())
 }
+
+/// Sends a request, abandoning it if `cancel` is set before the response
+/// headers arrive.
+///
+/// This half of the wait is easy to miss and is the one that actually hurts:
+/// Ollama does not write a single byte — not even the status line — until the
+/// model is resident, so on a cold 9B `send()` alone sits pending for seconds
+/// while [`for_each_ndjson_line`] has not begun. Guarding only the stream left
+/// Stop inert for exactly that window. The request future is pinned outside the
+/// loop so a timeout re-polls it rather than restarting the request; returning
+/// drops it, which closes the connection.
+async fn send_cancellable(
+    req: reqwest::RequestBuilder,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<reqwest::Response> {
+    let mut sending = Box::pin(req.send());
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Error::Cancelled);
+        }
+        match tokio::time::timeout(CANCEL_POLL, &mut sending).await {
+            Ok(resp) => return Ok(resp?),
+            Err(_elapsed) => continue,
+        }
+    }
+}
+
+/// A never-set flag, for the generations nothing can stop (warm-up evictions,
+/// the tray's keep-alive poke).
+pub(crate) static NEVER_CANCEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Pulls a model, invoking `on_progress` for each streamed NDJSON event.
 /// Streams a model pull, reporting progress and stopping early if `cancel` is set.
@@ -514,19 +578,14 @@ where
         .connect_timeout(PULL_CONNECT_TIMEOUT)
         .read_timeout(PULL_READ_TIMEOUT)
         .build()?;
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({ "name": id, "stream": true }))
-        .send()
-        .await?
-        .error_for_status()?;
+    let resp = send_cancellable(
+        client.post(&url).json(&serde_json::json!({ "name": id, "stream": true })),
+        cancel,
+    )
+    .await?
+    .error_for_status()?;
 
-    for_each_ndjson_line(resp, MAX_PULL_LINE_BYTES, |line| {
-        // Checked per line rather than per byte: Ollama emits progress
-        // continuously, so this lands within a few hundred milliseconds.
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(Error::Cancelled);
-        }
+    for_each_ndjson_line(resp.bytes_stream(), MAX_PULL_LINE_BYTES, cancel, |line| {
         if let Ok(event) = serde_json::from_slice::<PullProgress>(line) {
             // Ollama reports failures as a `{"error": ...}` frame on an
             // HTTP-200 stream, so surface it rather than report success.
@@ -546,9 +605,15 @@ where
 /// A mid-stream `{"error": ...}` frame (HTTP 200) surfaces as an error.
 /// `keep_alive: 0` (set via [`GenerateRequest`]) makes Ollama evict the weights
 /// as soon as this returns.
+///
+/// Setting `cancel` returns [`Error::Cancelled`] and discards the partial text.
+/// Unlike [`chat`], where a stopped turn is still an answer worth keeping, the
+/// callers here are benchmarks and warm-ups: half a measured generation is not
+/// a measurement.
 pub async fn generate<F>(
     host: &str,
     req: &GenerateRequest,
+    cancel: &std::sync::atomic::AtomicBool,
     mut on_token: F,
 ) -> Result<(String, GenerationStats)>
 where
@@ -588,10 +653,7 @@ where
         body["think"] = serde_json::Value::Bool(think);
     }
 
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
+    let resp = send_cancellable(client.post(&url).json(&body), cancel)
         .await?
         .error_for_status()?;
 
@@ -600,7 +662,7 @@ where
     let mut thinking = String::new();
     let mut stats = GenerationStats::default();
 
-    for_each_ndjson_line(resp, MAX_GENERATE_LINE_BYTES, |line| {
+    for_each_ndjson_line(resp.bytes_stream(), MAX_GENERATE_LINE_BYTES, cancel, |line| {
         // Fold one parsed frame into text/thinking/stats; an error frame bails.
         if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(line) {
             if let Some(err) = frame.error {
@@ -771,23 +833,21 @@ where
         .read_timeout(GENERATE_READ_TIMEOUT)
         .build()?;
 
-    let resp = client
-        .post(&url)
-        .json(&chat_body(req))
-        .send()
-        .await?
-        .error_for_status()?;
+    let resp = match send_cancellable(client.post(&url).json(&chat_body(req)), cancel).await {
+        Ok(resp) => resp.error_for_status()?,
+        // Stopped while the model was loading: an empty turn, not a failure —
+        // the caller decides that nothing generated means nothing to store.
+        Err(Error::Cancelled) => {
+            return Ok((String::new(), String::new(), GenerationStats::default()))
+        }
+        Err(e) => return Err(e),
+    };
 
     let mut text = String::new();
     let mut thinking = String::new();
     let mut stats = GenerationStats::default();
 
-    let outcome = for_each_ndjson_line(resp, MAX_GENERATE_LINE_BYTES, |line| {
-        // Checked per line rather than per token: Ollama emits one frame per
-        // token, so a stop lands within a token or two.
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(Error::Cancelled);
-        }
+    let outcome = for_each_ndjson_line(resp.bytes_stream(), MAX_GENERATE_LINE_BYTES, cancel, |line| {
         if let Ok(frame) = serde_json::from_slice::<ChatChunk>(line) {
             if let Some(err) = frame.error {
                 return Err(Error::Ollama(err));

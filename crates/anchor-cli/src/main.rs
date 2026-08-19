@@ -69,7 +69,7 @@ enum Command {
         #[command(subcommand)]
         cmd: ops::StorageCmd,
     },
-    /// Server status, hardware profile, presets, and stored secrets.
+    /// Server status, hardware profile, presets, and where state lives.
     Settings {
         #[command(subcommand)]
         cmd: ops::SettingsCmd,
