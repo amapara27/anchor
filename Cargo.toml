@@ -7,7 +7,6 @@ members = [
     "crates/anchor-hub",
     "crates/anchor-search",
     "crates/anchor-system",
-    "crates/anchor-workflows",
 ]
 
 [workspace.package]
@@ -22,7 +21,6 @@ anchor-core = { path = "crates/anchor-core" }
 anchor-hub = { path = "crates/anchor-hub" }
 anchor-search = { path = "crates/anchor-search" }
 anchor-system = { path = "crates/anchor-system" }
-anchor-workflows = { path = "crates/anchor-workflows" }
 serde = { version = "1", features = ["derive"] }
 fastembed = "5"
 serde_json = "1"
