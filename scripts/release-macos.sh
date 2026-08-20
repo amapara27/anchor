@@ -14,7 +14,7 @@ APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning \
 
 # The team ID is the parenthesised suffix of the identity name.
 APPLE_TEAM_ID=$(printf '%s' "$APPLE_SIGNING_IDENTITY" | sed -n 's/.*(\(.*\))$/\1/p')
-APPLE_PASSWORD=$(security find-generic-password -s anchor-notary -w)
+APPLE_PASSWORD=$(security find-generic-password -s anchor -w)
 
 # Separate from the Apple cert: this key signs the update manifest so shipped
 # copies will accept the download. Losing it means no client can ever update.
