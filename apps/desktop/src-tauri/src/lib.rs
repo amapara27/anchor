@@ -934,6 +934,13 @@ fn build_semantic_index(app: AppHandle) {
     });
 }
 
+/// Relaunches after an update has been staged. Tauri swaps the .app bundle on
+/// disk but leaves the old binary running, so nothing changes until this fires.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.restart()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -942,6 +949,10 @@ pub fn run() {
         // export). Only saving — nothing in the app opens a file any more.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // Signed auto-updates. The pubkey that verifies them is compiled in
+        // from tauri.conf.json, so a build without this plugin can never be
+        // updated in place — it has to ship in the very first release.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ServerState::default())
         .manage(SearchState::default())
         .setup(|app| {
@@ -995,6 +1006,7 @@ pub fn run() {
             get_server_status,
             run_benchmark,
             stop_benchmark,
+            restart_app,
             bench_runs_for_model,
             bench_history
         ])

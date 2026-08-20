@@ -14,7 +14,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Aayan Mapara"]
-repository = "https://github.com/aayanmapara/anchor"
+repository = "https://github.com/amapara27/anchor"
 
 [workspace.dependencies]
 anchor-core = { path = "crates/anchor-core" }

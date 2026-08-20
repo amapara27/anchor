@@ -12,6 +12,7 @@
     "dev": "pnpm --filter @anchor/desktop tauri dev",
     "dev:web": "pnpm --filter @anchor/desktop dev",
     "build": "pnpm --filter @anchor/desktop tauri build",
+    "release:mac": "bash scripts/release-macos.sh",
     "tauri": "pnpm --filter @anchor/desktop tauri"
   }
 }

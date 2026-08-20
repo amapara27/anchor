@@ -10,6 +10,7 @@ import { StoragePage } from "./components/StoragePage";
 import { BenchmarksPage } from "./components/BenchmarksPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { CommandPalette } from "./components/CommandPalette";
+import { UpdateBanner } from "./components/UpdateBanner";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("chat");
@@ -43,6 +44,7 @@ export default function App() {
       <ChatProvider>
         <div className="flex h-dvh flex-col">
           <TitleBar onOpenPalette={() => setPaletteOpen(true)} />
+          <UpdateBanner />
           <div className="flex min-h-0 flex-1">
             <Sidebar active={tab} onSelect={setTab} />
             {/* Chat and Models own their full height (internal scroll + side
