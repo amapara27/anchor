@@ -3,6 +3,9 @@ import type { ChatMessage as ChatMessageT, GenerationStats } from "../types";
 import { formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
 import { Markdown } from "./ui/Markdown";
 import { ChevronRightIcon, CopyIcon, RefreshIcon } from "./icons";
+import { useTheme } from "../lib/useTheme";
+import iconDark from "../assets/icon-dark.png";
+import iconLight from "../assets/icon-light.png";
 
 /** Parse the persisted stats JSON once; every footer figure derives from it. */
 function parseStats(stats_json: string | null): GenerationStats | null {
@@ -16,23 +19,13 @@ function parseStats(stats_json: string | null): GenerationStats | null {
 
 /** The anchor mark that fronts every assistant turn. */
 function AssistantAvatar() {
+  const { theme } = useTheme();
   return (
-    <span className="mt-0.5 flex size-[26px] shrink-0 items-center justify-center rounded-[7px] border border-hair bg-accent-soft">
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={2}
-        strokeLinecap="round"
-        className="size-3.5 text-accent-text"
-        aria-hidden
-      >
-        <circle cx="12" cy="3.6" r="2" />
-        <path d="M12 5.6v15.2" />
-        <path d="M8.2 8.6h7.6" />
-        <path d="M3.5 12.9a8.5 8.5 0 0 0 8.5 7.9 8.5 8.5 0 0 0 8.5-7.9" />
-      </svg>
-    </span>
+    <img
+      src={theme === "dark" ? iconDark : iconLight}
+      alt=""
+      className="mt-0.5 size-[26px] shrink-0 rounded-[7px] border border-hair"
+    />
   );
 }
 

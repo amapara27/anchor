@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Signed + notarized release build. Everything secret comes from the login
-# keychain, so nothing sensitive lives in the repo or your shell history.
+# Signed + notarized release build. No secret is ever passed as a command-line
+# argument: the cert lives in the keychain, and notarization uses an App Store
+# Connect API key that Tauri hands to notarytool as a file path.
 set -euo pipefail
-
-: "${APPLE_ID:?set APPLE_ID to the Apple ID that owns the developer membership}"
 
 # Picks the Developer ID cert out of the keychain so the identity is never
 # hardcoded — fails loudly if step 1 (cert install) was skipped.
@@ -12,9 +11,23 @@ APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning \
 [ -n "$APPLE_SIGNING_IDENTITY" ] || {
   echo "no Developer ID Application certificate in the keychain" >&2; exit 1; }
 
-# The team ID is the parenthesised suffix of the identity name.
-APPLE_TEAM_ID=$(printf '%s' "$APPLE_SIGNING_IDENTITY" | sed -n 's/.*(\(.*\))$/\1/p')
-APPLE_PASSWORD=$(security find-generic-password -s anchor -w)
+# Notarization auth. Deliberately API-key-only: Tauri hands notarytool a file
+# path, whereas an app-specific password would go in argv where any process on
+# the machine can read it. Do not add a password fallback.
+NOTARY_VARS=""
+APPLE_API_KEY_PATH=$(ls "$HOME"/private_keys/AuthKey_*.p8 2>/dev/null | head -1) || true
+if [ -n "$APPLE_API_KEY_PATH" ] && [ -f "$HOME/private_keys/issuer_id" ]; then
+  # Key ID is the filename suffix Apple assigns; the issuer is account-level,
+  # so both live beside the key rather than in this file.
+  APPLE_API_KEY=$(basename "$APPLE_API_KEY_PATH" .p8 | sed 's/^AuthKey_//')
+  APPLE_API_ISSUER=$(cat "$HOME/private_keys/issuer_id")
+  NOTARY_VARS="APPLE_API_KEY APPLE_API_ISSUER APPLE_API_KEY_PATH"
+  echo "notarizing with API key $APPLE_API_KEY"
+else
+  echo "no notarization credentials: need ~/private_keys/AuthKey_*.p8" >&2
+  echo "and ~/private_keys/issuer_id (App Store Connect API key)" >&2
+  exit 1
+fi
 
 # Separate from the Apple cert: this key signs the update manifest so shipped
 # copies will accept the download. Losing it means no client can ever update.
@@ -23,7 +36,8 @@ KEY_PATH="${TAURI_KEY_PATH:-$HOME/.tauri/anchor.key}"
 TAURI_SIGNING_PRIVATE_KEY=$(cat "$KEY_PATH")
 TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$(security find-generic-password -s anchor-updater-key -w)
 
-export APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_PASSWORD APPLE_ID
+# shellcheck disable=SC2086  # NOTARY_VARS is a deliberate word-split list
+export APPLE_SIGNING_IDENTITY $NOTARY_VARS
 export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 echo "signing as $APPLE_SIGNING_IDENTITY"
 
@@ -33,3 +47,15 @@ APP="target/release/bundle/macos/Anchor.app"
 codesign --verify --deep --strict --verbose=2 "$APP"
 # The real test: what Gatekeeper says on a machine that has never seen this app.
 spctl --assess --type execute -vvv "$APP"
+xcrun stapler validate "$APP"
+
+# Tauri notarizes the .app but NOT the .dmg it then wraps around it, and the dmg
+# is what users actually download — so it carries the quarantine flag and gets
+# assessed on mount. Submit and staple it too, or every user sees "Apple could
+# not verify this app" even though the app inside is notarized.
+DMG=$(ls target/release/bundle/dmg/*.dmg | head -1)
+xcrun notarytool submit "$DMG" --key "$APPLE_API_KEY_PATH" \
+  --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+xcrun stapler staple "$DMG"
+# Stapling lets Gatekeeper clear it offline; --context matches how a mount is judged.
+spctl --assess --type open --context context:primary-signature -vv "$DMG"

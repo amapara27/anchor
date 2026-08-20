@@ -1,0 +1,14 @@
+{
+  "fill" : { "automatic-gradient" : "extended-srgb:0.976,0.965,0.929,1.000" },
+  "fill-specializations" : [
+    { "appearance" : "dark", "value" : { "automatic-gradient" : "extended-srgb:0.043,0.043,0.047,1.000" } }
+  ],
+  "groups" : [
+    {
+      "layers" : [ { "image-name" : "glyph.png", "name" : "anchor" } ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    }
+  ],
+  "supported-platforms" : { "circles" : [ "watchOS" ], "squares" : "shared" }
+}

@@ -21,8 +21,6 @@ use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
 
-#[cfg(target_os = "macos")]
-mod dock_icon;
 mod tray;
 
 /// Owns Anchor's relationship to the Ollama server.
@@ -963,8 +961,6 @@ pub fn run() {
             }
             build_semantic_index(app.handle().clone());
             tray::init(app.handle())?;
-            #[cfg(target_os = "macos")]
-            dock_icon::init(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

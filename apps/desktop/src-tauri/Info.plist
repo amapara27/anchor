@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Points at the Anchor entry in Assets.car so macOS 26 renders the Default/
+       Dark/Clear/Tinted appearances itself. CFBundleIconFile is the pre-26
+       fallback; both are produced by scripts/gen-icon.sh. -->
+  <key>CFBundleIconName</key>
+  <string>Anchor</string>
+  <key>CFBundleIconFile</key>
+  <string>Anchor</string>
+</dict>
+</plist>

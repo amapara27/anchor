@@ -5,6 +5,9 @@ import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { formatBytes } from "../lib/format";
 import { Meter } from "./ui/SegmentedBar";
 import { BarChartIcon, ChatIcon, CubeIcon, DatabaseIcon, SettingsIcon } from "./icons";
+import { useTheme } from "../lib/useTheme";
+import iconDark from "../assets/icon-dark.png";
+import iconLight from "../assets/icon-light.png";
 
 interface SidebarProps {
   active: Tab;
@@ -36,6 +39,7 @@ const VERSION = "v0.1.0";
 export function Sidebar({ active, onSelect }: SidebarProps) {
   const { models } = useModels();
   const { profile } = useHardwareProfile();
+  const { theme } = useTheme();
 
   // Real headroom: installed model weights against this Mac's unified memory.
   const weightsBytes = useMemo(
@@ -48,9 +52,11 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
   return (
     <aside className="flex h-full w-[216px] shrink-0 flex-col gap-0.5 border-r border-hair bg-chrome px-2.5 py-3.5">
       <div className="flex items-center gap-2.5 px-1.5 pb-3.5 pt-0.5">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-lg border border-hair bg-accent-soft">
-          <AnchorMark className="size-4 text-accent-text" />
-        </span>
+        <img
+          src={theme === "dark" ? iconDark : iconLight}
+          alt=""
+          className="size-7 shrink-0 rounded-lg border border-hair"
+        />
         <span className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-[15px] font-semibold tracking-tight text-fg">Anchor</span>
           <span className="data text-[10px] text-fg-subtle">{VERSION}</span>
@@ -106,26 +112,5 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
         </div>
       </div>
     </aside>
-  );
-}
-
-function AnchorMark({ className }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
-      <circle cx="12" cy="3.6" r="2" />
-      <path d="M12 5.6v15.2" />
-      <path d="M8.2 8.6h7.6" />
-      <path d="M3.5 12.9a8.5 8.5 0 0 0 8.5 7.9 8.5 8.5 0 0 0 8.5-7.9" />
-      <path d="M3.5 12.9 1.7 11.2M3.5 12.9l2.3-.6M20.5 12.9l1.8-1.7M20.5 12.9l-2.3-.6" />
-    </svg>
   );
 }
