@@ -6,11 +6,10 @@ set -euo pipefail
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 TAG="cli-v$VERSION"
 ARCH=$(uname -m)
-ASSET="anchor-cli-$VERSION-macos-$ARCH.tar.gz"
+ASSET="target/release/anchor-cli-$VERSION-macos-$ARCH.tar.gz"
 
 cargo build --release -p anchor-cli
 
-BIN="target/release/anchor"
 tar -czf "$ASSET" -C target/release anchor
 
 echo "publishing $TAG ($ASSET)"

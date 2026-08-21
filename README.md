@@ -109,6 +109,23 @@ anchor/
 
 All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads — there is no web-search or telemetry path anywhere in the app, so everything else runs fully offline.
 
+## Install
+
+**Desktop app** — download the latest `.dmg` from
+[Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to
+Applications. Signed and notarized, so it opens without a Gatekeeper prompt, and it
+updates itself from then on.
+
+**CLI** — the `anchor` binary is published separately under the `cli-v*` tags:
+
+```bash
+curl -fsSL https://github.com/amapara27/anchor/releases/download/cli-v0.1.0/anchor-cli-0.1.0-macos-arm64.tar.gz | tar -xz
+sudo mv anchor /usr/local/bin/
+```
+
+Use `curl`, not the browser — the CLI binary is not notarized, so a browser download
+gets quarantined and macOS will refuse to run it.
+
 ## Getting started
 
 ### Prerequisites
