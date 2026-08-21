@@ -5,7 +5,16 @@
   </picture>
 </p>
 
-<p align="center"><strong>Find, fit, and benchmark local models with ease.</strong></p>
+<h3 align="center">Find, fit, and benchmark local models with ease</h3>
+
+<p align="center">
+  <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-e0b341?style=flat-square&labelColor=4a4a4a">
+  <img alt="macOS Apple Silicon" src="https://img.shields.io/badge/macOS-Apple%20Silicon-6f7f8f?style=flat-square&labelColor=4a4a4a">
+  <img alt="Rust 2021" src="https://img.shields.io/badge/rust-2021-c8703c?style=flat-square&labelColor=4a4a4a">
+  <img alt="Tauri 2" src="https://img.shields.io/badge/tauri-2-3aa9a4?style=flat-square&labelColor=4a4a4a">
+  <img alt="React 19" src="https://img.shields.io/badge/react-19-5fb8d8?style=flat-square&labelColor=4a4a4a">
+  <img alt="Ollama backend" src="https://img.shields.io/badge/ollama-backend-8b7fd4?style=flat-square&labelColor=4a4a4a">
+</p>
 
 > **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
 
