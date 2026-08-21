@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>Local AI, under control.</strong></p>
+<p align="center"><strong>Find, fit, and benchmark local models with ease.</strong></p>
 
 > **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
 
