@@ -59,3 +59,23 @@ xcrun notarytool submit "$DMG" --key "$APPLE_API_KEY_PATH" \
 xcrun stapler staple "$DMG"
 # Stapling lets Gatekeeper clear it offline; --context matches how a mount is judged.
 spctl --assess --type open --context context:primary-signature -vv "$DMG"
+
+# writes current version for updater plugin to compare to
+VERSION=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+OUT="target/release/bundle/latest.json"
+node -e '
+const fs = require("fs");
+const [version, sig] = [process.argv[1], fs.readFileSync(process.argv[2], "utf8").trim()];
+fs.writeFileSync(process.argv[3], JSON.stringify({
+  version,
+  pub_date: new Date().toISOString(),
+  platforms: {
+    // Apple Silicon only: the build is aarch64 and Anchor targets M-series.
+    "darwin-aarch64": {
+      signature: sig,
+      url: `https://github.com/amapara27/anchor/releases/download/v${version}/Anchor.app.tar.gz`,
+    },
+  },
+}, null, 2) + "\n");
+' "$VERSION" "$APP.tar.gz.sig" "$OUT"
+echo "wrote $OUT for v$VERSION"
