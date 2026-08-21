@@ -22,7 +22,6 @@ const SECTIONS: { key: Section; label: string }[] = [
   { key: "privacy", label: "Privacy & sharing" },
 ];
 
-const VERSION = "v0.1.0";
 
 const SHORTCUTS = [
   { label: "Command palette", keys: "⌘K" },
@@ -83,7 +82,6 @@ export function SettingsPage() {
           })}
           <div className="card mt-3 flex flex-col gap-1.5 p-3">
             <span className="label-caps text-[9.5px]">Anchor</span>
-            <span className="data text-xs text-fg">{VERSION}</span>
             <span className="text-[11px] leading-[1.45] text-fg-subtle">Pre-release build</span>
           </div>
         </nav>

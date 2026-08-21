@@ -33,7 +33,6 @@ const NAV_GROUPS: { heading: string; items: NavItem[] }[] = [
   },
 ];
 
-const VERSION = "v0.1.0";
 
 /** Persistent left navigation rail. */
 export function Sidebar({ active, onSelect }: SidebarProps) {
@@ -57,10 +56,7 @@ export function Sidebar({ active, onSelect }: SidebarProps) {
           alt=""
           className="size-7 shrink-0 rounded-lg border border-hair"
         />
-        <span className="flex min-w-0 flex-col leading-tight">
-          <span className="truncate text-[15px] font-semibold tracking-tight text-fg">Anchor</span>
-          <span className="data text-[10px] text-fg-subtle">{VERSION}</span>
-        </span>
+        <span className="truncate text-[15px] font-semibold tracking-tight text-fg">Anchor</span>
       </div>
 
       <nav className="flex flex-col gap-0.5">

@@ -1,18 +1,50 @@
-# Anchor
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/anchor_dark_word.png">
+    <img src="docs/anchor_light_word.png" alt="Anchor" width="260">
+  </picture>
+</p>
 
-**Local AI, under control.**
+<p align="center"><strong>Local AI, under control.</strong></p>
 
-> **Status: early-stage / pre-release.** Anchor is under active development. Interfaces, features, and internals change often, and there are no packaged builds yet — running it means building from source.
+> **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
 
 ## About
 
-Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will actually fit your machine before you pull it, chatting with what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
+Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, chatting with what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
 
 It is **not** an inference engine. Ollama does the inference; Anchor is the management layer around it. That boundary is deliberate and it shapes most of the design decisions in the codebase — if a feature would require Anchor to run weights itself, it is out of scope.
 
 Anchor also owns the Ollama server lifecycle: it starts `ollama serve` on launch and shuts it down on quit, so you never need the menubar app or a terminal.
 
 Built for developers, students, researchers, and small business operators who want capable AI running locally without touching a command line. Apple Silicon is the primary target.
+
+## Install
+
+**Requirement:** [Ollama](https://ollama.com/download) must be installed. Anchor starts and stops the server for you, but it does not bundle the inference engine.
+
+### Desktop app
+
+Download the latest `.dmg` from [Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to Applications. It is signed and notarized, so it opens without a Gatekeeper prompt, and it updates itself from then on.
+
+Then pull at least one model so there is something to talk to:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+That is the whole setup — no API keys, and every feature works offline.
+
+### CLI
+
+The `anchor` binary is published separately, under `cli-v*` tags:
+
+```bash
+curl -fsSL https://github.com/amapara27/anchor/releases/download/cli-v0.1.0/anchor-cli-0.1.0-macos-arm64.tar.gz | tar -xz
+sudo mv anchor /usr/local/bin/
+```
+
+Use `curl` rather than a browser — the CLI is a bare binary with no notarization ticket, so a browser download gets quarantined and macOS refuses to run it.
 
 ## Features
 
@@ -43,6 +75,10 @@ One suite, run in full every time: nine scenarios, each a fixed (prompt tokens, 
 
 ![Benchmarks](docs/screenshots/benchmarks.png)
 
+### Storage
+
+A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
+
 ### Configuration
 
 - **Inference presets** — system prompt, temperature, top-p, and context length per conversation, autosaved as you type.
@@ -50,17 +86,11 @@ One suite, run in full every time: nine scenarios, each a fixed (prompt tokens, 
 - **Appearance** — dark (graphite/violet) or light (cream/gold) theme, or follow the system.
 - **Privacy** — a standing reminder that inference, chats, and history never leave the machine.
 
-### Storage
+## Using the CLI
 
-A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
-
-### CLI
-
-`anchor` is the terminal front-end over the same crates — and the same database, so a conversation started in the terminal appears in the app's sidebar and a benchmark run there lands in its history.
+`anchor` is the terminal front-end over the same crates — and the same database, so a conversation started in the terminal appears in the app's sidebar, and a benchmark run there lands in its history.
 
 ```bash
-cargo install --path crates/anchor-cli     # or: cargo run -p anchor-cli -- <args>
-
 anchor models ls                            # installed models
 anchor models discover "summarize papers"   # semantic search over the catalog
 anchor models browse --filter qwen          # everything on ollama.com
@@ -79,6 +109,30 @@ Every command takes `--json` for scripting, and `--host` to point at a non-defau
 Anything that deletes — `models rm`, `chat rm`, `storage clean` — asks first, and takes `--yes` to skip the prompt. The prompt reads from stdin, so a piped or redirected invocation without `--yes` declines rather than proceeding; scripts need the flag. Ctrl-C during `bench run` is a stop rather than a kill: the suite ends after the scenario in flight, keeps what it measured, and unloads the model — press it twice to quit immediately.
 
 One caveat: the app serialises memory-heavy work internally, but a separate CLI process can't see that lock. Don't benchmark from the terminal while the app is generating — the run would measure the contention rather than the model.
+
+## Build from source
+
+### Prerequisites
+
+- macOS (Apple Silicon recommended)
+- [Ollama](https://ollama.com/download) installed
+- Rust (stable) — [rustup](https://rustup.rs)
+- Node 20+ and pnpm 10+
+- Xcode Command Line Tools (`xcode-select --install`)
+
+### Run it
+
+```bash
+git clone https://github.com/amapara27/anchor.git
+cd anchor
+pnpm install
+pnpm dev                                   # app in dev mode
+cargo install --path crates/anchor-cli     # the CLI, from source
+```
+
+The first Rust build is slow — `fastembed` pulls in ONNX Runtime. Subsequent builds are incremental. On first launch Anchor profiles your hardware and downloads the BGE-small embedding model for semantic search.
+
+`pnpm build` produces an unsigned local bundle. Signed, notarized releases are cut with `pnpm release:mac`, which needs a Developer ID certificate and an App Store Connect API key.
 
 ## Architecture
 
@@ -107,59 +161,7 @@ anchor/
 | Embeddings | `fastembed` (BGE-small, 384-dim), cosine in Rust |
 | Hardware | `system_profiler` subprocess |
 
-All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads — there is no web-search or telemetry path anywhere in the app, so everything else runs fully offline.
-
-## Install
-
-**Desktop app** — download the latest `.dmg` from
-[Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to
-Applications. Signed and notarized, so it opens without a Gatekeeper prompt, and it
-updates itself from then on.
-
-**CLI** — the `anchor` binary is published separately under the `cli-v*` tags:
-
-```bash
-curl -fsSL https://github.com/amapara27/anchor/releases/download/cli-v0.1.0/anchor-cli-0.1.0-macos-arm64.tar.gz | tar -xz
-sudo mv anchor /usr/local/bin/
-```
-
-Use `curl`, not the browser — the CLI binary is not notarized, so a browser download
-gets quarantined and macOS will refuse to run it.
-
-## Getting started
-
-### Prerequisites
-
-- macOS (Apple Silicon recommended)
-- [Ollama](https://ollama.com/download) installed — Anchor starts and stops the server for you
-- Rust (stable) — [rustup](https://rustup.rs)
-- Node 20+ and pnpm 10+
-- Xcode Command Line Tools (`xcode-select --install`)
-
-### Run it
-
-```bash
-git clone https://github.com/amapara27/anchor.git
-cd anchor
-pnpm install
-pnpm dev
-```
-
-The first Rust build is slow — `fastembed` pulls in ONNX Runtime. Subsequent builds are incremental. On first launch Anchor profiles your hardware and downloads the BGE-small embedding model for semantic search.
-
-Pull at least one model so there is something to talk to:
-
-```bash
-ollama pull llama3.1:8b
-```
-
-That is all the setup there is — no API keys, and every feature works offline.
-
-### Build a release binary
-
-```bash
-pnpm build
-```
+All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads and the update check — there is no web-search or telemetry path anywhere in the app, so everything else runs fully offline.
 
 ## Development
 
@@ -185,17 +187,19 @@ Conventions worth knowing before contributing:
 
 - **macOS**, Apple Silicon as the primary target. Intel Macs build and run but are untested.
 - **[Ollama](https://ollama.com)** as the only backing inference engine — Anchor manages it, doesn't replace it.
+- **Desktop app and CLI**, sharing one database, released separately: `v*` tags for the app, `cli-v*` for the CLI.
 
 ## In the pipeline
 
 Roadmap items, not promises with dates:
 
-- **Windows and Linux** support.
-- **Additional inference engines** beyond Ollama, starting with direct llama.cpp integration.
+- **A guided first run** — hardware profile, Ollama check, and a first model chosen to fit the machine, instead of dropping you into an empty app.
 - **A community benchmark leaderboard.** The schema is already there (`source`/`synced_at` columns on every bench run) and every run stores a full result today — there's just no results server yet, so all comparisons are local-only for now.
 - **Publishing controls** for what a shared benchmark run includes, once there's somewhere to publish it to.
+- **Importing models from Hugging Face** — pull a GGUF straight from a repo instead of waiting for it to land in Ollama's library.
+- **Windows and Linux** support.
+- **Additional inference engines** beyond Ollama, starting with direct llama.cpp integration.
 - **Compact density and a live tokens/sec readout** in chat.
-
 
 ## License
 
