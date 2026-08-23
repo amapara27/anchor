@@ -61,7 +61,10 @@ Use `curl` rather than a browser — the CLI is a bare binary with no notarizati
 
 Streaming conversations against any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. Conversations, titles, and full message history persist in SQLite across launches, and each conversation can carry its own inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
 
-![Chat](docs/screenshots/chat.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/chat_light.png">
+  <img src="docs/screenshots/chat.png" alt="Chat">
+</picture>
 
 ### Exploring models
 
@@ -70,11 +73,25 @@ Streaming conversations against any installed model, with reasoning/thinking out
 - **Browse the full library** — every model and tag on ollama.com, not just the curated catalog, for when you know what you want by name.
 - **Side-by-side comparison** — run the same prompt through two models at once and compare output, speed, and memory.
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/models_light.png">
+  <img src="docs/screenshots/models_dark.png" alt="Model hub">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/compare_light.png">
+  <img src="docs/screenshots/compare_dark.png" alt="Model comparison">
+</picture>
+
 ### Fit
 
 The question every other feature answers from a different angle: will this model actually run here? First-launch hardware profiling of CPU, RAM, and GPU — Apple Silicon is special-cased via `system_profiler` for accurate unified-memory readings — feeds a memory-fit engine that sizes weights, KV cache, and compute buffer per (model, quantization, context length) and renders one verdict everywhere a model shows up: the catalog, search results, the compare picker, and the chat model picker can never disagree, because they all call the same estimator. Every installed and not-yet-installed model gets a full breakdown — weights / KV cache / compute buffer / OS reserve — before you spend disk space or memory finding out the hard way.
 
-![Fit](docs/screenshots/fit.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/fit_light.png">
+  <img src="docs/screenshots/fit.png" alt="Fit">
+</picture>
+
+[Screen recording (dark)](docs/recordings/fit_dark.mp4) · [Screen recording (light)](docs/recordings/fit_light.mp4)
 
 ### Benchmarks
 
@@ -82,11 +99,21 @@ Measure real tokens/sec and memory use for an installed model on your own hardwa
 
 One suite, run in full every time: nine scenarios, each a fixed (prompt tokens, generation tokens) shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), so a throttled run is flagged rather than silently reported as a model's true speed.
 
-![Benchmarks](docs/screenshots/benchmarks.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
+  <img src="docs/screenshots/benchmarks.png" alt="Benchmarks">
+</picture>
+
+[Screen recording (dark)](docs/recordings/benchmarks_dark.mp4) · [Screen recording (light)](docs/recordings/benchmarks_light.mp4)
 
 ### Storage
 
 A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/storage_light.png">
+  <img src="docs/screenshots/storage_dark.png" alt="Storage">
+</picture>
 
 ### Configuration
 
@@ -94,6 +121,11 @@ A real scan of Ollama's on-disk store: total blob and manifest size, how much co
 - **Hardware panel** — the profiled chip, memory, and core counts Anchor is basing every fit verdict on, with a manual re-profile.
 - **Appearance** — dark (graphite/violet) or light (cream/gold) theme, or follow the system.
 - **Privacy** — a standing reminder that inference, chats, and history never leave the machine.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/settings_light.png">
+  <img src="docs/screenshots/settings_dark.png" alt="Appearance settings">
+</picture>
 
 ## Using the CLI
 
