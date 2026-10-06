@@ -6,7 +6,6 @@ import { formatBytes, formatTokSec, tokensPerSecond } from "../lib/format";
 import { saveMeasuredRun } from "../lib/measured";
 import { recordUse } from "../lib/lastUsed";
 import { exportComparison } from "../lib/exportImage";
-import { PageHeader } from "./PageHeader";
 import { ModelPicker } from "./ModelPicker";
 import { ComparisonPane } from "./ComparisonPane";
 import { Button } from "./ui/Button";
@@ -74,13 +73,8 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Model Comparison"
-        subtitle="Run one prompt through two local models, side by side."
-      />
-
       {/* Setup */}
-      <div className="card p-5">
+      <div className="comparison-setup">
         <div className="flex flex-col items-stretch gap-3 lg:flex-row lg:items-end">
           <ModelPicker
             label="Model A"
@@ -90,9 +84,9 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
             disabledId={modelB}
             disabled={running || loading}
           />
-          <div className="flex shrink-0 items-center justify-center pb-7 lg:pb-9">
-            <span className="data flex size-8 items-center justify-center rounded-full bg-inset text-xs font-semibold text-fg-muted ring-1 ring-hair">
-              VS
+          <div className="hidden shrink-0 items-center justify-center pb-9 lg:flex">
+            <span className="text-xs text-fg-subtle">
+              and
             </span>
           </div>
           <ModelPicker
@@ -201,7 +195,7 @@ function ThroughputBar({
 }) {
   const max = Math.max(aTok, bTok) || 1;
   return (
-    <div className="card p-5">
+    <div className="comparison-setup">
       <div className="label-caps">
         Throughput comparison
       </div>
@@ -234,7 +228,7 @@ function ThroughputBar({
 function Spinner() {
   return (
     <span
-      className="size-4 animate-spin rounded-full border-2 border-hair2 border-t-white"
+      className="size-4 animate-spin rounded-full border-2 border-hair2 border-t-current"
       aria-hidden
     />
   );

@@ -1,5 +1,5 @@
-/* Instrument Sans (prose/UI) + JetBrains Mono (data/numerals) — the design-system
-   typefaces, bundled locally. Must precede the Tailwind import so they stay ahead
+/* Native system sans for UI; bundled JetBrains Mono for data. Instrument Sans
+   remains available for existing image exports. Must precede the Tailwind import so they stay ahead
    of all emitted rules. */
 @import "./fonts.css";
 @import "tailwindcss";
@@ -65,7 +65,7 @@
 }
 
 @theme inline {
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
 
   /* Surfaces — flat and opaque; each step is a small lightness move. */
@@ -83,7 +83,8 @@
   /* Foreground ramp. */
   --color-fg: var(--fg);
   --color-fg-muted: var(--muted);
-  --color-fg-subtle: var(--subtle);
+  /* Small secondary text must remain readable in both restored palettes. */
+  --color-fg-subtle: var(--muted);
 
   /* Accent — one hue per theme. Solid fills only, no gradient. */
   --color-accent: var(--accent);
@@ -98,9 +99,11 @@
   --color-danger: var(--danger);
 
   /* Radii — the design's scale. Radius belongs on interactive elements. */
-  --radius-control: 8px;
-  --radius-card: 10px;
-  --radius-panel: 12px;
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-panel: 8px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
 
   /* Elevation — borders do the work; one soft shadow reserved for overlays. */
   --shadow-overlay: 0 16px 48px -24px rgb(0 0 0 / 0.7);
@@ -166,7 +169,16 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    font-size: 13px;
+    caret-color: var(--fg);
+    accent-color: var(--accent);
   }
+
+  :root { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+  ::selection { background: var(--accent); color: var(--on-accent); }
+  :focus-visible { outline: 2px solid var(--accent-line); outline-offset: 3px; }
+  button:not(:disabled), summary { cursor: pointer; }
 
   /* Form controls inherit the app face rather than the platform's. */
   button,
@@ -191,12 +203,11 @@
 @layer utilities {
   /* Caps label — mono eyebrow for section headers and card kickers. */
   .label-caps {
-    font-family: var(--font-mono);
-    font-size: 10px;
+    font-family: var(--font-sans);
+    font-size: 12px;
     font-weight: 500;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    color: var(--subtle);
+    letter-spacing: 0;
+    color: var(--muted);
   }
   /* Metric text — mono figures for stats, sizes, and throughput. */
   .mono-metric {
@@ -262,6 +273,80 @@
       background-position: -200% 0;
     }
   }
+}
+
+/* The frame stays put while each tool scrolls independently. */
+.tool-sidebar {
+  width: 184px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 24px 10px 14px;
+  border-right: 1px solid var(--hair);
+  background: var(--chrome);
+}
+.tool-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  text-align: left;
+}
+.tool-nav-item:hover { background: var(--inset); color: var(--fg); }
+.tool-nav-item[aria-current="page"] { background: var(--raised); color: var(--fg); }
+.tool-nav-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tool-sidebar-label { padding: 0 10px 10px; color: var(--muted); font-size: 11px; }
+.tool-sidebar-footer { margin-top: auto; padding: 16px 10px 0; border-top: 1px solid var(--hair); color: var(--muted); font-size: 11px; }
+.tool-sidebar[data-collapsed="true"] { width: 56px; padding-inline: 8px; }
+.tool-sidebar[data-collapsed="true"] .tool-nav-label,
+.tool-sidebar[data-collapsed="true"] .tool-sidebar-label,
+.tool-sidebar[data-collapsed="true"] .tool-sidebar-footer { display: none; }
+.tool-sidebar[data-collapsed="true"] .tool-nav-item { padding: 0; justify-content: center; }
+.tool-page { width: 100%; max-width: 1440px; margin-inline: auto; padding: 28px 32px; display: flex; flex-direction: column; gap: 24px; }
+.page-header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding-bottom: 24px; border-bottom: 1px solid var(--hair); }
+.page-title { font-size: 24px; line-height: 1.3; font-weight: 600; letter-spacing: -0.025em; }
+.tool-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--hair); }
+.tool-tab { display: flex; align-items: center; gap: 8px; padding: 10px 0; margin-bottom: -1px; border-bottom: 1px solid transparent; color: var(--muted); white-space: nowrap; }
+.tool-tab:hover { color: var(--fg); }
+.tool-tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
+.model-columns { display: grid; grid-template-columns: minmax(160px, 1fr) 80px 80px 100px 130px 16px; align-items: center; gap: 16px; }
+.model-table { border: 1px solid var(--hair); border-radius: var(--radius-card); overflow-x: auto; }
+.model-row { width: 100%; padding: 16px; text-align: left; border-top: 1px solid var(--hair); }
+.model-row:hover, .model-row[aria-pressed="true"] { background: var(--inset); }
+.model-table-header { padding: 10px 16px; color: var(--muted); background: var(--surface); font-size: 11px; }
+.model-inspector { border-block: 1px solid var(--hair); background: var(--canvas); padding-top: 8px; }
+.model-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.model-inspector h2 { overflow-wrap: anywhere; }
+.model-inspector .text-fg-muted { line-height: 1.5; }
+.settings-layout { display: grid; grid-template-columns: 152px minmax(0, 1fr); gap: 28px; }
+.settings-content > .card { border: 0; border-radius: 0; border-bottom: 1px solid var(--hair); background: transparent; padding: 0 0 24px; }
+.comparison-setup { border-bottom: 1px solid var(--hair); padding-bottom: 24px; }
+.search-result { border-bottom: 1px solid var(--hair); padding-block: 20px; }
+.search-result:first-child { border-top: 1px solid var(--hair); }
+.chat-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 20px 28px; border-bottom: 1px solid var(--hair); }
+
+@media (max-width: 1100px) {
+  .tool-page { padding: 24px; }
+  .model-columns { grid-template-columns: minmax(140px, 1fr) 66px 66px 90px 110px 12px; gap: 12px; }
+}
+@media (min-width: 1200px) {
+  .model-workspace.has-inspector { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; }
+  .has-inspector .model-inspector { border-block: 0; border-left: 1px solid var(--hair); }
+  .has-inspector .model-columns { grid-template-columns: minmax(120px, 1fr) 60px 60px 70px 100px 12px; gap: 12px; }
+}
+@media (max-width: 980px) {
+  .tool-sidebar { width: 156px; }
+}
+@media (max-width: 700px) {
+  .tool-page { padding: 20px 16px; }
+  .titlebar-residency, .titlebar-server-version, .titlebar-workspace { display: none; }
+  .model-table { overflow-x: auto; }
+  .model-columns { min-width: 560px; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Honour reduced-motion: drop transitions/animations for users who ask. */

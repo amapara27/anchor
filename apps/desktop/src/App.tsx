@@ -11,6 +11,9 @@ import { BenchmarksPage } from "./components/BenchmarksPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { CommandPalette } from "./components/CommandPalette";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { ChatIcon, CompareIcon, LayersIcon, SettingsIcon, StorageIcon, ZapIcon } from "./components/icons";
+import { useHardwareProfile } from "./lib/useHardwareProfile";
+import { formatBytes } from "./lib/format";
 
 export default function App() {
   return <ModelsProvider><ChatProvider><Workspace /></ChatProvider></ModelsProvider>;
@@ -18,6 +21,8 @@ export default function App() {
 
 function Workspace() {
   const [tab, setTab] = useState<Tab>("models");
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 980);
+  const { profile } = useHardwareProfile();
   const [visited, setVisited] = useState<Set<Tab>>(new Set(["models"]));
   const [modelsTab, setModelsTab] = useState<ModelsTab>("installed");
   const [comparisonBusy, setComparisonBusy] = useState(false);
@@ -53,30 +58,38 @@ function Workspace() {
     navigate("chat");
   };
   return <div className="flex h-dvh flex-col">
-    <TitleBar onOpenPalette={() => setPaletteOpen(true)} />
+    <TitleBar onOpenPalette={() => setPaletteOpen(true)} collapsed={collapsed} onToggleSidebar={() => setCollapsed(v => !v)} />
     <UpdateBanner />
-    <nav aria-label="Tools" className="flex shrink-0 flex-wrap items-center gap-1 border-b border-hair bg-chrome px-5 py-2">
-      {([["models", "Models"], ["benchmarks", "Benchmarks"]] as [Tab, string][]).map(([id, label]) =>
-        <button key={id} onClick={() => navigate(id)} aria-current={tab === id ? "page" : undefined}
-          className={"rounded-lg px-3 py-1.5 text-sm transition-colors focus-visible:outline-2 focus-visible:outline-accent " + (tab === id ? "bg-accent-soft text-accent-text" : "text-fg-muted hover:bg-inset")}>
-          {label}
-        </button>)}
-      <details className="relative ml-auto"><summary className="cursor-pointer rounded-lg px-3 py-1.5 text-sm text-fg-muted">More tools</summary>
-        <div className="absolute right-0 top-full z-40 mt-2 flex w-48 flex-col rounded-xl border border-hair bg-surface p-2 shadow-overlay">
-          {([["chat", "Try & history"], ["storage", "Manage storage"], ["settings", "Settings"]] as [Tab,string][]).map(([id,label])=><button key={id} className="rounded-lg px-3 py-2 text-left text-sm hover:bg-inset" onClick={e=>{navigate(id); e.currentTarget.closest("details")?.removeAttribute("open");}}>{label}</button>)}
-        </div>
-      </details>
+    <div className="flex min-h-0 flex-1">
+    <nav aria-label="Tools" className="tool-sidebar" data-collapsed={collapsed}>
+      <span className="tool-sidebar-label">Workspace</span>
+      {([
+        {id: "models", sub: "installed", label: "Models", icon: LayersIcon},
+        {id: "chat", label: "Try & history", icon: ChatIcon},
+        {id: "models", sub: "compare", label: "Compare", icon: CompareIcon},
+        {id: "benchmarks", label: "Benchmarks", icon: ZapIcon},
+        {id: "storage", label: "Manage storage", icon: StorageIcon},
+        {id: "settings", label: "Settings", icon: SettingsIcon},
+      ] as const).map(item => {
+        const sub = "sub" in item ? item.sub : undefined;
+        const active = tab === item.id && (item.id !== "models" || (modelsTab === "compare") === (sub === "compare"));
+        return <button key={item.label} aria-label={item.label} title={item.label} onClick={() => navigate(item.id, sub)} aria-current={active ? "page" : undefined} className="tool-nav-item">
+          <item.icon className="size-[18px] shrink-0" /><span className="tool-nav-label">{item.label}</span>
+        </button>;
+      })}
+      <div className="tool-sidebar-footer"><p className="mb-1 text-fg-muted">{profile?.chip ?? "This Mac"}</p><p>{profile?.memory_bytes ? formatBytes(profile.memory_bytes) + " memory" : "Hardware unavailable"}</p></div>
     </nav>
     {/* Mounted once per tool: navigation never discards a running job or draft. */}
     {Array.from(visited).map(page => <main key={page} hidden={tab !== page} className={tab !== page ? "hidden" : "flex min-h-0 flex-1 overflow-hidden"}>
-      {page === "models" ? <ModelsHub openModel={openModel} initialTab={modelsTab} onTry={tryModel} onCompareBusy={setComparisonBusy} onBenchmark={id => { setBenchModel({id, nonce: Date.now()}); navigate("benchmarks"); }} /> :
+      {page === "models" ? <ModelsHub openModel={openModel} initialTab={modelsTab} onTabChange={setModelsTab} onTry={tryModel} onCompareBusy={setComparisonBusy} onBenchmark={id => { setBenchModel({id, nonce: Date.now()}); navigate("benchmarks"); }} /> :
        page === "chat" ? <ChatWorkspace /> :
-       <div className="scrollbar-slim min-w-0 flex-1 overflow-y-auto"><div className="mx-auto flex max-w-[1100px] flex-col gap-5 px-6 py-6">
+       <div className="scrollbar-slim min-w-0 flex-1 overflow-y-auto"><div className="tool-page">
          {page === "storage" && <StoragePage />}
          {page === "benchmarks" && <BenchmarksPage openModel={benchModel} onBusy={setBenchmarkBusy} />}
          {page === "settings" && <SettingsPage />}
        </div></div>}
     </main>)}
+    </div>
     {(Object.keys(downloads).length > 0 || runningIds.size > 0 || comparisonBusy || benchmarkBusy || jobError) && <div role="status" aria-label="Activity" className="flex shrink-0 flex-wrap gap-4 border-t border-hair bg-chrome px-5 py-2 text-xs">
       {comparisonBusy && <span>Comparison running <button onClick={() => stopJob("stop_comparison")} className="text-accent-text">Stop comparison</button></span>}
       {benchmarkBusy && <span>Benchmark running <button onClick={() => stopJob("stop_benchmark")} className="text-accent-text">Stop benchmark</button></span>}

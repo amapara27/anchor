@@ -15,19 +15,12 @@ import { ScenarioTable, type ScenarioRow } from "./ui/ScenarioTable";
 import {
   HEADLINE_SCENARIO,
   SCENARIOS_BY_COST,
-  SCENARIOS_BY_CTX,
   SUITE_ID,
   numCtxFor,
-  scenarioLabel,
 } from "../lib/scenarios";
 import { ZapIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon, StopIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard";
-
-const TAB_HINT: Record<BenchTab, string> = {
-  suite: "nine scenarios, median of the repeats after a warm-up",
-  leaderboard: "every model you've tested, ranked by decode tok/s",
-};
 
 /** Median of the group's decode throughput — what the tier is summarised by. */
 function medianTps(runs: BenchRun[]): number | null {
@@ -161,8 +154,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
   // Header summary and the share card read the headline scenario only — one
   // canonical number per model rather than eight competing ones.
   const yours = headlineGroups.find((g) => g.quality === "exact");
-  const yourTps = yours ? medianTps(yours.runs) : null;
-  const mine = yours?.runs.find((r) => r.source === "local");
+    const mine = yours?.runs.find((r) => r.source === "local");
 
   const exactLocal = useMemo(
     () => (groups.find((g) => g.quality === "exact")?.runs ?? []).filter((r) => r.source === "local"),
@@ -232,10 +224,9 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     <>
       <PageHeader
         title="Benchmarks"
-        subtitle="A fixed suite, run locally. Same prompts, same seed, same token counts every time."
         actions={
           <div className="flex flex-col items-end gap-2">
-            <div className="flex items-center gap-2.5 rounded-full border border-hair bg-inset px-3.5 py-1.5">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className={`size-1.5 rounded-full ${profile ? "bg-ok" : "bg-hair2"}`} aria-hidden />
               <span className="text-[12.5px] font-semibold text-fg">
                 {profile?.chip ?? profile?.model_name ?? "This Mac"}
@@ -249,22 +240,14 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
                   .join(" · ")}
               </span>
             </div>
-            <div className="data flex items-center gap-1.5 text-[11px] text-fg-subtle">
-              <span>
-                median <span className="text-fg-muted">{yourTps != null ? `${yourTps.toFixed(1)} t/s` : "—"}</span>
-              </span>
-              <span>·</span>
-              <span>
-                {yours?.runs.length ?? 0} run{(yours?.runs.length ?? 0) === 1 ? "" : "s"}
-              </span>
-            </div>
+
           </div>
         }
       />
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div className="flex flex-col gap-4">
         <RunSetupCard
           modelId={modelId}
           setSelected={setSelected}
@@ -284,16 +267,8 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
           elapsedMs={elapsedMs}
           mine={mine}
         />
-        <HistoryCard
-          history={history}
-          historyScope={historyScope}
-          setHistoryScope={setHistoryScope}
-          onShare={handleShare}
-          canShare={!!mine}
-        />
-      </div>
 
-      <div className="h-px bg-hair" />
+      </div>
 
       <div className="flex flex-wrap items-center gap-2.5">
         <Tabs
@@ -305,7 +280,6 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
             { key: "leaderboard", label: "Leaderboard" },
           ]}
         />
-        <span className="data ml-auto text-[11px] text-fg-subtle">{TAB_HINT[tab]}</span>
       </div>
 
       {tab === "suite" && (
@@ -321,68 +295,42 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
               }}
             />
           )}
-          <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
-            Each scenario is a fixed shape — so many tokens in, so many out — at the smallest power-of-two
-            context that holds both. Fast mode runs the long-generation scenarios once instead of three times
-            to keep a run short; everything else always runs three. Pick a row to rank every model on it.
-          </p>
+
         </section>
       )}
 
       {tab === "leaderboard" && (
         <div className="flex flex-col gap-3.5">
-          {/* One row per context tier rather than nine chips wrapped wherever
-              the width runs out. The tiers are how the suite actually batches
-              its runs, so each row is a set of genuinely near-comparable shapes
-              — and no row is long enough to wrap. The token shape moved to the
-              tooltip and the sentence below: it made every chip a different
-              width, which is what left `codegen` dangling on its own line. */}
-          <div className="flex flex-col gap-1.5" role="group" aria-label="Scenario to rank by">
-            {SCENARIOS_BY_CTX.map(({ numCtx, scenarios }) => (
-              <div key={numCtx} className="flex flex-wrap items-center gap-1.5">
-                <span className="data w-9 shrink-0 text-right text-[10px] text-fg-subtle">{numCtx / 1024}k</span>
-                {scenarios.map((sc) => (
-                  <button
-                    key={sc.id}
-                    type="button"
-                    aria-pressed={scenarioFilter === sc.id}
-                    title={`${sc.label} · ${sc.promptTokens} in / ${sc.genTokens} out`}
-                    onClick={() => setScenarioFilter(sc.id)}
-                    className={[
-                      "data min-w-[86px] rounded-full border px-3 py-1 text-[10.5px] transition-colors",
-                      scenarioFilter === sc.id
-                        ? "border-accent bg-accent-soft text-accent-text"
-                        : "border-hair text-fg-muted hover:border-hair2 hover:text-fg",
-                    ].join(" ")}
-                  >
-                    {sc.id}
-                  </button>
-                ))}
-              </div>
-            ))}
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-2 text-xs text-fg-muted">Scenario
+              <select aria-label="Leaderboard scenario" title={activeScenario?.label} value={scenarioFilter} onChange={e=>setScenarioFilter(e.target.value)} className="rounded-control border border-hair bg-surface px-3 py-2 text-sm text-fg">
+                {SCENARIOS_BY_COST.map(sc=><option key={sc.id} value={sc.id}>{sc.id}</option>)}
+              </select>
+            </label>
+            {activeScenario && <span aria-label="Scenario token counts" className="data text-[11px] text-fg-muted">{activeScenario.promptTokens} in / {activeScenario.genTokens} out · {numCtxFor(activeScenario)/1024}K context</span>}
           </div>
           {groups.length === 0 ? (
             <p className="card px-4 py-10 text-center text-sm text-fg-muted">
-              No results to rank yet — run the suite first.
+              No results for this scenario.
             </p>
           ) : (
             groups.map((g) => (
               <Group key={g.quality} group={g} onShareRun={handleShareRun} />
             ))
           )}
-          <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
-            Ranked by decode tok/s on <span className="text-fg-muted">{scenarioFilter}</span>
-            {activeScenario &&
-              ` (${activeScenario.promptTokens} tokens in, ${activeScenario.genTokens} out, ${
-                numCtxFor(activeScenario) / 1024
-              }k context)`}{" "}
-            — {scenarioLabel(scenarioFilter).toLowerCase()} — within each hardware-match tier, so a number
-            from a looser match is never shown as if it came from an identical Mac.
-          </p>
+
         </div>
       )}
 
 
+      <details className="border-t border-hair pt-4">
+        <summary className="cursor-pointer text-[13px] text-fg-muted">Method</summary>
+        <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine fixed workloads. Results are medians after warm-up. Thorough runs three repeats; Fast runs long generations once. Rankings compare the same scenario within each hardware-match group.</p>
+      </details>
+      <details className="border-t border-hair pt-4">
+        <summary className="cursor-pointer text-[13px] text-fg-muted">Run history <span className="data ml-2 text-[11px]">{history.length}</span></summary>
+        <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={!!mine} /></div>
+      </details>
       {shareCard && (
         <ShareCardModal data={shareCard.data} url={shareCard.url} onClose={() => setShareCard(null)} />
       )}
@@ -408,7 +356,7 @@ function SegToggle<T extends string>({
   small?: boolean;
 }) {
   return (
-    <div className="flex gap-1 rounded-[10px] border border-hair bg-inset p-[3px]">
+    <div className="flex gap-1 rounded-control border border-hair p-[3px]">
       {options.map((o) => {
         const active = o.key === value;
         return (
@@ -418,10 +366,10 @@ function SegToggle<T extends string>({
             disabled={disabled}
             onClick={() => onChange(o.key)}
             className={[
-              "flex-1 rounded-[7px] font-medium transition-colors duration-150 ease-out",
+              "flex-1 whitespace-nowrap rounded font-medium transition-colors duration-150 ease-out",
               small ? "py-1.5 text-[10.5px]" : "py-2 text-[13px]",
               active
-                ? "bg-accent-soft font-semibold text-accent-text shadow-[inset_0_0_0_1px_var(--accent-line)]"
+                ? "bg-accent-soft font-semibold text-accent-text"
                 : "text-fg-muted hover:text-fg",
               "disabled:pointer-events-none disabled:opacity-50",
             ].join(" ")}
@@ -458,67 +406,20 @@ function RunSetupCard({
   onRun: () => void;
   onStop: () => void;
 }) {
-  return (
-    <div className="card flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between border-b border-hair bg-inset px-5 py-3">
-        <span className="label-caps text-[10px]">Run setup</span>
-        <span className="data text-[10.5px] text-fg-subtle">{SCENARIOS_BY_COST.length} scenarios</span>
-      </div>
-      <div className="flex flex-1 flex-col gap-5 px-5 py-5">
-        <div className="flex flex-col gap-2">
-          <span className="label-caps text-[10px]">Model</span>
-          <ModelSelect
-            value={modelId ?? ""}
-            onChange={setSelected}
-            models={installed}
-            profile={profile}
-            disabled={installed.length === 0 || running}
-            variant="field"
-            ariaLabel="Benchmark model"
-            placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"}
-          />
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <div className="flex items-baseline justify-between">
-            <span className="label-caps text-[10px]">Rigor</span>
-            <span className="data text-[10px] text-fg-subtle">
-              {repeatsMode === "thorough" ? "3 runs everywhere" : "long generations run once"}
-            </span>
-          </div>
-          <SegToggle
-            value={repeatsMode}
-            onChange={setRepeatsMode}
-            disabled={running}
-            options={[
-              { key: "fast", label: "Fast" },
-              { key: "thorough", label: "Thorough" },
-            ]}
-          />
-        </div>
-      </div>
-      <div className="px-5 pb-5">
-        {/* A suite is minutes long and holds the generation lock the whole time,
-            so the only control that matters mid-run is the one that ends it. */}
-        {running ? (
-          <GhostButton
-            className="w-full justify-center"
-            onClick={onStop}
-            tone="danger"
-            title="Stop the suite — keeps the scenarios already measured"
-          >
-            <StopIcon className="size-3" />
-            Stop
-          </GhostButton>
-        ) : (
-          <PrimaryButton className="w-full justify-center" onClick={onRun} disabled={!modelId}>
-            <ZapIcon className="size-3.5" />
-            Run suite
-          </PrimaryButton>
-        )}
-      </div>
+  return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-4 rounded-card border border-hair bg-surface p-4">
+    <div className="min-w-[220px] flex-1">
+      <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
+        disabled={installed.length === 0 || running} variant="field" ariaLabel="Benchmark model"
+        placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />
     </div>
-  );
+    <div className="w-[200px]" title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
+      <span className="mb-2 block text-xs text-fg-muted">Rigor</span>
+      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running} small
+        options={[{key:"fast",label:"Fast"},{key:"thorough",label:"Thorough"}]} />
+    </div>
+    {running ? <GhostButton onClick={onStop} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />Stop</GhostButton> :
+      <PrimaryButton onClick={onRun} disabled={!modelId}><ZapIcon className="size-3.5" />Run suite</PrimaryButton>}
+  </section>;
 }
 
 /** Live throughput while a suite runs — a real waveform sampled from token
@@ -539,81 +440,36 @@ function LiveRunCard({
   elapsedMs: number;
   mine: BenchRun | undefined;
 }) {
+  if (!running && !mine) return null;
   const liveTps = waveform.length ? waveform[waveform.length - 1] : null;
   const displayTps = running ? liveTps : (mine?.decode_tps_median ?? null);
   const max = Math.max(...waveform, 1);
 
-  const title = running ? "Benchmarking" : mine ? "Last result" : "No runs yet";
+  const title = running ? "Benchmarking" : "Last result";
   const meta = running
     ? (progress ?? "starting")
     : mine
       ? `${mine.model_name} · ${formatRelativeTime(mine.updated_at)}`
       : "";
-  const footer = running
-    ? "live decode rate"
-    : mine
-      ? `median of ${mine.repeats} run${mine.repeats === 1 ? "" : "s"}`
-      : "run a benchmark to see it here";
 
   // One segment per scenario in the suite, filling as each finishes.
   const totalSegments = runProgress?.total ?? SCENARIOS_BY_COST.length;
-  const filledSegments = running ? (runProgress?.index ?? 0) : totalSegments;
+  const filledSegments = running ? (runProgress?.index ?? 0) : mine ? totalSegments : 0;
 
-  return (
-    <div className={`card flex flex-col overflow-hidden ${running ? "border-accent-line" : ""}`}>
-      <div className="flex items-center justify-between border-b border-hair bg-inset px-5 py-3">
-        <div className="flex items-center gap-2.5">
-          {running && <span className="size-2 rounded-full bg-accent animate-pulse-dot" aria-hidden />}
-          <span className="label-caps text-[10px] text-fg-muted">{title}</span>
-        </div>
-        <span className="data flex items-center gap-1.5 truncate text-[10.5px] text-fg-subtle">
-          {meta}
-          {!running && <ThermalBadge label={mine?.thermal_label ?? null} />}
-        </span>
-      </div>
-
-      <div className="flex flex-1 flex-col justify-center gap-6 px-5 py-5">
-        <div className="flex items-baseline justify-center gap-2">
-          <span
-            className={`data text-[48px] leading-none font-bold tracking-tight ${running ? "text-fg" : "text-fg-muted"}`}
-          >
-            {displayTps != null ? displayTps.toFixed(1) : "—"}
-          </span>
-          <span className="data text-sm text-fg-subtle">tok/s</span>
-        </div>
-
-        <div className={`flex h-[100px] items-end gap-[2px] transition-opacity ${running ? "opacity-100" : "opacity-25"}`}>
-          {waveform.map((v, i) => (
-            <span
-              key={i}
-              className="min-w-[2px] flex-1 rounded-[2px]"
-              style={{
-                height: `${Math.max(3, Math.min(100, (v / max) * 100))}%`,
-                background: "linear-gradient(180deg, var(--accent-text), var(--accent-soft))",
-              }}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2.5 px-5 pb-5">
-        <div className="flex gap-1.5">
-          {Array.from({ length: totalSegments }).map((_, i) => (
-            <span key={i} className="h-1 flex-1 overflow-hidden rounded-full bg-hair">
-              <span
-                className="block h-full rounded-full bg-accent transition-[width]"
-                style={{ width: i < filledSegments ? "100%" : "0%" }}
-              />
-            </span>
-          ))}
-        </div>
-        <div className="data flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
-          <span className="truncate">{footer}</span>
-          {running ? <span>{formatElapsed(elapsedMs)}</span> : <ThermalReadout run={mine} />}
-        </div>
-      </div>
+  return <section aria-label="Benchmark status" className="flex flex-col gap-3 border-b border-hair pb-4">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      <span className="flex items-center gap-2 text-[13px] font-medium">{running && <span className="size-1.5 rounded-full bg-accent" aria-hidden />}{title}</span>
+      {displayTps != null && <span className="data text-[15px]">{displayTps.toFixed(1)} <span className="text-xs text-fg-muted">tok/s</span></span>}
+      <span className="min-w-0 flex-1 text-xs text-fg-muted">{meta}</span>
+      {running ? <span className="data text-xs text-fg-muted">{formatElapsed(elapsedMs)}</span> : <ThermalReadout run={mine} />}
     </div>
-  );
+    {running && waveform.length > 0 && <div className="flex h-8 items-end gap-px" aria-label="Live decode rate">
+      {waveform.map((v,i)=><span key={i} className="min-w-px flex-1 bg-accent" style={{height:Math.max(3,Math.min(100,v/max*100))+"%"}} />)}
+    </div>}
+    <div role="progressbar" aria-label="Benchmark scenarios completed" aria-valuemin={0} aria-valuemax={totalSegments} aria-valuenow={filledSegments} className={running ? "flex gap-1.5" : "sr-only"}>
+      {Array.from({length:totalSegments},(_,i)=><span key={i} className="h-1 flex-1 bg-hair"><span className="block h-full bg-accent" style={{width:i<filledSegments?"100%":"0%"}} /></span>)}
+    </div>
+  </section>;
 }
 
 /** Recent runs, chronological (`bench_history`) — distinct from the

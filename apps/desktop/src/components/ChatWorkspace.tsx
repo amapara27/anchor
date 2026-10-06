@@ -316,7 +316,7 @@ function ConversationRow({
     <div
       className={[
         "group flex cursor-pointer flex-col gap-1 rounded-lg px-2.5 py-2 transition-colors duration-150 ease-out",
-        active ? "bg-raised shadow-[inset_2px_0_0_var(--accent)]" : "hover:bg-inset",
+        active ? "bg-raised" : "hover:bg-inset",
       ].join(" ")}
     >
       {renaming ? (
@@ -417,8 +417,8 @@ function ThreadHeader({
   const contextLimit = presets.find((p) => p.id === presetId)?.num_ctx ?? DEFAULT_CONTEXT;
 
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-hair bg-canvas px-5 py-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5 whitespace-nowrap">
+    <div className="chat-toolbar shrink-0">
+      <div className="flex min-w-[160px] flex-1 flex-col gap-0.5">
         {editing && convo ? (
           <input
             autoFocus
@@ -519,10 +519,6 @@ function MessageList({
           <SendIcon className="size-5" />
         </span>
         <p className="text-sm font-medium text-fg">Try your local model</p>
-        <span className="data inline-flex items-center gap-2 text-[11px] text-fg-subtle">
-          <span className="size-[5px] rounded-full bg-ok" aria-hidden />
-          Prompts are sent to your configured Ollama server
-        </span>
       </div>
     );
   }

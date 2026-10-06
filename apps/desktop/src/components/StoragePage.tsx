@@ -8,7 +8,7 @@ import { PageHeader, GhostButton } from "./PageHeader";
 import { StatCard } from "./ui/StatCard";
 import { SegmentedBar, type Segment } from "./ui/SegmentedBar";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
-import { CheckIcon, RefreshIcon } from "./icons";
+import { RefreshIcon } from "./icons";
 
 /** Palette for the disk map, walked in order per model family. */
 const FAMILY_COLORS = [
@@ -91,7 +91,6 @@ export function StoragePage() {
     <>
       <PageHeader
         title="Storage"
-        subtitle="What every installed model costs on disk, and review unused models and clean unreferenced files."
         actions={
           <GhostButton onClick={() => rescan()} disabled={scanning} title="Re-walk Ollama's on-disk store">
             <RefreshIcon className={`size-3.5 ${scanning ? "animate-spin" : ""}`} />
@@ -102,7 +101,7 @@ export function StoragePage() {
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <section className="card flex flex-col gap-3 p-4">
+      <section className="flex flex-col gap-3 border-b border-hair pb-5">
         <div className="flex flex-wrap items-baseline gap-2.5">
           <span className="label-caps">Disk map · by model family</span>
           <span className="data ml-auto text-[11.5px] text-fg-muted">
@@ -110,13 +109,13 @@ export function StoragePage() {
           </span>
         </div>
         {diskMap.length > 0 ? (
-          <SegmentedBar segments={diskMap} height={34} legend />
+          <SegmentedBar segments={diskMap} height={12} legend />
         ) : (
           <p className="text-sm text-fg-subtle">No models installed.</p>
         )}
       </section>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5">
+      <div className="grid grid-cols-2 divide-x divide-hair rounded-card border border-hair">
         <StatCard
           label="Unused model sizes"
           value={formatBytes(reclaimBytes)}
@@ -135,7 +134,7 @@ export function StoragePage() {
       </div>
 
       <section className="card overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-hair px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3 border-b border-hair px-4 py-3">
           <span className="text-[13.5px] font-semibold text-fg">Installed weights</span>
           <span className="data text-[11px] text-fg-subtle">largest first</span>
           {selectedIds.length > 0 ? (
@@ -189,17 +188,14 @@ export function StoragePage() {
                   checked ? "bg-accent-soft" : "",
                 ].join(" ")}
               >
-                <span
-                  role="checkbox"
-                  aria-checked={checked}
+                <input
+                  type="checkbox"
+                  checked={checked}
                   aria-label={`Select ${model.name}`}
-                  className={[
-                    "flex size-[15px] items-center justify-center rounded border transition-colors duration-150 ease-out",
-                    checked ? "border-accent bg-accent" : "border-hair2",
-                  ].join(" ")}
-                >
-                  {checked && <CheckIcon className="size-2.5 text-accent-fg" />}
-                </span>
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => setSelected(s => ({ ...s, [model.id]: e.target.checked }))}
+                  className="size-[15px] cursor-pointer"
+                />
                 <span className="flex min-w-0 items-center gap-2.5">
                   <span className="data truncate text-[12.5px] text-fg">{model.name}</span>
                   {stale && (
@@ -285,9 +281,9 @@ export function StoragePage() {
         title={pendingRemove && pendingRemove.length > 1 ? "Remove models?" : "Remove model?"}
         body={
           pendingRemove
-            ? `${pendingRemove.map((m) => m.name).join(", ")} will be deleted from Ollama, freeing ${formatBytes(
+              ? `${pendingRemove.map((m) => m.name).join(", ")} will be deleted from Ollama. Their model sizes total ${formatBytes(
                 pendingRemove.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0),
-              )}. This cannot be undone.`
+              )}; shared layers may reduce the space freed. You can download these models again.`
             : ""
         }
         confirmLabel="Remove"

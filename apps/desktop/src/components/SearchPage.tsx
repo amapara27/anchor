@@ -3,7 +3,6 @@ import type { LibraryModel } from "../types";
 import { useModelSearch } from "../lib/useModelSearch";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
-import { PageHeader } from "./PageHeader";
 import { SearchResultCard } from "./SearchResultCard";
 import { Button } from "./ui/Button";
 import { Chip } from "./ui/Chip";
@@ -33,7 +32,7 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
     search(q);
   };
 
-  const renderCard = (result: (typeof results)[number], rank: number, hero: boolean) => {
+  const renderCard = (result: (typeof results)[number], rank: number) => {
     const lib: LibraryModel | undefined = byId.get(result.profile.id);
     return (
       <SearchResultCard
@@ -41,7 +40,6 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
         result={result}
         rank={rank}
         confident={confident}
-        hero={hero}
         libraryModel={lib}
         download={downloads[result.profile.id]}
         onDownload={() => lib && startDownload(lib.id)}
@@ -54,10 +52,7 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Find the right model"
-        subtitle="Describe what you want to do — we'll match it to the best local models."
-      />
+<p className="text-[13px] text-fg-muted">Describe a task to search the curated model catalog.</p>
 
       <form
         onSubmit={(e) => {
@@ -70,7 +65,6 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
         <input
           type="text"
           inputMode="search"
-          autoFocus
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="e.g. a model for web scraping, or RAG over my notes…"
@@ -121,8 +115,7 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
           {/* Results header: query up front, count as a mono figure. */}
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div className="min-w-0">
-              <span className="label-caps">Query results</span>
-              <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight text-fg">“{query}”</h2>
+                            <h2 className="mt-1 truncate text-lg font-semibold tracking-tight text-fg">“{query}”</h2>
               {!confident && (
                 <p className="mt-1 text-sm text-fg-muted">
                   No close match in the catalog — these are the nearest models, not answers to your query.
@@ -134,13 +127,13 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
             </span>
           </div>
 
-          {/* Top match leads full-width; the rest sit in a two-up grid below. */}
-          {confident && results.length > 0 && renderCard(results[0], 1, true)}
+          {/* Ranked results share one compact list. */}
+          {confident && results.length > 0 && renderCard(results[0], 1)}
           {results.length > (confident ? 1 : 0) && (
             <div className="space-y-3">
               {confident && <h3 className="label-caps">Other relevant models</h3>}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {results.slice(confident ? 1 : 0).map((r, i) => renderCard(r, (confident ? 2 : 1) + i, false))}
+              <div className="flex flex-col">
+                {results.slice(confident ? 1 : 0).map((r, i) => renderCard(r, (confident ? 2 : 1) + i))}
               </div>
             </div>
           )}

@@ -7,8 +7,7 @@ export interface TabItem<T extends string> {
 }
 
 /**
- * Segmented pill control — the app's in-page view switcher (Models, Agents,
- * Benchmarks). Distinct from the sidebar, which navigates between sections.
+ * Underline tabs for views within a tool.
  */
 export function Tabs<T extends string>({
   items,
@@ -27,7 +26,7 @@ export function Tabs<T extends string>({
     <div
       role="tablist"
       aria-label={ariaLabel}
-      className={`inline-flex gap-0.5 rounded-[9px] border border-hair bg-inset p-[3px] ${className}`}
+      className={`tool-tabs ${className}`}
     >
       {items.map(({ key, label, count }) => {
         const active = key === value;
@@ -36,12 +35,20 @@ export function Tabs<T extends string>({
             key={key}
             type="button"
             role="tab"
+            aria-label={label}
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
+            onKeyDown={e => {
+              const index = items.findIndex(item => item.key === key);
+              const next = e.key === "ArrowRight" ? (index + 1) % items.length : e.key === "ArrowLeft" ? (index + items.length - 1) % items.length : e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : null;
+              if (next === null) return;
+              e.preventDefault();
+              onChange(items[next].key);
+              (e.currentTarget.parentElement?.children[next] as HTMLElement)?.focus();
+            }}
             onClick={() => onChange(key)}
             className={[
-              "flex cursor-pointer items-center gap-2 rounded-[7px] px-3 py-1.5 text-[12.5px] font-medium",
-              "transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-              active ? "bg-accent-soft text-accent-text" : "text-fg-muted hover:text-fg",
+              "tool-tab text-[13px] transition-colors duration-150",
             ].join(" ")}
           >
             {label}

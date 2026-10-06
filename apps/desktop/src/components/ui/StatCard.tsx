@@ -16,7 +16,6 @@ export function StatCard({
   spark,
   tone,
   compact,
-  recessed,
   className = "",
 }: {
   label: string;
@@ -28,8 +27,6 @@ export function StatCard({
   tone?: "default" | "warn" | "danger" | "accent";
   /** Smaller figure — for tiles packed into a row rather than a KPI band. */
   compact?: boolean;
-  /** Sits inside another card: inset fill instead of the raised surface. */
-  recessed?: boolean;
   className?: string;
 }) {
   const toneClass =
@@ -44,8 +41,7 @@ export function StatCard({
   return (
     <div
       className={[
-        "flex flex-col rounded-[var(--radius-card)] border border-hair",
-        recessed ? "bg-inset" : "bg-surface",
+        "flex min-w-0 flex-col",
         compact ? "gap-1 p-2.5" : "gap-2 p-3.5",
         className,
       ].join(" ")}

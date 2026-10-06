@@ -42,6 +42,7 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
           return (
             <button
               key={s.id}
+              title={s.label}
               type="button"
               disabled={!row?.run}
               onClick={() => row?.run && onSelect?.(s.id)}
@@ -60,7 +61,6 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
                     />
                   )}
                 </span>
-                <span className="truncate text-[10.5px] text-fg-subtle">{s.label}</span>
               </span>
               <span className="data self-stretch bg-surface px-3 py-2.5 text-right text-[12px] text-fg-muted">
                 {s.promptTokens}

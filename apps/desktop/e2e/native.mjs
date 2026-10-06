@@ -57,7 +57,7 @@ const click=async(text,selector='button')=>{
 };
 const attrClick=async(label)=>wait(()=>execute(`const el=Array.from(document.querySelectorAll('[aria-label]')).find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)}&&e.getClientRects().length&&!e.disabled);if(!el)return false;el.click();return true;`),'click '+label);
 const fill=async(label,value)=>wait(()=>execute(`const el=document.querySelector('[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!el)return false;Object.getOwnPropertyDescriptor(el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));return true;`),'fill '+label);
-const nav=async(text)=>{if(!['Models','Benchmarks'].includes(text))await click('More tools','summary');await click(text,'nav[aria-label="Tools"] button');};
+const nav=async(text)=>{await click(text,'nav[aria-label="Tools"] button');};
 let success=false;
 try{
   await wait(()=>request('GET','/status'),'native WebDriver startup',45000);
@@ -80,11 +80,11 @@ try{
   await attrClick('Model B model');await click(catalog[1].name,'[role="option"]');
   await execute("const e=document.querySelector('#comparison-prompt');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'Native comparison');e.dispatchEvent(new Event('input',{bubbles:true}));return true;");
   slow=true;await click('Run comparison');await nav('Benchmarks');
-  await click('Stop comparison');await nav('Models');
+  await click('Stop comparison');await nav('Compare');
   await wait(async()=> /cancel|stopped/i.test(await visibleText()),'actual Rust comparison cancellation');
   slow=false;await click('Run comparison');
   await wait(async()=>{const t=await visibleText();return catalog.every(p=>t.includes('Native fixture answer for '+p.id));},'actual two-model comparison');
-  await click('Installed','[role="tab"]');await attrClick('Inspect '+catalog[1].name);await click('Benchmark');
+  await attrClick('Installed');await attrClick('Inspect '+catalog[1].name);await click('Benchmark');
   await wait(()=>execute(`return document.querySelector('[aria-label=\"Benchmark model\"]')?.textContent.includes(${JSON.stringify(catalog[1].name)})`),'benchmark model handoff');
   slow=true;await click('Run suite');await nav('Models');await click('Stop benchmark');await nav('Benchmarks');
   await wait(()=>execute("return Array.from(document.querySelectorAll('button')).some(e=>e.textContent.trim()==='Run suite'&&e.getClientRects().length)"),'actual benchmark stop');

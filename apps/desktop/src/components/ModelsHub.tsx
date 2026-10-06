@@ -11,10 +11,12 @@ import { BrowsePage } from "./BrowsePage";
 import { ModelComparison } from "./ModelComparison";
 import { Tabs } from "./ui/Tabs";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
+import { ChevronRightIcon, PlusIcon, RefreshIcon, SearchIcon, XIcon } from "./icons";
 
-export function ModelsHub({openModel, initialTab = "installed", onTry, onBenchmark, onCompareBusy}: {
+export function ModelsHub({openModel, initialTab = "installed", onTabChange, onTry, onBenchmark, onCompareBusy}: {
   openModel: {id: string; nonce: number} | null; initialTab?: ModelsTab;
   onCompareBusy?: (busy: boolean) => void;
+  onTabChange: (tab: ModelsTab) => void;
   onTry: (id: string, context: number) => Promise<void>; onBenchmark: (id: string) => void;
 }) {
   const {models, loading, error, downloads, reload, startDownload, removeModel} = useModels();
@@ -50,40 +52,51 @@ export function ModelsHub({openModel, initialTab = "installed", onTry, onBenchma
     contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT, arch: m.arch, sizeBytes: m.size_bytes }, profile);
   const rows = installed.filter(m => (!query || (m.name + " " + m.id).toLowerCase().includes(query.toLowerCase())) && (!fitsOnly || hintFor(m).tier === "ok"));
   const active = selected ? models.find(m => m.id === selected.id) ?? selected : null;
-  const switchTab = (next: ModelsTab) => { setTab(next); setSelected(null); if (next === "compare") setCompared(true); };
+  const switchTab = (next: ModelsTab) => { setTab(next); onTabChange(next); setSelected(null); if (next === "compare") setCompared(true); };
   return <div className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
-    <div className="mx-auto flex max-w-[1100px] flex-col gap-5 px-6 py-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="text-2xl font-semibold">Models</h1><p className="mt-1 text-sm text-fg-muted">{profile?.chip ?? "Your Mac"}{profile?.memory_bytes ? " · " + formatBytes(profile.memory_bytes) + " RAM" : ""} · {installed.length} installed · {formatBytes(installed.reduce((sum,m) => sum + (m.size_bytes ?? 0),0))} on disk</p></div>
-        <button onClick={() => switchTab("discover")} className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Add model</button>
+    <div className="tool-page">
+      <header className="page-header">
+        <div><h1 className="page-title">{tab === "compare" ? "Compare" : "Models"}</h1></div>
+        {tab !== "compare" && <button onClick={() => switchTab("discover")} className="ml-auto flex items-center gap-2 rounded-control bg-accent px-3 py-2 text-xs font-medium text-accent-fg"><PlusIcon className="size-3.5" />Add model</button>}
       </header>
-      <div className="flex flex-wrap items-center gap-3">
-        <Tabs ariaLabel="Models view" value={tab === "browse" ? "discover" : tab} onChange={switchTab} items={[{key:"installed",label:"Installed"},{key:"discover",label:"Find"},{key:"compare",label:"Compare"}]} />
-        {tab === "installed" && <><input aria-label="Search installed models" placeholder="Search installed models…" value={query} onChange={e => setQuery(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-hair bg-inset px-3 py-2 text-sm" />
-          <button aria-pressed={fitsOnly} onClick={() => setFitsOnly(v=>!v)} className="rounded-lg border border-hair px-3 py-2 text-xs">Fits at 4K</button></>}
-      </div>
+      {tab !== "compare" && <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-fg-muted" aria-label="Model library summary">
+        <span><span className="data text-fg">{installed.length}</span> installed</span>
+        <span><span className="data text-fg">{formatBytes(installed.reduce((sum,m) => sum + (m.size_bytes ?? 0),0))}</span> on disk</span>
+        <span className="ml-auto">{profile?.chip ?? "Your Mac"}{profile?.memory_bytes ? " · " + formatBytes(profile.memory_bytes) + " RAM" : ""}</span>
+      </div>}
+      <Tabs ariaLabel="Models view" value={tab === "browse" ? "discover" : tab} onChange={switchTab} items={[{key:"installed",label:"Installed",count:installed.length},{key:"discover",label:"Find"},{key:"compare",label:"Compare"}]} />
+      <div className={"model-workspace " + (active && tab !== "compare" ? "has-inspector" : "")}><div className="model-content flex min-w-0 flex-col gap-5">
+      {tab === "installed" && <div className="flex flex-wrap items-center gap-3">
+        <label className="flex min-w-[180px] flex-1 items-center gap-2 rounded-control border border-hair px-3 py-2 focus-within:ring-2 focus-within:ring-accent-line"><SearchIcon className="size-3.5 text-fg-muted" /><input aria-label="Search installed models" placeholder="Search installed models…" value={query} onChange={e => setQuery(e.target.value)} className="min-w-0 flex-1 bg-transparent text-xs outline-none" /></label>
+        <button aria-pressed={fitsOnly} onClick={() => setFitsOnly(v=>!v)} className={"rounded-control border border-hair px-3 py-2 text-xs " + (fitsOnly ? "bg-raised text-fg" : "text-fg-muted")}>Fits at 4K</button>
+        <button aria-label="Refresh installed models" title="Refresh installed models" onClick={reload} className="rounded-control border border-hair p-2 text-fg-muted hover:text-fg"><RefreshIcon className="size-3.5" /></button>
+      </div>}
       {(error || actionError) && <div role="alert" className="flex items-center gap-3 rounded-lg border border-hair p-3 text-sm"><span className="flex-1">{actionError ?? error}</span><button onClick={() => {setActionError(null); reload();}} className="text-accent-text">Retry</button></div>}
       {tab === "installed" && (loading ? <p role="status">Loading your models…</p> : installed.length === 0 ?
         <div className="py-12"><h2 className="text-lg font-medium">Choose your first local model</h2><p className="mt-2 text-sm text-fg-muted">Find a model for your task and check its memory fit before downloading.</p><button onClick={() => switchTab("discover")} className="mt-4 rounded-lg bg-accent px-4 py-2 text-sm text-accent-fg">Find a model</button></div> :
-        <div aria-label="Installed model list" className="divide-y divide-hair border-y border-hair">
-          {rows.map(m => {const hint=hintFor(m); return <button key={m.id} aria-label={"Inspect " + m.name} onClick={() => select(m.id)} className="grid w-full grid-cols-[minmax(180px,1fr)_90px_120px_140px] items-center gap-4 py-4 text-left hover:bg-inset focus-visible:outline-2 focus-visible:outline-accent">
-            <span className="min-w-0"><span className="block truncate text-sm font-medium">{m.name}</span><span className="mt-1 block text-xs text-fg-muted">{m.spec.quant}</span></span>
-            <span className="data text-xs text-fg-muted">{formatBytes(m.size_bytes)}</span><span className={"text-xs " + hint.tone}>{hint.label} at 4K</span>
-            <span className="data text-right text-xs text-fg-muted">{hint.tps ? (hint.tps.source === "measured" ? "Measured " : "Estimated ") + hint.tpsLabel : "Speed unknown"}</span>
+        <div aria-label="Installed model list" className="model-table">
+          <div className="model-columns model-table-header" aria-hidden="true"><span>Model</span><span>Size</span><span>Quant</span><span>Fit · 4K</span><span>Decode speed</span><span /></div>
+          {rows.map(m => {const hint=hintFor(m); return <button key={m.id} aria-label={"Inspect " + m.name} aria-pressed={active?.id === m.id} onClick={() => select(m.id)} className="model-columns model-row">
+            <span className="min-w-0"><span className="block truncate text-[13px] font-medium">{m.name}</span><span className="data mt-1 block truncate text-[10px] text-fg-subtle">{m.id}</span></span>
+            <span className="data text-[11px] text-fg-muted">{formatBytes(m.size_bytes)}</span><span className="data text-[11px] text-fg-muted">{m.spec.quant}</span><span className={"text-[11px] " + hint.tone}>{hint.label}</span>
+            <span className="flex flex-col gap-0.5 text-fg-muted"><span className="data text-[11px]">{hint.tps ? hint.tpsLabel : "—"}</span><span className="text-[10px] text-fg-subtle">{hint.tps ? hint.tps.source === "measured" ? "Measured" : "Estimated" : "Speed unknown"}</span></span>
+            <ChevronRightIcon className="size-3.5 text-fg-subtle" />
           </button>})}
           {rows.length === 0 && <p className="py-8 text-sm text-fg-muted">No models match these filters.</p>}
         </div>)}
       {(tab === "discover" || tab === "browse") && <div>
-        <div className="mb-5 flex gap-3"><button aria-pressed={findMode === "discover"} onClick={() => setFindMode("discover")} className="text-sm text-accent-text">By task</button><button aria-pressed={findMode === "browse"} onClick={() => setFindMode("browse")} className="text-sm text-accent-text">Ollama library</button></div>
+        <div className="mb-6 flex gap-2">{([['discover','By task'],['browse','Ollama library']] as const).map(([mode,label])=><button key={mode} aria-pressed={findMode === mode} onClick={() => setFindMode(mode)} className={"rounded-control border border-hair px-3 py-1.5 text-xs " + (findMode === mode ? "bg-raised text-fg" : "text-fg-muted")}>{label}</button>)}</div>
         {findMode === "discover" ? <SearchPage onSelect={select} /> : <BrowsePage onSelect={setSelected} selectedTag={selected?.id ?? null} />}
       </div>}
       {compared && <div hidden={tab !== "compare"}><ModelComparison onBusy={onCompareBusy} /></div>}
-      {active && tab !== "compare" && <section ref={inspectorRef} tabIndex={-1} aria-label="Model inspector" className="rounded-xl border border-hair bg-surface">
-        <div className="flex justify-end p-2"><button aria-label="Close model details" onClick={closeInspector} className="px-3 py-1 text-sm text-fg-muted">Close</button></div>
+      </div>
+      {active && tab !== "compare" && <section ref={inspectorRef} tabIndex={-1} aria-label="Model inspector" className="model-inspector">
+        <div className="flex items-center justify-between px-5 py-2"><span className="text-xs text-fg-muted">Model details</span><button aria-label="Close model details" onClick={closeInspector} className="rounded p-1 text-fg-muted hover:text-fg"><XIcon className="size-4" /></button></div>
         <ModelDetailAside key={active.id} model={active} download={downloads[active.id]} totalMemoryBytes={profile?.memory_bytes ?? null} chip={profile?.chip ?? null}
           onDownload={() => startDownload(active.id)} onRemove={() => setPendingRemove(true)}
           onOpenInChat={context => onTry(active.id, context).catch(e=>{setActionError(String(e));})} onBenchmark={() => onBenchmark(active.id)} />
       </section>}
+      </div>
       <ConfirmDialog open={pendingRemove} title="Remove model?" body={"Remove " + (active?.name ?? "model") + " from disk? You can download it again."} confirmLabel="Remove" onCancel={() => setPendingRemove(false)} onConfirm={() => {
         setPendingRemove(false); if(active) void removeModel(active.id).then(()=>setSelected(null)).catch(e=>setActionError(String(e)));
       }} />

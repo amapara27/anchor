@@ -195,3 +195,21 @@ export const StopIcon = (p: IconProps) => (
   </Svg>
 );
 
+export const SidebarIcon = (p: IconProps) => (
+  <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16m7-11-3 3 3 3" /></Svg>
+);
+export const CompareIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M7 3v12a4 4 0 0 0 4 4h6M17 3v8M4 6l3-3 3 3m4 10 3 3-3 3" /></Svg>
+);
+export const ChatIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z" /><path d="M7 9h10M7 13h7" /></Svg>
+);
+export const StorageIcon = (p: IconProps) => (
+  <Svg {...p}><path d="m5 4-3 12v3a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-3L19 4Z" /><path d="M2 16h20M17 18.5h.01" /></Svg>
+);
+export const SettingsIcon = (p: IconProps) => (
+  <Svg {...p}><path d="M4 7h16M4 17h16M8 4v6M16 14v6" /></Svg>
+);
+export const SunIcon = (p: IconProps) => (
+  <Svg {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5" /></Svg>
+);

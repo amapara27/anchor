@@ -1,20 +1,17 @@
 import type { ReactNode } from "react";
 
-/** Shared page header: title, optional blurb, right-aligned actions. */
+/** Shared page title and actions. */
 export function PageHeader({
   title,
-  subtitle,
   actions,
 }: {
   title: string;
-  subtitle?: string;
   actions?: ReactNode;
 }) {
   return (
-    <header className="flex flex-wrap items-end gap-5">
+    <header className="page-header">
       <div className="flex min-w-0 flex-col gap-1.5">
-        <h1 className="text-[26px] font-semibold tracking-[-0.02em] text-fg">{title}</h1>
-        {subtitle && <p className="max-w-[560px] text-[13.5px] leading-[1.55] text-fg-muted">{subtitle}</p>}
+        <h1 className="page-title">{title}</h1>
       </div>
       {actions && <div className="ml-auto flex gap-2">{actions}</div>}
     </header>

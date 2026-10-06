@@ -126,8 +126,7 @@ export function BrowsePage({
   return (
     <div className="space-y-5">
       <PageHeader
-        title="The whole Ollama library"
-        subtitle="Every model published on ollama.com. Expand one to pick an exact tag."
+        title="Ollama library"
         actions={
           <GhostButton onClick={() => reload(true)} title="Re-read the listing from ollama.com">
             <RefreshIcon className={`size-3.5 ${status === "loading" ? "animate-spin" : ""}`} />

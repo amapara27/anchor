@@ -59,7 +59,7 @@ export function SettingsPage() {
     <>
       <PageHeader title="Settings" />
 
-      <div className="grid grid-cols-[178px_minmax(0,1fr)] items-start gap-6">
+      <div className="settings-layout items-start">
         <nav className="sticky top-0 flex flex-col gap-0.5" aria-label="Settings sections">
           {SECTIONS.map((s) => {
             const active = s.key === section;
@@ -85,7 +85,7 @@ export function SettingsPage() {
           </div>
         </nav>
 
-        <div className="flex flex-col gap-3">
+        <div className="settings-content flex min-w-0 flex-col gap-6">
           {section === "appearance" && <AppearancePanel />}
           {section === "inference" && <InferencePanel />}
           {section === "hardware" && <HardwarePanel />}
@@ -129,13 +129,13 @@ function AppearancePanel() {
     {
       key: "dark",
       name: "Graphite",
-      tag: "violet",
+      tag: "",
       preview: <Swatch bg="#0A0A0B" border="rgba(255,255,255,.08)" bars={["#EAEAEC", "#3A3A42", "#8B7BE8"]} />,
     },
     {
       key: "light",
       name: "Cream",
-      tag: "gold",
+      tag: "",
       preview: <Swatch bg="#F7F4ED" border="rgba(28,22,10,.12)" bars={["#1C1A15", "#CFC7B4", "#9A7317"]} />,
     },
     {
@@ -154,7 +154,6 @@ function AppearancePanel() {
   return (
     <SectionCard
       title="Appearance"
-      blurb="Two moods, same structure. Dark leans graphite and violet; light leans cream and gold."
     >
       <div className="grid grid-cols-3 gap-2.5">
         {cards.map((c) => {
@@ -167,7 +166,7 @@ function AppearancePanel() {
               aria-pressed={active}
               className={[
                 "flex cursor-pointer flex-col gap-2.5 rounded-[11px] border bg-inset p-3 text-left",
-                "transition-transform duration-200 [transition-timing-function:var(--ease-out)] hover:-translate-y-0.5",
+                "transition-colors duration-150 hover:bg-raised",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
                 active ? "border-accent-line" : "border-hair",
               ].join(" ")}

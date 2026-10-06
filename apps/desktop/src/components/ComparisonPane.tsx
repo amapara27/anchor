@@ -27,14 +27,14 @@ export function ComparisonPane({
   fastest,
 }: ComparisonPaneProps) {
   return (
-    <div className="card flex min-h-[18rem] flex-col p-5">
+    <div className="flex min-h-[18rem] min-w-0 flex-col border-t border-hair pt-4">
       {/* Header: name + phase chip */}
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="label-caps text-[10px]">
             Model {slotLabel}
           </div>
-          <h3 className="data truncate text-lg font-semibold text-fg">{model?.name ?? "—"}</h3>
+          <h3 className="truncate text-base font-semibold text-fg">{model?.name ?? "—"}</h3>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {fastest && revealed && fraction >= 1 && (
@@ -158,7 +158,6 @@ function StatRow({
     <div className="mt-4 border-t border-hair pt-4">
       <div className="grid grid-cols-2 gap-2">
         <StatCard
-          recessed
           compact
           label="Throughput"
           value={
@@ -168,10 +167,9 @@ function StatRow({
             </span>
           }
         />
-        <StatCard recessed compact label="Load + prompt" value={formatDuration(ttftNs)} sub="load + prompt eval" />
-        <StatCard recessed compact label="Total" value={formatDuration(stats.total_duration_ns)} />
+        <StatCard compact label="Load + prompt" value={formatDuration(ttftNs)} sub="load + prompt eval" />
+        <StatCard compact label="Total" value={formatDuration(stats.total_duration_ns)} />
         <StatCard
-          recessed
           compact
           label="Tokens"
           value={`${stats.prompt_eval_count ?? "—"}→${stats.eval_count ?? "—"}`}
