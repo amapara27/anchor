@@ -78,9 +78,9 @@ fn build_index_embeds_every_profile() {
     let index = SemanticIndex::build(cache_dir).expect("index builds");
 
     let expected = load_profiles().unwrap().len();
-    assert_eq!(index.len(), expected, "every profile should be indexed");
+    assert_eq!(index.entries.len(), expected, "every profile should be indexed");
 
-    let entries = index.entries();
+    let entries = &index.entries;
     let dim = entries[0].embedding.len();
     assert!(dim > 0, "embeddings must be non-empty");
     for e in entries {

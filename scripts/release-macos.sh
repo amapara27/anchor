@@ -3,11 +3,18 @@
 # argument: the cert lives in the keychain, and notarization uses an App Store
 # Connect API key that Tauri hands to notarytool as a file path.
 set -euo pipefail
+unset APPLE_PASSWORD # Enforce API-key notarization even with an old password in the environment.
 
 # Picks the Developer ID cert out of the keychain so the identity is never
 # hardcoded — fails loudly if step 1 (cert install) was skipped.
-APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning \
-  | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)
+if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+  IDENTITIES=()
+  while IFS= read -r identity; do IDENTITIES+=("$identity"); done < <(
+    security find-identity -v -p codesigning | sed -n 's/.*) \([A-Fa-f0-9]*\) "Developer ID Application: .*"/\1/p'
+  )
+  [ "${#IDENTITIES[@]}" -eq 1 ] || { echo "select a Developer ID certificate explicitly with APPLE_SIGNING_IDENTITY" >&2; exit 1; }
+  APPLE_SIGNING_IDENTITY="${IDENTITIES[0]}"
+fi
 [ -n "$APPLE_SIGNING_IDENTITY" ] || {
   echo "no Developer ID Application certificate in the keychain" >&2; exit 1; }
 
@@ -53,7 +60,9 @@ xcrun stapler validate "$APP"
 # is what users actually download — so it carries the quarantine flag and gets
 # assessed on mount. Submit and staple it too, or every user sees "Apple could
 # not verify this app" even though the app inside is notarized.
-DMG=$(ls target/release/bundle/dmg/*.dmg | head -1)
+VERSION=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+DMG="target/release/bundle/dmg/Anchor_${VERSION}_aarch64.dmg"
+[ -f "$DMG" ] || { echo "missing current release DMG: $DMG" >&2; exit 1; }
 xcrun notarytool submit "$DMG" --key "$APPLE_API_KEY_PATH" \
   --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
 xcrun stapler staple "$DMG"

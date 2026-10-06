@@ -156,6 +156,7 @@ function useModelsState() {
         await invoke("remove_model", { id: modelId });
       } catch (e) {
         setError(String(e));
+        throw e;
       } finally {
         load();
       }

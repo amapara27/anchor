@@ -20,7 +20,7 @@
 
 ## About
 
-Anchor is a native macOS desktop app that acts as a unified control center for local AI. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, chatting with what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
+Anchor is a compact native macOS tool for finding, checking and testing local AI models. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, chatting with what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
 
 It is **not** an inference engine. Ollama does the inference; Anchor is the management layer around it. That boundary is deliberate and it shapes most of the design decisions in the codebase — if a feature would require Anchor to run weights itself, it is out of scope.
 
@@ -36,13 +36,9 @@ Built for developers, students, researchers, and small business operators who wa
 
 Download the latest `.dmg` from [Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to Applications. It is signed and notarized, so it opens without a Gatekeeper prompt, and it updates itself from then on.
 
-Then pull at least one model so there is something to talk to:
+Open **Models → Add model**, find a model for your task, inspect its memory estimate, and download it. Select an installed model and choose **Try model** to start a trial at the chosen context. Existing conversations remain available through **More tools → Try & history → History**.
 
-```bash
-ollama pull llama3.1:8b
-```
-
-That is the whole setup — no API keys, and every feature works offline.
+No API keys are required. Inference and saved history work locally after setup when Ollama is configured on this Mac. Model downloads, fresh library data, the first semantic-search model download, update checks and external sharing use the network.
 
 ### CLI
 
@@ -71,7 +67,7 @@ Streaming conversations against any installed model, with reasoning/thinking out
 - **Model hub** — every installed Ollama model in one place, cached to SQLite so the list is instant on launch. Download with inline progress, remove, and inspect per-model detail: parameter count, quantization, context window, and file size.
 - **Semantic search** — natural-language queries over a curated model catalog, embedded locally with BGE-small (`fastembed`, in-process ONNX) and matched by cosine similarity. No external API, no vector database. Results are filtered by capability first, so a vision query never surfaces a text-only model.
 - **Browse the full library** — every model and tag on ollama.com, not just the curated catalog, for when you know what you want by name.
-- **Side-by-side comparison** — run the same prompt through two models at once and compare output, speed, and memory.
+- **Side-by-side comparison** — run the same prompt through two models sequentially and compare their output and measured generation speed.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/models_light.png">
@@ -171,7 +167,7 @@ pnpm dev                                   # app in dev mode
 cargo install --path crates/anchor-cli     # the CLI, from source
 ```
 
-The first Rust build is slow — `fastembed` pulls in ONNX Runtime. Subsequent builds are incremental. On first launch Anchor profiles your hardware and downloads the BGE-small embedding model for semantic search.
+The first Rust build is slow — `fastembed` pulls in ONNX Runtime. Subsequent builds are incremental. Anchor profiles your hardware on first use and downloads the BGE-small embedding model when you first use semantic search.
 
 `pnpm build` produces an unsigned local bundle. Signed, notarized releases are cut with `pnpm release:mac`, which needs a Developer ID certificate and an App Store Connect API key.
 
@@ -202,7 +198,7 @@ anchor/
 | Embeddings | `fastembed` (BGE-small, 384-dim), cosine in Rust |
 | Hardware | `system_profiler` subprocess |
 
-All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Nothing leaves the machine except Ollama model downloads and the update check — there is no web-search or telemetry path anywhere in the app, so everything else runs fully offline.
+All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Inference and stored chats remain local when Ollama uses its default local host. A remote `OLLAMA_HOST` receives your prompts. Downloads, fresh library/metadata requests, update checks and explicit sharing can use the network; the app has no automatic telemetry path.
 
 ## Development
 
@@ -214,7 +210,10 @@ cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-search \
            -p anchor-system                       # logic tests, no webview
 node --experimental-strip-types \
   apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures
+pnpm --filter @anchor/desktop test:e2e      # browser + isolated native macOS workflow
 ```
+
+E2E tests require macOS, Rust, pnpm and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). They run the real interface and native IPC against an isolated Ollama HTTP fixture and temporary database; they do not download model weights or touch your installed models.
 
 Conventions worth knowing before contributing:
 

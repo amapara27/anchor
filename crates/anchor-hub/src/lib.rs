@@ -565,9 +565,15 @@ impl Registry {
     /// A missing model is pulled first (streaming [`CompareEvent::Pull`]). A pull
     /// or generation failure is reported as [`CompareEvent::Failed`] for that slot
     /// only; the other slot still runs.
-    pub async fn compare<F>(&self, model_a: &str, model_b: &str, prompt: &str, mut on_event: F)
+    pub async fn compare<F>(&self, model_a: &str, model_b: &str, prompt: &str, on_event: F)
     where
         F: FnMut(CompareEvent) + Send,
+    {
+        self.compare_cancellable(model_a, model_b, prompt, &ollama::NEVER_CANCEL, on_event).await;
+    }
+
+    pub async fn compare_cancellable<F>(&self, model_a: &str, model_b: &str, prompt: &str, cancel: &std::sync::atomic::AtomicBool, mut on_event: F)
+    where F: FnMut(CompareEvent) + Send,
     {
         // Seed both panes as queued so the UI can render the side-by-side layout
         // immediately, then drive each slot through its lifecycle in turn.
@@ -580,24 +586,25 @@ impl Registry {
             phase: Phase::Queued,
         });
         for (slot, id) in [(Slot::A, model_a), (Slot::B, model_b)] {
-            self.compare_one(slot, id, prompt, &mut on_event).await;
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                on_event(CompareEvent::Failed { slot, message: "Comparison stopped".into() });
+                continue;
+            }
+            self.compare_one(slot, id, prompt, cancel, &mut on_event).await;
         }
     }
 
     /// Runs one slot of a [`compare`](Self::compare): ensure installed (pulling if
     /// needed), then generate, emitting status/token/result events along the way.
-    async fn compare_one<F>(&self, slot: Slot, id: &str, prompt: &str, on_event: &mut F)
+    async fn compare_one<F>(&self, slot: Slot, id: &str, prompt: &str, cancel: &std::sync::atomic::AtomicBool, on_event: &mut F)
     where
         F: FnMut(CompareEvent) + Send,
     {
         match self.is_installed(id).await {
             Ok(true) => {}
             Ok(false) => {
-                // Compare has no cancel affordance of its own, so this pull is
-                // never interrupted — the flag is a permanently-false constant.
-                let never = std::sync::atomic::AtomicBool::new(false);
                 let pulled = self
-                    .pull(id, &never, |progress| {
+                    .pull(id, cancel, |progress| {
                         on_event(CompareEvent::Pull { slot, progress })
                     })
                     .await;
@@ -626,8 +633,7 @@ impl Registry {
         });
         let req = GenerateRequest::for_comparison(id, prompt);
         let mut started = false;
-        let result = self
-            .generate(&req, |tok| {
+        let result = ollama::generate(&self.host, &req, cancel, |tok| {
                 if !started {
                     started = true;
                     on_event(CompareEvent::Status {

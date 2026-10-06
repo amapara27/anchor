@@ -126,7 +126,6 @@ export function BrowsePage({
   return (
     <div className="space-y-5">
       <PageHeader
-        eyebrow="Discover"
         title="The whole Ollama library"
         subtitle="Every model published on ollama.com. Expand one to pick an exact tag."
         actions={

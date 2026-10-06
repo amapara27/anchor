@@ -10,7 +10,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { ModelSelect } from "./ui/ModelSelect";
 import { Tabs } from "./ui/Tabs";
-import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Meter } from "./ui/SegmentedBar";
 import { ScenarioTable, type ScenarioRow } from "./ui/ScenarioTable";
 import {
@@ -23,12 +22,11 @@ import {
 } from "../lib/scenarios";
 import { ZapIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon, StopIcon } from "./icons";
 
-type BenchTab = "suite" | "leaderboard" | "community";
+type BenchTab = "suite" | "leaderboard";
 
 const TAB_HINT: Record<BenchTab, string> = {
   suite: "nine scenarios, median of the repeats after a warm-up",
   leaderboard: "every model you've tested, ranked by decode tok/s",
-  community: "no results server yet",
 };
 
 /** Median of the group's decode throughput — what the tier is summarised by. */
@@ -106,11 +104,12 @@ function ThermalReadout({ run }: { run: BenchRun | undefined }) {
  * The Community tab has no backend — there is no results server to publish to
  * or read from — so it says so rather than showing invented runs.
  */
-export function BenchmarksPage() {
+export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; nonce: number} | null; onBusy?: (busy: boolean) => void}) {
   const { models } = useModels();
   const { profile } = useHardwareProfile();
   const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
   const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => { if(openModel) setSelected(openModel.id); }, [openModel]);
   const [tab, setTab] = useState<BenchTab>("suite");
   const [repeatsMode, setRepeatsMode] = useState<BenchRepeatsMode>("fast");
   const [scenarioFilter, setScenarioFilter] = useState(HEADLINE_SCENARIO);
@@ -135,6 +134,7 @@ export function BenchmarksPage() {
     stop,
     load,
   } = useBenchmarks(modelId);
+  useEffect(() => { onBusy?.(running); }, [running, onBusy]);
 
   // `groups` is driven entirely by which view is on screen: the Suite tab is
   // about one model's nine scenarios, while the Leaderboard ranks every model
@@ -231,7 +231,6 @@ export function BenchmarksPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Manage"
         title="Benchmarks"
         subtitle="A fixed suite, run locally. Same prompts, same seed, same token counts every time."
         actions={
@@ -304,7 +303,6 @@ export function BenchmarksPage() {
           items={[
             { key: "suite", label: "Suite" },
             { key: "leaderboard", label: "Leaderboard" },
-            { key: "community", label: "Community" },
           ]}
         />
         <span className="data ml-auto text-[11px] text-fg-subtle">{TAB_HINT[tab]}</span>
@@ -384,20 +382,6 @@ export function BenchmarksPage() {
         </div>
       )}
 
-      {tab === "community" && (
-        <section className="card flex flex-col gap-3 p-5">
-          <span className="label-caps">Community results</span>
-          <NotBuiltYet label="coming soon">
-            Shared runs from machines like yours, so you can tell a slow model from a slow Mac. There is no
-            results server to publish to or read from yet, so nothing here is populated — the Leaderboard tab
-            ranks the runs measured on this machine, which are real.
-          </NotBuiltYet>
-          <p className="max-w-[640px] text-[11.5px] leading-[1.55] text-fg-subtle">
-            When it lands, a published run carries chip, memory, model, quant and timings — never a prompt or a
-            response — and only after you opt in.
-          </p>
-        </section>
-      )}
 
       {shareCard && (
         <ShareCardModal data={shareCard.data} url={shareCard.url} onClose={() => setShareCard(null)} />
@@ -475,7 +459,7 @@ function RunSetupCard({
   onStop: () => void;
 }) {
   return (
-    <div className="card flex flex-col overflow-hidden md:aspect-square">
+    <div className="card flex flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-hair bg-inset px-5 py-3">
         <span className="label-caps text-[10px]">Run setup</span>
         <span className="data text-[10.5px] text-fg-subtle">{SCENARIOS_BY_COST.length} scenarios</span>
@@ -576,7 +560,7 @@ function LiveRunCard({
   const filledSegments = running ? (runProgress?.index ?? 0) : totalSegments;
 
   return (
-    <div className={`card flex flex-col overflow-hidden md:aspect-square ${running ? "border-accent-line" : ""}`}>
+    <div className={`card flex flex-col overflow-hidden ${running ? "border-accent-line" : ""}`}>
       <div className="flex items-center justify-between border-b border-hair bg-inset px-5 py-3">
         <div className="flex items-center gap-2.5">
           {running && <span className="size-2 rounded-full bg-accent animate-pulse-dot" aria-hidden />}
@@ -656,7 +640,7 @@ function HistoryCard({
       : `${history.length} run${history.length === 1 ? "" : "s"}`;
 
   return (
-    <div className="card flex flex-col overflow-hidden md:aspect-square">
+    <div className="card flex flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-hair bg-inset px-5 py-3">
         <span className="label-caps text-[10px]">History</span>
         <SegToggle
@@ -820,7 +804,7 @@ function ShareCardModal({
       <div className="relative flex w-full max-w-md flex-col gap-4 rounded-[var(--radius-card)] border border-hair2 bg-surface p-5 shadow-overlay">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-fg">Share result</h2>
-          <button type="button" onClick={onClose} className="text-fg-subtle transition-colors hover:text-fg">
+          <button type="button" aria-label="Close share preview" onClick={onClose} className="text-fg-subtle transition-colors hover:text-fg">
             <CloseIcon className="size-4" />
           </button>
         </div>

@@ -10,7 +10,7 @@ import { SearchIcon } from "./icons";
  * of dragging by simply not carrying the `data-tauri-drag-region` attribute.
  */
 export function TitleBar({ onOpenPalette }: { onOpenPalette?: () => void }) {
-  const { status } = useServerStatus();
+  const { status, loading } = useServerStatus();
   const { theme, toggle } = useTheme();
   const reachable = status?.reachable ?? false;
 
@@ -32,7 +32,7 @@ export function TitleBar({ onOpenPalette }: { onOpenPalette?: () => void }) {
         className="flex h-[26px] cursor-pointer items-center gap-2 rounded-[7px] border border-hair bg-inset px-2.5 text-xs text-fg-subtle transition-colors duration-150 ease-out hover:border-hair2 hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
       >
         <SearchIcon className="size-3.5" />
-        <span>Search or run a command</span>
+        <span>Commands</span>
         <kbd className="data rounded border border-hair px-1 py-px text-[10px] leading-none">⌘K</kbd>
       </button>
 
@@ -49,7 +49,7 @@ export function TitleBar({ onOpenPalette }: { onOpenPalette?: () => void }) {
           aria-hidden
         />
         <span className="data text-[10.5px] text-fg-muted">
-          {reachable ? `Ollama${status?.version ? ` · ${status.version}` : ""}` : "Ollama offline"}
+          {reachable ? `Ollama${status?.version ? ` · ${status.version}` : ""}` : loading ? "Checking Ollama…" : "Ollama offline"}
         </span>
       </div>
 

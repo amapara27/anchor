@@ -339,11 +339,13 @@ pub fn write_tag_arch(
 /// Uses SQLite's built-in `user_version` pragma rather than a migrations table:
 /// no extra table, no extra rows, no dependency, and SQLite maintains it for us.
 pub fn migrate(conn: &mut Connection) -> Result<()> {
-    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    // Acquire the writer lock before reading the version: concurrent first-launch
+    // commands must not both decide to apply the same ALTER TABLE migration.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if version >= SCHEMA_VERSION {
         return Ok(());
     }
-    let tx = conn.transaction()?;
     if version < 1 {
         tx.execute_batch(V1)?;
     }

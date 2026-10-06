@@ -619,3 +619,25 @@ fn replace_library_refuses_to_wipe_the_cache_with_an_empty_scrape() {
     assert_eq!(rows.len(), 1);
     assert_eq!(fetched, Some(5_000));
 }
+
+#[test]
+fn concurrent_first_launch_migrates_once() {
+    let dir = std::env::temp_dir().join(format!("anchor-migrate-{}-{}", std::process::id(), crate::rand_hex(6).unwrap()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("registry.db");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let threads: Vec<_> = (0..8).map(|_| {
+        let path = path.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            let mut conn = Connection::open(path).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(10)).unwrap();
+            barrier.wait();
+            migrate(&mut conn).expect("concurrent migration must not repeat ALTER TABLE");
+            let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+            assert_eq!(version, SCHEMA_VERSION);
+        })
+    }).collect();
+    for thread in threads { thread.join().unwrap(); }
+    std::fs::remove_dir_all(dir).unwrap();
+}

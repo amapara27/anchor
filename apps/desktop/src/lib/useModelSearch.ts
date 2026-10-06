@@ -25,17 +25,6 @@ const CONFIDENCE_THRESHOLD = 0.68;
 export type SearchStatus = "idle" | "searching" | "ready" | "error";
 
 /**
- * The shape the Discover page consumes. `search_models` returns the ranked
- * (already capability-filtered) hits; `confident` is derived here from the top
- * score so the raw cosine number never has to reach the UI. Defined locally
- * (not in the frozen `types.ts`) since it's search-internal.
- */
-export interface SearchResponse {
-  models: ScoredModel[];
-  confident: boolean;
-}
-
-/**
  * Owns the Discover page's semantic search: runs `search_models`, tracks the
  * last submitted query for the results heading, and keeps the recent-query list
  * fresh from the backend's history store. Mirrors `useComparison`'s channel/run

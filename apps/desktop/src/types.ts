@@ -259,9 +259,6 @@ export interface DownloadState {
   error?: string;
 }
 
-export type StatusFilter = "all" | ModelStatus;
-export type SortKey = "name" | "size" | "params";
-
 // ---------------------------------------------------------------------------
 // Navigation.
 // ---------------------------------------------------------------------------
@@ -566,26 +563,6 @@ export interface BenchRun {
   thermal_label: string | null;
   /** Free-text anomaly notes, auto-populated where derivable, user-editable. */
   notes: string | null;
-}
-
-/** Mirrors `anchor_core::BenchSample` — one repeat's raw measurement behind a BenchRun's medians. */
-export interface BenchSample {
-  id: string;
-  bench_run_id: string;
-  /** 0 = warmup, 1..=repeats = measured. */
-  repeat_index: number;
-  is_warmup: boolean;
-  prefill_tps: number | null;
-  decode_tps: number | null;
-  ttft_ms: number | null;
-  prompt_eval_count: number | null;
-  prompt_eval_duration_ns: number | null;
-  eval_count: number | null;
-  eval_duration_ns: number | null;
-  total_duration_ns: number | null;
-  load_duration_ns: number | null;
-  wall_start_ms: number;
-  created_at: number;
 }
 
 /** Repeats tradeoff: `fast` runs the long-generation scenarios once, `thorough` runs everything three times. */

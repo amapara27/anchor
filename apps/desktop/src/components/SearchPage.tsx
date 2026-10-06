@@ -55,7 +55,6 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Discover"
         title="Find the right model"
         subtitle="Describe what you want to do — we'll match it to the best local models."
       />

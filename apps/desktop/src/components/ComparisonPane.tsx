@@ -88,7 +88,7 @@ function PaneBody({
     return <DownloadProgress pull={state.pull} />;
   }
 
-  // Revealed: type the buffered response out on the shared clock.
+  // Stream real output; a completed pane need not wait for the other model.
   if (revealed && state.phase === "done") {
     const text = state.response ?? "";
     const shown = text.slice(0, Math.floor(fraction * text.length));
@@ -100,8 +100,8 @@ function PaneBody({
     );
   }
 
-  // Pre-reveal: every active/finished-but-waiting slot shows the same
-  // "Generating…" state — this is the side-by-side illusion.
+  if (state.buffer) return <p className="whitespace-pre-wrap text-sm leading-relaxed">{state.buffer}</p>;
+  if (state.phase === "queued") return <p className="text-sm text-fg-muted">Waiting for the other model…</p>;
   return <GeneratingState />;
 }
 
@@ -168,7 +168,7 @@ function StatRow({
             </span>
           }
         />
-        <StatCard recessed compact label="TTFT" value={formatDuration(ttftNs)} sub="load + prompt eval" />
+        <StatCard recessed compact label="Load + prompt" value={formatDuration(ttftNs)} sub="load + prompt eval" />
         <StatCard recessed compact label="Total" value={formatDuration(stats.total_duration_ns)} />
         <StatCard
           recessed
@@ -180,7 +180,7 @@ function StatRow({
       </div>
       {sizeBytes != null && (
         <div className="mt-2 flex items-baseline justify-between px-1">
-          <span className="label-caps text-[10px]">Memory footprint</span>
+          <span className="label-caps text-[10px]">Model size on disk</span>
           <span className="mono-metric text-xs text-fg">{formatBytes(sizeBytes)}</span>
         </div>
       )}

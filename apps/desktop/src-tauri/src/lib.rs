@@ -21,6 +21,7 @@ use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
 
+#[cfg(not(feature = "native-e2e"))]
 mod tray;
 
 /// Owns Anchor's relationship to the Ollama server.
@@ -52,25 +53,30 @@ struct ServerState {
     pulls: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     chats: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     bench_cancel: AtomicBool,
+    comparison_cancel: AtomicBool,
 }
 
-/// Holds the semantic-search index built at launch.
-///
-/// The index — every catalogued model profile plus its embedding vector — is
-/// computed in the background during `setup` (the first launch downloads the
-/// embedding model, so it must not block startup) and stored here. `None` until
-/// the build finishes, and stays `None` if it fails: search is best-effort and a
-/// build failure never blocks the rest of the app.
+/// Holds the semantic-search index, built lazily on the first search.
 #[derive(Default)]
 struct SearchState {
     index: tokio::sync::RwLock<Option<SemanticIndex>>,
+    build_lock: tokio::sync::Mutex<()>,
 }
 
 /// Builds a [`Registry`] backed by `registry.db` in the app's data directory.
+#[cfg(all(feature = "native-e2e", not(debug_assertions)))]
+compile_error!("native-e2e automation must never be enabled in release builds");
+
+fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, tauri::Error> {
+    #[cfg(feature = "native-e2e")]
+    if let Some(path) = std::env::var_os("ANCHOR_E2E_DATA_DIR") {
+        return Ok(std::path::PathBuf::from(path));
+    }
+    app.path().app_data_dir()
+}
+
 fn registry(app: &AppHandle) -> Result<Registry, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = data_dir(&app)
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
     Registry::open(dir.join("registry.db")).map_err(|e| e.to_string())
 }
@@ -95,7 +101,7 @@ async fn ensure_server(app: &AppHandle) -> Result<(), String> {
         EnsureOutcome::Started(child) => {
             // Recorded so a crash or force-quit — neither of which reaches the
             // exit handler — doesn't strand a server the next launch won't own.
-            if let Ok(dir) = app.path().app_data_dir() {
+            if let Ok(dir) = data_dir(&app) {
                 server::record_pid(&dir, child.id());
             }
             // Replace any prior handle; killing a stale one avoids orphans.
@@ -196,16 +202,14 @@ async fn tag_arch(
 /// Builds a [`QueryHistory`] backed by `search_history.json` in the app's data
 /// directory (the rolling log of the user's recent searches).
 fn history(app: &AppHandle) -> Result<QueryHistory, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = data_dir(&app)
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
     Ok(QueryHistory::new(dir.join("search_history.json")))
 }
 
 /// Ranks the catalog against a natural-language `query` and returns the top
-/// `limit` models (default 3) by cosine similarity. Reads the in-memory index
-/// built at launch; errors while it's still warming up. Recording the query to
+/// `limit` models (default 3) by cosine similarity. Builds the index on first
+/// use, retaining it for subsequent searches. Recording the query to
 /// history is best-effort and never fails the search.
 #[tauri::command]
 async fn search_models(
@@ -215,6 +219,12 @@ async fn search_models(
 ) -> Result<Vec<anchor_search::ScoredModel>, String> {
     let k = limit.unwrap_or(3);
     let state = app.state::<SearchState>();
+    let _building = state.build_lock.lock().await;
+    if state.index.read().await.is_none() {
+        let dir = data_dir(&app).map_err(|e| e.to_string())?.join("embeddings");
+        let index = tauri::async_runtime::spawn_blocking(move || SemanticIndex::build(dir)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+        *state.index.write().await = Some(index);
+    }
     let guard = state.index.read().await;
     let index = guard
         .as_ref()
@@ -299,17 +309,23 @@ async fn compare_models(
     prompt: String,
     on_event: Channel<CompareEvent>,
 ) -> Result<(), String> {
+    let state = app.state::<ServerState>();
+    state.comparison_cancel.store(false, Ordering::Relaxed);
     ensure_server(&app).await?;
     let registry = registry(&app)?;
-    let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
     registry
-        .compare(&model_a, &model_b, &prompt, |event| {
+        .compare_cancellable(&model_a, &model_b, &prompt, &state.comparison_cancel, |event| {
             // Best-effort: a dropped channel (UI navigated away) shouldn't error.
             let _ = on_event.send(event);
         })
         .await;
     Ok(())
+}
+
+#[tauri::command]
+fn stop_comparison(app: AppHandle) {
+    app.state::<ServerState>().comparison_cancel.store(true, Ordering::Relaxed);
 }
 
 /// Keep-alive for chat: weights stay resident between turns so a follow-up
@@ -674,9 +690,7 @@ async fn clean_orphaned_blobs(scan: StorageScan) -> Result<u64, String> {
 
 /// Builds a [`Profiler`] backed by `hardware.json` in the app's data directory.
 fn profiler(app: &AppHandle) -> Result<Profiler, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = data_dir(&app)
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
     Ok(Profiler::new(dir.join("hardware.json")))
 }
@@ -742,9 +756,7 @@ async fn get_server_status(app: AppHandle) -> Result<ServerStatus, String> {
 /// This install's anonymous id — see [`anchor_hub::install_id`], which the CLI
 /// shares so both front-ends attribute benchmark rows to the same install.
 fn install_id(app: &AppHandle) -> Result<String, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = data_dir(&app)
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
     anchor_hub::install_id(&dir).map_err(|e| e.to_string())
 }
@@ -905,33 +917,6 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// Kicks off the semantic-search index build in the background at launch.
-///
-/// Embedding model files cache under `app_data_dir()/embeddings` so they
-/// download only on first launch and persist afterwards. The build runs on a
-/// blocking thread (it's CPU-bound and the first run downloads the model) so the
-/// UI stays responsive; the result is stashed in [`SearchState`]. Best-effort:
-/// any failure is logged and leaves the index empty rather than crashing.
-fn build_semantic_index(app: AppHandle) {
-    let cache_dir = app
-        .path()
-        .app_data_dir()
-        .map(|dir| dir.join("embeddings"))
-        .unwrap_or_else(|_| std::env::temp_dir().join("anchor-embeddings"));
-
-    tauri::async_runtime::spawn(async move {
-        match tauri::async_runtime::spawn_blocking(move || SemanticIndex::build(cache_dir)).await {
-            Ok(Ok(index)) => {
-                let count = index.len();
-                *app.state::<SearchState>().index.write().await = Some(index);
-                eprintln!("[anchor-search] semantic index ready: {count} models embedded");
-            }
-            Ok(Err(e)) => eprintln!("[anchor-search] failed to build semantic index: {e}"),
-            Err(e) => eprintln!("[anchor-search] index build task failed: {e}"),
-        }
-    });
-}
-
 /// Relaunches after an update has been staged. Tauri swaps the .app bundle on
 /// disk but leaves the old binary running, so nothing changes until this fires.
 #[tauri::command]
@@ -941,7 +926,10 @@ fn restart_app(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "native-e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder
         .plugin(tauri_plugin_opener::init())
         // The native save dialog + file write behind `savePng` (benchmark card
         // export). Only saving — nothing in the app opens a file any more.
@@ -956,10 +944,10 @@ pub fn run() {
         .setup(|app| {
             // Clean up a server a previous run left behind before anything can
             // reuse it and conclude Anchor doesn't own it.
-            if let Ok(dir) = app.handle().path().app_data_dir() {
+            if let Ok(dir) = data_dir(app.handle()) {
                 server::reap_orphan(&dir);
             }
-            build_semantic_index(app.handle().clone());
+            #[cfg(not(feature = "native-e2e"))]
             tray::init(app.handle())?;
             Ok(())
         })
@@ -974,6 +962,7 @@ pub fn run() {
             download_model,
             cancel_download,
             compare_models,
+            stop_comparison,
             run_chat,
             stop_chat,
             rewind_to_prompt,
@@ -1023,7 +1012,7 @@ pub fn run() {
                     None => unload_all_resident(app),
                 }
                 // Shut down cleanly, so the next launch has nothing to reap.
-                if let Ok(dir) = app.path().app_data_dir() {
+                if let Ok(dir) = data_dir(&app) {
                     server::clear_pid(&dir);
                 }
             }

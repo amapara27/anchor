@@ -61,11 +61,12 @@ export interface HintModel {
 export function hardwareHint(
   m: HintModel,
   profile: { memory_bytes?: number | null; chip?: string | null } | null | undefined,
+  requestedContext?: number,
 ): HardwareHint {
   const fit = estimateFit(
     m.params_b,
     m.quant as QuantId,
-    fitContext(m.contextTokens),
+    requestedContext == null ? fitContext(m.contextTokens) : Math.min(requestedContext, m.contextTokens || requestedContext),
     { memory_bytes: profile?.memory_bytes },
     { arch: m.arch, size_bytes: m.sizeBytes },
   );

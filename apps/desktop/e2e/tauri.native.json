@@ -1,0 +1,20 @@
+{
+  "identifier": "com.anchor.e2e",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Anchor E2E",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 800,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ]
+  },
+  "build": {
+    "devUrl": null
+  }
+}

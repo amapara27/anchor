@@ -12,39 +12,17 @@ import { ComparisonPane } from "./ComparisonPane";
 import { Button } from "./ui/Button";
 import { PlayIcon } from "./icons";
 
-/** Duration of the simultaneous typewriter reveal, ms. */
-const REVEAL_MS = 1400;
-
-export function ModelComparison() {
+export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
   const { models, loading } = useModels();
   const { profile } = useHardwareProfile();
-  const { a, b, running, revealed, run } = useComparison();
+  const { a, b, running, run, stop } = useComparison();
 
   const [modelA, setModelA] = useState("");
   const [modelB, setModelB] = useState("");
   const [prompt, setPrompt] = useState("");
 
-  // Shared 0→1 reveal clock — both panes type out and finish together.
-  const [fraction, setFraction] = useState(0);
-  useEffect(() => {
-    if (!revealed) {
-      setFraction(0);
-      return;
-    }
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      setFraction(1);
-      return;
-    }
-    let raf = 0;
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / REVEAL_MS);
-      setFraction(t);
-      if (t < 1) raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [revealed]);
+  const fraction = 1;
+  useEffect(() => { onBusy?.(running); }, [running, onBusy]);
 
   const distinct = modelA !== "" && modelB !== "" && modelA !== modelB;
   const canRun = distinct && prompt.trim().length > 0 && !running;
@@ -97,7 +75,6 @@ export function ModelComparison() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        eyebrow="Compare"
         title="Model Comparison"
         subtitle="Run one prompt through two local models, side by side."
       />
@@ -151,6 +128,7 @@ export function ModelComparison() {
             Models that aren’t installed will be downloaded first. They run one at a time to fit in
             memory.
           </p>
+          {running && <Button variant="ghost" onClick={stop}>Stop comparison</Button>}
           <Button variant="primary" onClick={() => run(modelA, modelB, prompt)} disabled={!canRun}>
             {running ? (
               <>
@@ -181,7 +159,7 @@ export function ModelComparison() {
               slotLabel="A"
               model={aModel}
               state={a}
-              revealed={revealed}
+              revealed={true}
               fraction={fraction}
               fastest={fastest === "a"}
             />
@@ -189,7 +167,7 @@ export function ModelComparison() {
               slotLabel="B"
               model={bModel}
               state={b}
-              revealed={revealed}
+              revealed={true}
               fraction={fraction}
               fastest={fastest === "b"}
             />

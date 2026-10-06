@@ -1,324 +1,92 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LibraryModel, ModelsTab } from "../types";
 import { useModels } from "../lib/useModels";
-import { useFavorites } from "../lib/useFavorites";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
-import { isStale } from "../lib/lastUsed";
-import { formatBytes, formatContext, formatParams, formatTokSec } from "../lib/format";
-import { DEFAULT_CONTEXT } from "../lib/fit";
+import { formatBytes } from "../lib/format";
 import { hardwareHint } from "../lib/hint";
-import { PageHeader, PrimaryButton } from "./PageHeader";
-import { Tabs } from "./ui/Tabs";
-import { Meter, SegmentedBar } from "./ui/SegmentedBar";
+import { DEFAULT_CONTEXT } from "../lib/fit";
 import { ModelDetailAside } from "./ModelDetailAside";
 import { SearchPage } from "./SearchPage";
 import { BrowsePage } from "./BrowsePage";
 import { ModelComparison } from "./ModelComparison";
-import { DownloadIcon, RefreshIcon, SearchIcon } from "./icons";
+import { Tabs } from "./ui/Tabs";
+import { ConfirmDialog } from "./ui/ConfirmDialog";
 
-interface ModelsHubProps {
-  /** Jump target from the command palette; selects a model in the aside. */
-  openModel: { id: string; nonce: number } | null;
-  initialTab?: ModelsTab;
-}
-
-const FIT_TONE: Record<string, { color: string; label: string }> = {
-  ok: { color: "var(--ok)", label: "fits" },
-  tight: { color: "var(--warn)", label: "tight" },
-  wont_fit: { color: "var(--danger)", label: "won't fit" },
-  unknown: { color: "var(--hair2)", label: "—" },
-};
-
-/** Quick filters over the installed list. */
-const CHIPS = ["Fits now", "Favourites", "Stale"] as const;
-type Chip = (typeof CHIPS)[number];
-
-const COLUMNS = "grid-cols-[minmax(0,1.6fr)_66px_84px_62px_74px_96px_90px]";
-
-/** Model management: the installed library, discovery, and side-by-side compare. */
-export function ModelsHub({ openModel, initialTab = "installed" }: ModelsHubProps) {
-  const { models, loading, error, downloads, reload, startDownload, removeModel } = useModels();
-  const { isFavorite } = useFavorites();
-  const { profile } = useHardwareProfile();
-
+export function ModelsHub({openModel, initialTab = "installed", onTry, onBenchmark, onCompareBusy}: {
+  openModel: {id: string; nonce: number} | null; initialTab?: ModelsTab;
+  onCompareBusy?: (busy: boolean) => void;
+  onTry: (id: string, context: number) => Promise<void>; onBenchmark: (id: string) => void;
+}) {
+  const {models, loading, error, downloads, reload, startDownload, removeModel} = useModels();
+  const {profile} = useHardwareProfile();
   const [tab, setTab] = useState<ModelsTab>(initialTab);
   const [query, setQuery] = useState("");
-  const [chips, setChips] = useState<Record<Chip, boolean>>({
-    "Fits now": false,
-    Favourites: false,
-    Stale: false,
-  });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Browse's tags mostly aren't catalog entries, so they can't be looked up out
-  // of `models` like Installed/Discover selections — this holds the synthetic
-  // LibraryModel BrowsePage builds for whichever tag row is clicked.
-  const [selectedBrowseModel, setSelectedBrowseModel] = useState<LibraryModel | null>(null);
-
-  const totalMemoryBytes = profile?.memory_bytes ?? null;
-  const chip = profile?.chip ?? null;
-
-  // A palette jump lands on Installed with that model selected in the aside.
+  const [selected, setSelected] = useState<LibraryModel | null>(null);
+  const inspectorRef = useRef<HTMLElement>(null);
+  const selectionTrigger = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (openModel?.id) {
-      setTab("installed");
-      setSelectedId(openModel.id);
+    if (selected && tab !== "compare") {
+      inspectorRef.current?.focus({preventScroll: true});
+      inspectorRef.current?.scrollIntoView({block: "start"});
     }
-  }, [openModel]);
-  useEffect(() => setTab(initialTab), [initialTab]);
-
-  const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
-
-  // Every installed model, decorated with the derived figures the table shows.
-  const rows = useMemo(() => {
-    const now = Date.now();
-    return installed.map((m) => {
-      const hint = hardwareHint(
-        {
-          id: m.id,
-          params_b: m.spec.params_b,
-          quant: m.spec.quant,
-          contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT,
-          arch: m.arch,
-          sizeBytes: m.size_bytes,
-        },
-        { memory_bytes: totalMemoryBytes, chip },
-      );
-      const { fit, tps } = hint;
-      return {
-        model: m,
-        fit,
-        tps,
-        stale: isStale(m.id, m.modified_at, now),
-        // Share of memory the model needs — the width of its fit meter.
-        load: fit.breakdown.availableGB > 0 ? fit.breakdown.totalNeededGB / fit.breakdown.availableGB : 0,
-      };
-    });
-  }, [installed, totalMemoryBytes, chip]);
-
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (q && !`${r.model.name} ${r.model.family} ${r.model.spec.blurb}`.toLowerCase().includes(q)) return false;
-      if (chips["Fits now"] && r.fit.tier !== "ok") return false;
-      if (chips.Favourites && !isFavorite(r.model.id)) return false;
-      if (chips.Stale && !r.stale) return false;
-      return true;
-    });
-  }, [rows, query, chips, isFavorite]);
-
-  const selected = tab === "browse" ? selectedBrowseModel : (models.find((m) => m.id === selectedId) ?? null);
-
-  // Headroom bar: active weights vs stale weights against unified memory.
-  const weightsBytes = installed.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0);
-  const staleBytes = rows.filter((r) => r.stale).reduce((sum, r) => sum + (r.model.size_bytes ?? 0), 0);
-  const headroom =
-    totalMemoryBytes && totalMemoryBytes > 0
-      ? [
-          {
-            label: "active",
-            fraction: (weightsBytes - staleBytes) / totalMemoryBytes,
-            color: "var(--accent)",
-            detail: formatBytes(weightsBytes - staleBytes),
-          },
-          {
-            label: "stale",
-            fraction: staleBytes / totalMemoryBytes,
-            color: "var(--hair2)",
-            detail: formatBytes(staleBytes),
-          },
-        ]
-      : [];
-
-  return (
-    <>
-      <div className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[1180px] flex-col gap-[18px] px-7 pb-9 pt-6">
-          <PageHeader
-            eyebrow="Manage"
-            title="Models"
-            actions={
-              <>
-                <label className="flex h-8 w-[230px] items-center gap-2 rounded-lg border border-hair bg-surface px-2.5">
-                  <SearchIcon className="size-3.5 shrink-0 text-fg-subtle" />
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search installed models…"
-                    aria-label="Search models"
-                    className="min-w-0 flex-1 bg-transparent text-[12.5px] text-fg placeholder:text-fg-subtle focus:outline-none"
-                  />
-                </label>
-                <PrimaryButton onClick={() => setTab("discover")}>
-                  <DownloadIcon className="size-3.5" />
-                  Pull model
-                </PrimaryButton>
-              </>
-            }
-          />
-
-          {totalMemoryBytes != null && (
-            <section className="card flex flex-col gap-2.5 p-4">
-              <div className="flex flex-wrap items-baseline gap-2.5">
-                <span className="label-caps">
-                  Headroom · {chip ?? "this Mac"} · {formatBytes(totalMemoryBytes)} unified
-                </span>
-                <span className="data ml-auto text-[11.5px] text-fg-muted">
-                  {installed.length} installed · {formatBytes(weightsBytes)} on disk
-                  {staleBytes > 0 && ` · ${formatBytes(staleBytes)} reclaimable`}
-                </span>
-              </div>
-              <SegmentedBar segments={headroom} height={9} legend />
-            </section>
-          )}
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            <Tabs
-              ariaLabel="Models view"
-              value={tab}
-              onChange={setTab}
-              items={[
-                { key: "installed", label: "Installed", count: installed.length },
-                { key: "discover", label: "Discover" },
-                { key: "browse", label: "Browse all" },
-                { key: "compare", label: "Compare" },
-              ]}
-            />
-            {tab === "installed" && (
-              <>
-                <div className="flex flex-wrap gap-1.5">
-                  {CHIPS.map((label) => {
-                    const on = chips[label];
-                    return (
-                      <button
-                        key={label}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => setChips((c) => ({ ...c, [label]: !c[label] }))}
-                        className={[
-                          "flex h-7 cursor-pointer items-center rounded-full border px-3 text-xs transition-colors duration-150 ease-out",
-                          "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-                          on
-                            ? "border-accent-line bg-accent-soft text-accent-text"
-                            : "border-hair text-fg-muted hover:border-hair2 hover:text-fg",
-                        ].join(" ")}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="data ml-auto text-[11px] text-fg-subtle">
-                  {visible.length} of {installed.length} installed
-                </span>
-              </>
-            )}
-          </div>
-
-          {error && (
-            <div className="flex items-center gap-3 rounded-[var(--radius-card)] border border-hair bg-inset px-4 py-3">
-              <p className="min-w-0 flex-1 truncate text-xs text-fg-muted" title={error}>
-                Couldn’t confirm installed models — showing the catalog. ({error})
-              </p>
-              <button
-                type="button"
-                onClick={reload}
-                className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-hair px-2.5 py-1 text-xs text-fg-muted transition-colors hover:border-hair2 hover:text-fg"
-              >
-                <RefreshIcon className="size-3.5" /> Retry
-              </button>
-            </div>
-          )}
-
-          {tab === "installed" &&
-            (loading ? (
-              <div className="card shimmer h-64" aria-hidden />
-            ) : visible.length === 0 ? (
-              <p className="card px-4 py-10 text-center text-sm text-fg-subtle">
-                {installed.length === 0
-                  ? "No models installed yet — pull one from Discover."
-                  : "No installed models match those filters."}
-              </p>
-            ) : (
-              <section className="card overflow-hidden">
-                <div className={`label-caps grid ${COLUMNS} gap-3 border-b border-hair bg-inset px-4 py-2.5`}>
-                  <span>Model</span>
-                  <span className="text-right">Params</span>
-                  <span>Quant</span>
-                  <span className="text-right">Ctx</span>
-                  <span className="text-right">Disk</span>
-                  <span>Fit</span>
-                  <span className="text-right">Speed</span>
-                </div>
-                {visible.map(({ model, fit, tps, load }) => {
-                  const tone = FIT_TONE[fit.tier];
-                  return (
-                    <button
-                      key={model.id}
-                      type="button"
-                      onClick={() => setSelectedId(model.id)}
-                      className={[
-                        `grid w-full ${COLUMNS} cursor-pointer items-center gap-3 border-b border-hair px-4 py-2.5 text-left`,
-                        "transition-colors duration-150 ease-out hover:bg-inset",
-                        model.id === selectedId ? "bg-inset shadow-[inset_2px_0_0_var(--accent)]" : "",
-                      ].join(" ")}
-                    >
-                      <span className="flex min-w-0 items-center gap-2.5">
-                        <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
-                        <span className="flex min-w-0 flex-col gap-0.5">
-                          <span className="data truncate text-[12.5px] font-medium text-fg">{model.name}</span>
-                          <span className="truncate text-[11px] text-fg-subtle">{model.spec.blurb}</span>
-                        </span>
-                      </span>
-                      <span className="data text-right text-[11.5px] text-fg-muted">
-                        {formatParams(model.spec.params_b)}
-                      </span>
-                      <span className="data text-[11.5px] text-fg-muted">{model.spec.quant}</span>
-                      <span className="data text-right text-[11.5px] text-fg-muted">
-                        {formatContext(model.spec.context_tokens)}
-                      </span>
-                      <span className="data text-right text-[11.5px] text-fg-muted">
-                        {formatBytes(model.size_bytes)}
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <Meter fraction={load} color={tone.color} className="flex-1" />
-                        <span className="data text-[10px]" style={{ color: tone.color }}>
-                          {tone.label}
-                        </span>
-                      </span>
-                      <span className="data text-right text-[11.5px] text-fg-muted">
-                        {tps ? formatTokSec(tps.value) : "—"}
-                      </span>
-                    </button>
-                  );
-                })}
-              </section>
-            ))}
-
-          {tab === "discover" && <SearchPage onSelect={setSelectedId} />}
-          {tab === "browse" && (
-            <BrowsePage onSelect={setSelectedBrowseModel} selectedTag={selectedBrowseModel?.id ?? null} />
-          )}
-          {tab === "compare" && <ModelComparison />}
-        </div>
+  }, [selected?.id, tab]);
+  const closeInspector = () => {
+    setSelected(null);
+    if (selectionTrigger.current?.isConnected) selectionTrigger.current.focus();
+  };
+  const [pendingRemove, setPendingRemove] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [findMode, setFindMode] = useState<"discover" | "browse">("discover");
+  const [compared, setCompared] = useState(false);
+  const [fitsOnly, setFitsOnly] = useState(false);
+  useEffect(() => { setTab(initialTab); if (initialTab === "compare") setCompared(true); if (initialTab === "browse") setFindMode("browse"); }, [initialTab]);
+  useEffect(() => { if (openModel) { setTab("installed"); setSelected(models.find(m => m.id === openModel.id) ?? null); } }, [openModel, models]);
+  const installed = models.filter(m => m.status === "installed");
+  const select = (id: string) => {
+    selectionTrigger.current = document.activeElement as HTMLElement;
+    setSelected(models.find(m => m.id === id) ?? null);
+  };
+  const hintFor = (m: LibraryModel) => hardwareHint({ id: m.id, params_b: m.spec.params_b, quant: m.spec.quant,
+    contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT, arch: m.arch, sizeBytes: m.size_bytes }, profile);
+  const rows = installed.filter(m => (!query || (m.name + " " + m.id).toLowerCase().includes(query.toLowerCase())) && (!fitsOnly || hintFor(m).tier === "ok"));
+  const active = selected ? models.find(m => m.id === selected.id) ?? selected : null;
+  const switchTab = (next: ModelsTab) => { setTab(next); setSelected(null); if (next === "compare") setCompared(true); };
+  return <div className="scrollbar-slim min-w-0 flex-1 overflow-y-auto">
+    <div className="mx-auto flex max-w-[1100px] flex-col gap-5 px-6 py-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div><h1 className="text-2xl font-semibold">Models</h1><p className="mt-1 text-sm text-fg-muted">{profile?.chip ?? "Your Mac"}{profile?.memory_bytes ? " · " + formatBytes(profile.memory_bytes) + " RAM" : ""} · {installed.length} installed · {formatBytes(installed.reduce((sum,m) => sum + (m.size_bytes ?? 0),0))} on disk</p></div>
+        <button onClick={() => switchTab("discover")} className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Add model</button>
+      </header>
+      <div className="flex flex-wrap items-center gap-3">
+        <Tabs ariaLabel="Models view" value={tab === "browse" ? "discover" : tab} onChange={switchTab} items={[{key:"installed",label:"Installed"},{key:"discover",label:"Find"},{key:"compare",label:"Compare"}]} />
+        {tab === "installed" && <><input aria-label="Search installed models" placeholder="Search installed models…" value={query} onChange={e => setQuery(e.target.value)} className="min-w-0 flex-1 rounded-lg border border-hair bg-inset px-3 py-2 text-sm" />
+          <button aria-pressed={fitsOnly} onClick={() => setFitsOnly(v=>!v)} className="rounded-lg border border-hair px-3 py-2 text-xs">Fits at 4K</button></>}
       </div>
-
-      {tab !== "compare" && (
-        <ModelDetailAside
-          model={selected}
-          download={selected ? downloads[selected.id] : undefined}
-          totalMemoryBytes={totalMemoryBytes}
-          chip={chip}
-          onDownload={() => selected && startDownload(selected.id)}
-          onRemove={() => {
-            if (!selected) return;
-            removeModel(selected.id);
-            setSelectedId(null);
-            setSelectedBrowseModel(null);
-          }}
-          onOpenInChat={() => {}}
-          onBenchmark={() => {}}
-        />
-      )}
-    </>
-  );
+      {(error || actionError) && <div role="alert" className="flex items-center gap-3 rounded-lg border border-hair p-3 text-sm"><span className="flex-1">{actionError ?? error}</span><button onClick={() => {setActionError(null); reload();}} className="text-accent-text">Retry</button></div>}
+      {tab === "installed" && (loading ? <p role="status">Loading your models…</p> : installed.length === 0 ?
+        <div className="py-12"><h2 className="text-lg font-medium">Choose your first local model</h2><p className="mt-2 text-sm text-fg-muted">Find a model for your task and check its memory fit before downloading.</p><button onClick={() => switchTab("discover")} className="mt-4 rounded-lg bg-accent px-4 py-2 text-sm text-accent-fg">Find a model</button></div> :
+        <div aria-label="Installed model list" className="divide-y divide-hair border-y border-hair">
+          {rows.map(m => {const hint=hintFor(m); return <button key={m.id} aria-label={"Inspect " + m.name} onClick={() => select(m.id)} className="grid w-full grid-cols-[minmax(180px,1fr)_90px_120px_140px] items-center gap-4 py-4 text-left hover:bg-inset focus-visible:outline-2 focus-visible:outline-accent">
+            <span className="min-w-0"><span className="block truncate text-sm font-medium">{m.name}</span><span className="mt-1 block text-xs text-fg-muted">{m.spec.quant}</span></span>
+            <span className="data text-xs text-fg-muted">{formatBytes(m.size_bytes)}</span><span className={"text-xs " + hint.tone}>{hint.label} at 4K</span>
+            <span className="data text-right text-xs text-fg-muted">{hint.tps ? (hint.tps.source === "measured" ? "Measured " : "Estimated ") + hint.tpsLabel : "Speed unknown"}</span>
+          </button>})}
+          {rows.length === 0 && <p className="py-8 text-sm text-fg-muted">No models match these filters.</p>}
+        </div>)}
+      {(tab === "discover" || tab === "browse") && <div>
+        <div className="mb-5 flex gap-3"><button aria-pressed={findMode === "discover"} onClick={() => setFindMode("discover")} className="text-sm text-accent-text">By task</button><button aria-pressed={findMode === "browse"} onClick={() => setFindMode("browse")} className="text-sm text-accent-text">Ollama library</button></div>
+        {findMode === "discover" ? <SearchPage onSelect={select} /> : <BrowsePage onSelect={setSelected} selectedTag={selected?.id ?? null} />}
+      </div>}
+      {compared && <div hidden={tab !== "compare"}><ModelComparison onBusy={onCompareBusy} /></div>}
+      {active && tab !== "compare" && <section ref={inspectorRef} tabIndex={-1} aria-label="Model inspector" className="rounded-xl border border-hair bg-surface">
+        <div className="flex justify-end p-2"><button aria-label="Close model details" onClick={closeInspector} className="px-3 py-1 text-sm text-fg-muted">Close</button></div>
+        <ModelDetailAside key={active.id} model={active} download={downloads[active.id]} totalMemoryBytes={profile?.memory_bytes ?? null} chip={profile?.chip ?? null}
+          onDownload={() => startDownload(active.id)} onRemove={() => setPendingRemove(true)}
+          onOpenInChat={context => onTry(active.id, context).catch(e=>{setActionError(String(e));})} onBenchmark={() => onBenchmark(active.id)} />
+      </section>}
+      <ConfirmDialog open={pendingRemove} title="Remove model?" body={"Remove " + (active?.name ?? "model") + " from disk? You can download it again."} confirmLabel="Remove" onCancel={() => setPendingRemove(false)} onConfirm={() => {
+        setPendingRemove(false); if(active) void removeModel(active.id).then(()=>setSelected(null)).catch(e=>setActionError(String(e)));
+      }} />
+    </div>
+  </div>;
 }

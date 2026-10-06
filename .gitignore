@@ -1,35 +1,39 @@
-.claude
-./claude/worktrees
+# Local agent instructions, notes and references
+/.internal/
+/.claude/
+/.codex/
+/.agents/
+/.mcp.json
+/references/
+AGENTS.md
+CLAUDE.md
+SKILL.md
 
-# Rust
-/target
-**/target
-# Shared CARGO_TARGET_DIR for the agent worktrees — one build of the heavy
-# deps (onnxruntime/fastembed) instead of one per worktree.
-/.cargo-target-shared
+# Build caches and generated output
+target/
+/.cargo-target-shared/
+node_modules/
+.pnpm-store/
+dist/
+dist-ssr/
+/apps/desktop/src-tauri/gen/
+/apps/desktop/test-results/
+/apps/desktop/playwright-report/
 
-# Node
-node_modules
-.pnpm-store
-
-# Build output
-dist
-dist-ssr
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
 *.local
+*.p8
+*.p12
+*.pfx
+*.key
+/private_keys/
 
-# Tauri generated
-apps/desktop/src-tauri/gen
-
-# Editor / OS
+# Editor and OS files
 .DS_Store
-.idea
+.idea/
 .vscode/*
 !.vscode/extensions.json
 *.log
-
-CLAUDE.md
-SKILL.md
-.mcp.json
-
-# Local QA sweep notes
-QA-FINDINGS.md

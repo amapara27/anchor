@@ -116,5 +116,8 @@ export function useComparison() {
     }
   }, [running, a.phase, b.phase]);
 
-  return { a, b, running, revealed, run, reset };
+  const stop = useCallback(() => { void invoke("stop_comparison").catch(e => {
+    setState(s => ({...s, b: {...s.b, error: String(e)}}));
+  }); }, []);
+  return { a, b, running, revealed, run, reset, stop };
 }

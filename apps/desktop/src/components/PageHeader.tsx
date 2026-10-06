@@ -1,13 +1,11 @@
 import type { ReactNode } from "react";
 
-/** Shared page header: mono eyebrow, title, optional blurb, right-aligned actions. */
+/** Shared page header: title, optional blurb, right-aligned actions. */
 export function PageHeader({
-  eyebrow,
   title,
   subtitle,
   actions,
 }: {
-  eyebrow: string;
   title: string;
   subtitle?: string;
   actions?: ReactNode;
@@ -15,7 +13,6 @@ export function PageHeader({
   return (
     <header className="flex flex-wrap items-end gap-5">
       <div className="flex min-w-0 flex-col gap-1.5">
-        <span className="label-caps tracking-[0.08em]">{eyebrow}</span>
         <h1 className="text-[26px] font-semibold tracking-[-0.02em] text-fg">{title}</h1>
         {subtitle && <p className="max-w-[560px] text-[13.5px] leading-[1.55] text-fg-muted">{subtitle}</p>}
       </div>

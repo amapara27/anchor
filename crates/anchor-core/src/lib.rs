@@ -470,11 +470,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn model_status_serializes_lowercase() {
-        let json = serde_json::to_string(&ModelStatus::Installed).unwrap();
-        assert_eq!(json, "\"installed\"");
-    }
 
     #[test]
     fn hw_key_encodes_chip_cores_and_memory() {

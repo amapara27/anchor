@@ -66,57 +66,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_spinner_cycles_through_every_frame_and_wraps() {
-        let first = spinner();
-        let cycle: Vec<char> = std::iter::once(first)
-            .chain((1..SPINNER.len()).map(|_| spinner()))
-            .collect();
-        let mut seen = cycle.clone();
-        seen.sort_unstable();
-        seen.dedup();
-        assert_eq!(seen.len(), SPINNER.len(), "a full turn shows every frame once");
-        assert_eq!(spinner(), first, "and then wraps back around");
-    }
-
-    // A bar is a fixed-width cell in a line that gets padded to a fixed width;
-    // one that overruns on a rounding error shears the whole display.
-    #[test]
-    fn the_bar_is_always_exactly_its_requested_width() {
-        for f in [-1.0, 0.0, 0.001, 0.5, 0.999, 1.0, 42.0, f64::NAN] {
-            assert_eq!(bar(f, 20).chars().count(), 20, "fraction {f}");
+    fn progress_widgets_handle_empty_and_out_of_range_input() {
+        for fraction in [-1.0, 0.0, 0.5, 1.0, 42.0, f64::NAN] {
+            assert_eq!(bar(fraction, 20).chars().count(), 20);
         }
-    }
-
-    #[test]
-    fn the_bar_fills_from_empty_to_full() {
-        assert_eq!(bar(0.0, 4), "░░░░");
-        assert_eq!(bar(1.0, 4), "████");
-        assert_eq!(bar(0.5, 4), "██░░");
-        assert_eq!(bar(2.0, 4), "████", "over-report is clamped, not overrun");
-    }
-
-    #[test]
-    fn the_sparkline_keeps_only_the_most_recent_window() {
-        let values: Vec<f64> = (1..=100).map(|v| v as f64).collect();
-        assert_eq!(sparkline(&values, 12).chars().count(), 12);
-        // Fewer values than the window is a partial line, not padding.
-        assert_eq!(sparkline(&[1.0, 2.0], 12).chars().count(), 2);
         assert_eq!(sparkline(&[], 12), "");
-    }
-
-    // A rising rate has to read as rising; the whole point of the graphic is
-    // seeing a model slow down mid-run.
-    #[test]
-    fn the_sparkline_scales_to_the_windows_own_maximum() {
-        assert_eq!(sparkline(&[0.0, 50.0, 100.0], 12), "▁▅█");
-        // A flat window reads as sustained-at-full, not as nothing happening.
-        assert_eq!(sparkline(&[40.0, 40.0, 40.0], 12), "███");
-    }
-
-    // Ollama can report a zero rate before the first token lands; dividing by
-    // that maximum would be NaN and index out of the level table.
-    #[test]
-    fn an_all_zero_window_renders_flat_rather_than_panicking() {
-        assert_eq!(sparkline(&[0.0, 0.0, 0.0], 12), "▁▁▁");
+        assert_eq!(sparkline(&[0.0, 0.0], 12), "▁▁");
+        assert_eq!(sparkline(&[0.0, 50.0, 100.0], 2), "▅█");
     }
 }

@@ -146,8 +146,8 @@ fn walk_files(dir: &Path, f: &mut impl FnMut(&Path)) -> std::io::Result<()> {
 }
 
 /// Deletes every blob listed as orphaned in `scan` and returns the bytes freed.
-/// Takes the scan back (not "clean whatever's orphaned now") so a stale scan
-/// can't delete a blob that's since become referenced by a new pull.
+/// Rechecks the selected digests against a fresh scan before deleting: the
+/// frontend's scan may be stale or forged, including its byte counts.
 ///
 /// The scan crosses the IPC boundary before coming back here, so neither its
 /// `root` nor its digests are trusted: the root is re-resolved from the
@@ -157,10 +157,8 @@ fn walk_files(dir: &Path, f: &mut impl FnMut(&Path)) -> std::io::Result<()> {
 /// — is not one, and this is the only place in the app that deletes a file by a
 /// name it was handed. Returns 0 when the store can't be resolved.
 ///
-/// ponytail: scan-then-delete with no lock against a concurrent pull — a pull
-/// that starts after the scan and is still writing its blob when the user
-/// confirms cleanup moments later could race. User-triggered, behind a confirm
-/// dialog; add a pull-in-progress guard if it bites in practice.
+/// ponytail: a fresh scan cannot lock external Ollama clients; a manifest
+/// written between revalidation and deletion can still race with cleanup.
 pub fn clean_orphaned(scan: &StorageScan) -> u64 {
     match models_root() {
         Some(root) => clean_orphaned_at(&root, scan),
@@ -169,9 +167,13 @@ pub fn clean_orphaned(scan: &StorageScan) -> u64 {
 }
 
 fn clean_orphaned_at(root: &Path, scan: &StorageScan) -> u64 {
+    let Ok(current) = scan_at(root) else { return 0 };
     let blobs_dir = root.join("blobs");
     let mut freed = 0u64;
-    for blob in &scan.orphaned_blobs {
+    for blob in &current.orphaned_blobs {
+        if !scan.orphaned_blobs.iter().any(|selected| selected.digest == blob.digest) {
+            continue;
+        }
         let Some(hex) = blob.digest.strip_prefix("sha256:") else {
             continue;
         };
@@ -253,6 +255,23 @@ mod tests {
         assert_eq!(freed, 50);
         assert!(!root.join(format!("blobs/sha256-{}", hex("bbbb"))).exists());
         assert!(root.join(format!("blobs/sha256-{}", hex("aaaa"))).exists()); // referenced blob untouched
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn stale_or_forged_scan_cannot_delete_referenced_blobs_or_inflate_freed_bytes() {
+        let root = tmp("revalidate");
+        write_blob(&root, &hex("aaaa"), &[0u8; 100]);
+        write_blob(&root, &hex("bbbb"), &[0u8; 50]);
+        let mut selected = scan_at(&root).unwrap();
+        // A new model now references one of the formerly orphaned blobs.
+        write_manifest(&root, "registry.ollama.ai/library/llama3.1/8b", &[(&hex("aaaa"), 100)]);
+        selected.root = "/tmp/forged-store".into();
+        for blob in &mut selected.orphaned_blobs { blob.size_bytes = u64::MAX; }
+        assert_eq!(clean_orphaned_at(&root, &selected), 50);
+        assert!(root.join(format!("blobs/sha256-{}", hex("aaaa"))).exists());
+        // Even a caller that claims a live blob is orphaned cannot remove it.
+        assert_eq!(clean_orphaned_at(&root, &selected), 0);
         fs::remove_dir_all(&root).ok();
     }
 

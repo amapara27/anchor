@@ -44,6 +44,9 @@ export function usePresets() {
 
   useEffect(() => {
     reload();
+    const refresh = () => { void reload(); };
+    window.addEventListener("anchor:presets", refresh);
+    return () => window.removeEventListener("anchor:presets", refresh);
   }, [reload]);
 
   /** Applies an edit locally, then writes it through after the debounce. */
@@ -55,7 +58,7 @@ export function usePresets() {
     });
     window.clearTimeout(timers.current[preset.id]);
     timers.current[preset.id] = window.setTimeout(() => {
-      invoke("save_preset", { preset }).catch(() => {});
+      invoke("save_preset", { preset }).then(() => window.dispatchEvent(new Event("anchor:presets"))).catch(() => {});
     }, SAVE_DEBOUNCE_MS);
   }, []);
 

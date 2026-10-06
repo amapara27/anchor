@@ -247,6 +247,7 @@ function useChatState() {
     activeId,
     messages,
     running,
+    runningIds,
     loadingModel,
     error,
     select,

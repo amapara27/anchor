@@ -97,9 +97,9 @@ export function SearchResultCard({
   const hint = hardwareHint(
     {
       id: profile.id,
-      params_b: profile.params_b,
-      quant: profile.quant,
-      contextTokens: profile.context_tokens,
+      params_b: libraryModel?.spec.params_b ?? profile.params_b,
+      quant: libraryModel?.spec.quant ?? profile.quant,
+      contextTokens: libraryModel?.spec.context_tokens ?? profile.context_tokens,
       arch: libraryModel?.arch ?? profile.arch,
       sizeBytes: libraryModel?.size_bytes,
     },
@@ -107,7 +107,7 @@ export function SearchResultCard({
   );
   // The context the fit was judged at — named on the stat so the number isn't
   // read as a figure for the model's full advertised window.
-  const judgedContext = fitContext(profile.context_tokens);
+  const judgedContext = fitContext(libraryModel?.spec.context_tokens ?? profile.context_tokens);
 
   // The "why": the authored profile prose. The keyword tail (after "Keywords:")
   // is rendered as chips below, so strip it here. Kept as a single text slot so a
@@ -116,7 +116,7 @@ export function SearchResultCard({
 
   if (hero) {
     return (
-      <div className="card cursor-pointer p-6" onClick={onSelect}>
+      <div role="button" tabIndex={0} aria-label={"Inspect " + profile.name} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onSelect(); } }} className="card cursor-pointer p-6" onClick={onSelect}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="label-caps truncate">
@@ -138,7 +138,7 @@ export function SearchResultCard({
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-          <StatCard recessed label="Size" value={`${profile.download_gb.toFixed(1)}`} sub="GB download" compact />
+          <StatCard recessed label="Size" value={`${((libraryModel?.spec.download_bytes ?? profile.download_gb * GB) / GB).toFixed(1)}`} sub="GB download" compact />
           <StatCard
             recessed
             label="Req. RAM"
@@ -146,8 +146,8 @@ export function SearchResultCard({
             sub={`GB at ${formatContext(judgedContext)}`}
             compact
           />
-          <StatCard recessed label="Quant" value={profile.quant} compact />
-          <StatCard recessed label="Context" value={formatContext(profile.context_tokens)} compact />
+          <StatCard recessed label="Quant" value={libraryModel?.spec.quant ?? profile.quant} compact />
+          <StatCard recessed label="Context" value={formatContext(libraryModel?.spec.context_tokens ?? profile.context_tokens)} compact />
         </div>
 
         <div className="mt-4">
@@ -182,7 +182,7 @@ export function SearchResultCard({
   }
 
   return (
-    <div className="card cursor-pointer p-4" onClick={onSelect}>
+    <div role="button" tabIndex={0} aria-label={"Inspect " + profile.name} onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onSelect(); } }} className="card cursor-pointer p-4" onClick={onSelect}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
@@ -221,8 +221,8 @@ export function SearchResultCard({
       ) : (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-hair pt-3">
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            <SpecPill icon={<RulerIcon className="size-3.5" />} label="Parameters" value={formatParams(profile.params_b)} />
-            <SpecPill icon={<LayersIcon className="size-3.5" />} label="Quantization" value={profile.quant} />
+            <SpecPill icon={<RulerIcon className="size-3.5" />} label="Parameters" value={formatParams(libraryModel?.spec.params_b ?? profile.params_b)} />
+            <SpecPill icon={<LayersIcon className="size-3.5" />} label="Quantization" value={libraryModel?.spec.quant ?? profile.quant} />
             <SpecPill icon={<ChipIcon className="size-3.5" />} label="Context" value={formatContext(profile.context_tokens)} />
           </div>
           <ActionButton

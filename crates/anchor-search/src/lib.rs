@@ -211,16 +211,6 @@ impl SemanticIndex {
         })
     }
 
-    /// Number of indexed models.
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// All indexed entries (read access for ranking).
-    pub fn entries(&self) -> &[IndexEntry] {
-        &self.entries
-    }
-
     /// Rank the catalog against a natural-language `query` and return the top
     /// `k` models by cosine similarity, most relevant first.
     ///

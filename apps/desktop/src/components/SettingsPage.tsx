@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { DEFAULT_PRESET_ID, type HardwareProfile, type Preset } from "../types";
 import { useModels } from "../lib/useModels";
 import { usePresets } from "../lib/usePresets";
@@ -7,7 +7,6 @@ import { useServerStatus } from "../lib/useServerStatus";
 import { useTheme, type ThemePref } from "../lib/useTheme";
 import { formatBytes, formatContext } from "../lib/format";
 import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
-import { NotBuiltYet } from "./ui/NotBuiltYet";
 import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
@@ -58,7 +57,7 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Manage" title="Settings" />
+      <PageHeader title="Settings" />
 
       <div className="grid grid-cols-[178px_minmax(0,1fr)] items-start gap-6">
         <nav className="sticky top-0 flex flex-col gap-0.5" aria-label="Settings sections">
@@ -182,10 +181,6 @@ function AppearancePanel() {
           );
         })}
       </div>
-      <NotBuiltYet label="coming soon">
-        Compact density and a live tokens-per-second readout in chat are on the list. Only the theme is wired up
-        today.
-      </NotBuiltYet>
     </SectionCard>
   );
 }
@@ -228,8 +223,8 @@ const UNSET = { value: "", label: "Model default" };
  * is not zero: it means the option is omitted from the request entirely.
  */
 function InferencePanel() {
-  const { presets, loading, save, saveNow, create, remove } = usePresets();
   const { models } = useModels();
+  const { presets, loading, save, saveNow, create, remove } = usePresets();
   const [editingId, setEditingIdState] = useState(() => lastEditingId);
   const setEditingId = (next: string) => {
     lastEditingId = next;
@@ -456,14 +451,9 @@ function Stepper({ children, onClick, label }: { children: React.ReactNode; onCl
 
 /** Chip identity, memory pressure, and live Ollama server state — all real. */
 function HardwarePanel() {
-  const { models } = useModels();
   const { profile, loading, refresh } = useHardwareProfile();
   const { status, loading: serverLoading, refresh: refreshServer } = useServerStatus();
 
-  const modelsBytes = useMemo(
-    () => models.filter((m) => m.status === "installed").reduce((sum, m) => sum + (m.size_bytes ?? 0), 0),
-    [models],
-  );
 
   if (loading && !profile) return <section className="card shimmer h-56" aria-hidden />;
 
@@ -501,7 +491,7 @@ function HardwarePanel() {
           <Tile
             label="Memory"
             value={formatBytes(profile.memory_bytes)}
-            sub={modelsBytes > 0 ? `${formatBytes(modelsBytes)} in weights` : "unified"}
+            sub="unified memory"
           />
         )}
         <Tile
@@ -569,7 +559,7 @@ function PrivacyPanel() {
   return (
     <SectionCard
       title="Privacy & sharing"
-      blurb="Inference is always local. Only benchmark numbers can leave this Mac, and only when you say so."
+      blurb="Inference is always local. Chats are stored locally. Downloads, update checks and explicit exports can use the network."
     >
       <div className="flex items-center gap-3 rounded-[var(--radius-card)] border border-accent-line bg-accent-soft px-3.5 py-3">
         <span className="flex size-[26px] shrink-0 items-center justify-center rounded-lg border border-accent-line">
@@ -577,18 +567,13 @@ function PrivacyPanel() {
         </span>
         <span className="flex flex-col gap-0.5">
           <span className="text-[13px] font-semibold text-accent-text">
-            No prompt or output ever leaves this device
+            Inference uses your configured Ollama server
           </span>
           <span className="text-[11.5px] text-fg-muted">
-            Chats and agent traces are stored in a local SQLite file you can delete.
+            Chats are stored in a local SQLite file you can delete.
           </span>
         </span>
       </div>
-      <NotBuiltYet label="coming soon">
-        Publishing controls — what a shared run includes, and whether it carries a handle — arrive with the
-        results server. Nothing is published today, with or without a preference, because there is nowhere to
-        publish to.
-      </NotBuiltYet>
     </SectionCard>
   );
 }

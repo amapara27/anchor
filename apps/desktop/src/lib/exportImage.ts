@@ -287,7 +287,7 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
   const bottom = el("div", { display: "flex", alignItems: "flex-end", gap: "76px" });
 
   const decodeCol = el("div", { flex: "none" });
-  const decodeSub = [d.suiteLabel, d.ttftMs != null && `${d.ttftMs.toFixed(0)} ms TTFT`].filter(Boolean).join(" · ");
+  const decodeSub = [d.suiteLabel, d.ttftMs != null && `${d.ttftMs.toFixed(0)} ms prompt eval`].filter(Boolean).join(" · ");
   const decodeNumRow = el("div", { display: "flex", alignItems: "baseline", gap: "16px", marginTop: "26px" });
   decodeNumRow.append(
     el(

@@ -49,6 +49,7 @@ function wontFitGivenResidency(
   profile: ReturnType<typeof useHardwareProfile>["profile"],
   resident: ReturnType<typeof useResidency>["models"],
   residentBytes: number,
+  context: number,
 ): boolean {
   if (!profile?.memory_bytes) return false;
   if (resident.some((m) => m.name === modelId)) return false;
@@ -64,6 +65,7 @@ function wontFitGivenResidency(
       sizeBytes: m.size_bytes,
     },
     { memory_bytes: profile.memory_bytes - residentBytes, chip: profile.chip },
+    context,
   );
   return hint.tier === "wont_fit";
 }
@@ -99,6 +101,7 @@ export function ChatWorkspace() {
   const [presetId, setPresetId] = useState(DEFAULT_PRESET_ID);
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [pendingSwap, setPendingSwap] = useState<{ text: string } | null>(null);
@@ -149,7 +152,7 @@ export function ChatWorkspace() {
     const text = input.trim();
     if (!text || running || !model) return;
     const key = activeId ?? "__new__";
-    if (!warnedConvos.current.has(key) && wontFitGivenResidency(model, models, profile, resident, residentBytes)) {
+    if (!warnedConvos.current.has(key) && wontFitGivenResidency(model, models, profile, resident, residentBytes, presets.find(p => p.id === presetId)?.num_ctx ?? DEFAULT_CONTEXT)) {
       setPendingSwap({ text });
       return;
     }
@@ -157,9 +160,10 @@ export function ChatWorkspace() {
   };
 
   return (
-    <div className="flex min-w-0 flex-1">
+    <div className="relative flex min-w-0 flex-1">
+      <button onClick={() => setShowHistory(v=>!v)} aria-expanded={showHistory} className="absolute bottom-3 right-3 z-10 rounded-lg border border-hair bg-surface px-3 py-1 text-xs">History</button>
       {/* Conversation rail */}
-      <aside className="flex w-[262px] shrink-0 flex-col border-r border-hair bg-chrome">
+      <aside hidden={!showHistory} className={(showHistory ? "flex " : "hidden ") + "w-[262px] shrink-0 flex-col border-r border-hair bg-chrome"}>
         <div className="flex flex-col gap-2.5 border-b border-hair px-3 py-3.5">
           <button
             type="button"
@@ -210,7 +214,7 @@ export function ChatWorkspace() {
             ))
           )}
           <p className="px-2 text-[11.5px] leading-[1.5] text-fg-subtle">
-            Double-click a conversation to rename it. History is stored in a local SQLite file.
+            Double-click a conversation or press F2 to rename it. History is stored in a local SQLite file.
           </p>
         </div>
       </aside>
@@ -253,7 +257,7 @@ export function ChatWorkspace() {
           />
           <p className="data mx-auto mt-2.5 flex max-w-[760px] items-center gap-2 text-[10.5px] text-fg-subtle">
             <span className="size-[5px] rounded-full bg-ok" aria-hidden />
-            This conversation never leaves this Mac
+            Prompts are sent to your configured Ollama server
           </p>
         </div>
       </section>
@@ -310,8 +314,6 @@ function ConversationRow({
 
   return (
     <div
-      onClick={onOpen}
-      onDoubleClick={onStartRename}
       className={[
         "group flex cursor-pointer flex-col gap-1 rounded-lg px-2.5 py-2 transition-colors duration-150 ease-out",
         active ? "bg-raised shadow-[inset_2px_0_0_var(--accent)]" : "hover:bg-inset",
@@ -332,12 +334,18 @@ function ConversationRow({
         />
       ) : (
         <span className="flex min-w-0 items-center gap-1.5">
-          <span
-            className={`min-w-0 flex-1 truncate text-[13px] font-medium ${active ? "text-fg" : "text-fg-muted"}`}
+          <button
+            type="button"
+            onClick={onOpen}
+            onDoubleClick={onStartRename}
+            onKeyDown={e => { if (e.key === "F2") { e.preventDefault(); onStartRename(); } }}
+            aria-label={"Open " + convo.title}
+            aria-pressed={active}
+            className={`min-w-0 flex-1 truncate text-left text-[13px] font-medium ${active ? "text-fg" : "text-fg-muted"}`}
             title={convo.title}
           >
             {convo.title}
-          </span>
+          </button>
           <button
             type="button"
             onClick={(e) => {
@@ -510,10 +518,10 @@ function MessageList({
         <span className="flex size-12 items-center justify-center rounded-xl border border-hair bg-accent-soft text-accent-text">
           <SendIcon className="size-5" />
         </span>
-        <p className="text-sm font-medium text-fg">Chat with your local models</p>
+        <p className="text-sm font-medium text-fg">Try your local model</p>
         <span className="data inline-flex items-center gap-2 text-[11px] text-fg-subtle">
           <span className="size-[5px] rounded-full bg-ok" aria-hidden />
-          This conversation never leaves your Mac
+          Prompts are sent to your configured Ollama server
         </span>
       </div>
     );

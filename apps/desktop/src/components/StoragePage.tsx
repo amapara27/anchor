@@ -23,7 +23,7 @@ const ROW_COLUMNS = "grid-cols-[26px_minmax(0,1fr)_90px_128px_120px]";
 
 /** Last-used date, e.g. "Mar 3, 2026", or "never" when untracked. */
 function formatLastUsed(ms: number | null): string {
-  if (ms == null) return "never";
+  if (ms == null) return "not recorded";
   const days = Math.floor((Date.now() - ms) / 86_400_000);
   if (days === 0) return "today";
   if (days === 1) return "yesterday";
@@ -90,9 +90,8 @@ export function StoragePage() {
   return (
     <>
       <PageHeader
-        eyebrow="Manage"
         title="Storage"
-        subtitle="What every installed model costs on disk, and what you can safely get back."
+        subtitle="What every installed model costs on disk, and review unused models and clean unreferenced files."
         actions={
           <GhostButton onClick={() => rescan()} disabled={scanning} title="Re-walk Ollama's on-disk store">
             <RefreshIcon className={`size-3.5 ${scanning ? "animate-spin" : ""}`} />
@@ -119,12 +118,12 @@ export function StoragePage() {
 
       <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5">
         <StatCard
-          label="Reclaimable"
+          label="Unused model sizes"
           value={formatBytes(reclaimBytes)}
           tone={reclaimBytes > 0 ? "warn" : "default"}
           sub={
             staleRows.length > 0
-              ? `${staleRows.length} ${staleRows.length === 1 ? "model" : "models"} unused for ${STALE_DAYS}+ days`
+              ? `${staleRows.length} ${staleRows.length === 1 ? "model" : "models"} not used in Anchor for ${STALE_DAYS}+ days`
               : "Everything's been used recently."
           }
         />
@@ -142,7 +141,7 @@ export function StoragePage() {
           {selectedIds.length > 0 ? (
             <span className="ml-auto flex items-center gap-2.5">
               <span className="data text-[11.5px] text-accent-text">
-                {selectedIds.length} selected · frees {formatBytes(selectedBytes)}
+                {selectedIds.length} selected · model sizes {formatBytes(selectedBytes)}
               </span>
               <GhostButton className="h-7 text-xs" onClick={() => setSelected({})}>
                 Clear
@@ -171,7 +170,7 @@ export function StoragePage() {
           <span />
           <span>Model</span>
           <span className="text-right">Size</span>
-          <span>Last used</span>
+          <span>Last used in Anchor</span>
           <span>Family</span>
         </div>
 
