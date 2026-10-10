@@ -72,11 +72,26 @@ export function parseSize(size: string): number | null {
 export function parseTagParams(tag: string): number | null {
   const suffix = tag.split(":")[1];
   if (!suffix) return null;
-  const moe = suffix.match(/^(\d+)x([\d.]+)b$/i);
+  // The size leads the suffix; variant tags continue after a dash
+  // (`8b-instruct-q8_0`), and those are the ones that differ per quant.
+  const moe = suffix.match(/^(\d+)x([\d.]+)b(?:-|$)/i);
   if (moe) return Number(moe[1]) * Number(moe[2]);
-  const m = suffix.match(/^([\d.]+)([bm])$/i);
+  const m = suffix.match(/^([\d.]+)([bm])(?:-|$)/i);
   if (!m) return null;
   return m[2].toLowerCase() === "b" ? Number(m[1]) : Number(m[1]) / 1000;
+}
+
+/**
+ * Quantization a tag names: `llama3.1:8b-instruct-q8_0` → "Q8_0",
+ * `…-fp16` → "F16". Null when the tag doesn't say (a plain `8b` or `latest`),
+ * so callers show "unknown" instead of presenting a guess as the quant.
+ */
+export function parseTagQuant(tag: string): string | null {
+  const suffix = tag.split(":")[1];
+  if (!suffix) return null;
+  const m = suffix.match(/(?:^|-)(i?q\d(?:_[a-z0-9]+)*|bf16|fp16|f16|fp32|f32)(?:-|$)/i);
+  if (!m) return null;
+  return m[1].toUpperCase().replace(/^FP(\d+)$/, "F$1");
 }
 
 /** Advertised context, e.g. "128K" → 131072. Null if unparseable. */

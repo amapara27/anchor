@@ -245,11 +245,12 @@ fn a_newer_run_supersedes_the_old_one_on_the_same_machine() {
     let mut conn = in_memory();
     let mine = hw("apple-m4", 10, 10, 16);
 
+    // The old run is from the previous suite version; the new one is current.
     let mut old = bench("old", mine.clone(), 42.0);
     old.prompt_id = Some("balanced".to_string());
+    old.suite_version = crate::bench::SUITE_VERSION - 1;
     let mut new = bench("new", mine.clone(), 51.0);
     new.prompt_id = Some("balanced".to_string());
-    new.suite_version = 2;
     new.updated_at = old.updated_at + 1;
     // Another machine in the same chip family measured the same model: a
     // genuinely different entry, not a stale one.
@@ -260,7 +261,8 @@ fn a_newer_run_supersedes_the_old_one_on_the_same_machine() {
         upsert_bench_with_samples(&mut conn, r, &[]).unwrap();
     }
 
-    let runs = bench_runs_for(&conn, &mine, None, Some("anchor-scenarios"), Some("balanced"), None).unwrap();
+    // No suite filter, so the version check can't hide `old`: only supersession does.
+    let runs = bench_runs_for(&conn, &mine, None, None, Some("balanced"), None).unwrap();
     assert_eq!(
         runs.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         ["new", "theirs"],

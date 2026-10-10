@@ -7,7 +7,7 @@ import type { ArchMeta } from "../types.ts";
 import { estimateFit, fitContext } from "./fit.ts";
 import { computeBufferBytes, kvCacheBytes, metadataKvBytesPerToken } from "./kv.ts";
 import { QUANTS, quantMeta } from "./quant.ts";
-import { parseContext, parseSize, parseTagParams } from "./format.ts";
+import { parseContext, parseSize, parseTagParams, parseTagQuant } from "./format.ts";
 import { estimateTokPerSec, resolveTokPerSec } from "./tokps.ts";
 import { hardwareHint } from "./hint.ts";
 
@@ -220,6 +220,16 @@ assert(parseTagParams("smollm2:135m") === 0.135, "tag params: millions → billi
 assert(parseTagParams("mixtral:8x7b") === 56, "tag params: MoE counts all experts");
 assert(parseTagParams("nomic-embed-text") === null, "untagged id ⇒ null");
 assert(parseTagParams("llama3.2-vision:11b") === 11, "hyphenated name doesn't break the split");
+assert(parseTagParams("llama3.1:8b-instruct-q8_0") === 8, "variant tag keeps its size");
+assert(parseTagParams("mixtral:8x7b-instruct-v0.1-q4_0") === 56, "MoE variant tag keeps its size");
+assert(parseTagParams("llama3.1:latest") === null, "latest names no size");
+
+assert(parseTagQuant("llama3.1:8b-instruct-q8_0") === "Q8_0", "tag quant: q8_0");
+assert(parseTagQuant("llama3.1:70b-instruct-q4_K_M") === "Q4_K_M", "tag quant: mixed case k-quant");
+assert(parseTagQuant("llama3.1:8b-instruct-fp16") === "F16", "tag quant: fp16 → F16");
+assert(parseTagQuant("llama3.1:8b") === null, "plain size tag names no quant");
+assert(parseTagQuant("nomic-embed-text") === null, "untagged id ⇒ null");
+assert(parseTagQuant("qwen3:8b-q4_K_M") === "Q4_K_M", "size-prefixed k-quant tag");
 
 assert(parseContext("128K") === 131072, "context 128K");
 assert(parseContext("4K") === 4096, "context 4K");

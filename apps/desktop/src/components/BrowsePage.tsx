@@ -6,7 +6,7 @@ import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useTagArch } from "../lib/useTagArch";
 import { hardwareHint, type HardwareHint } from "../lib/hint";
 import { DEFAULT_CONTEXT } from "../lib/fit";
-import { parseContext, parseSize, parseTagParams } from "../lib/format";
+import { parseContext, parseSize, parseTagParams, parseTagQuant } from "../lib/format";
 import { PageHeader, GhostButton } from "./PageHeader";
 import { ProgressTrack } from "./DownloadProgressBar";
 import { CheckIcon, ChevronDownIcon, DownloadIcon, RefreshIcon, SearchIcon, WarningIcon, XIcon } from "./icons";
@@ -286,7 +286,9 @@ function tagFit(
     {
       id: t.tag,
       params_b,
-      quant: "Q4_K_M",
+      // Weights come from the real size; the quant only feeds the speed estimate.
+      // Untagged builds are Ollama defaults, which are overwhelmingly Q4.
+      quant: parseTagQuant(t.tag) ?? "Q4_K_M",
       contextTokens: parseContext(t.context) ?? DEFAULT_CONTEXT,
       arch,
       sizeBytes,
@@ -310,6 +312,7 @@ function tagToLibraryModel(
   const params_b = parseTagParams(t.tag) ?? 0;
   const sizeBytes = parseSize(t.size);
   const contextTokens = parseContext(t.context) ?? DEFAULT_CONTEXT;
+  const quant = parseTagQuant(t.tag);
   return {
     id: t.tag,
     name: t.tag,
@@ -317,14 +320,14 @@ function tagToLibraryModel(
     size_bytes: sizeBytes,
     status: installed ? "installed" : "available",
     parameter_size: null,
-    quantization: "Q4_K_M",
+    quantization: quant,
     context_tokens: contextTokens,
     modified_at: null,
     publisher: null,
     arch,
     spec: {
       params_b,
-      quant: "Q4_K_M",
+      quant: quant ?? "unknown",
       context_tokens: contextTokens,
       download_bytes: sizeBytes ?? 0,
       blurb: entry.description,
