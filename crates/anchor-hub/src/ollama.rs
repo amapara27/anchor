@@ -278,6 +278,8 @@ struct GenerateChunk {
     #[serde(default)]
     prompt_eval_count: Option<u64>,
     #[serde(default)]
+    prompt_eval_cached_count: Option<u64>,
+    #[serde(default)]
     prompt_eval_duration: Option<u64>,
     #[serde(default)]
     eval_count: Option<u64>,
@@ -292,6 +294,8 @@ impl GenerateChunk {
             total_duration_ns: self.total_duration,
             load_duration_ns: self.load_duration,
             prompt_eval_count: self.prompt_eval_count,
+            prompt_eval_cached_count: self.prompt_eval_cached_count,
+            ttft_ms: None,
             prompt_eval_duration_ns: self.prompt_eval_duration,
             eval_count: self.eval_count,
             eval_duration_ns: self.eval_duration,
@@ -312,10 +316,16 @@ pub struct GenerationStats {
     /// Time spent loading the model's weights into RAM, in nanoseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load_duration_ns: Option<u64>,
-    /// Tokens in the prompt that were evaluated.
+    /// Total prompt tokens, including tokens reused from the cache.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_eval_count: Option<u64>,
-    /// Time spent evaluating the prompt, in nanoseconds.
+    /// Prompt tokens reused from the cache, when the server reports them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_eval_cached_count: Option<u64>,
+    /// Observed milliseconds from request start to the first output chunk.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    /// Time spent evaluating uncached prompt tokens, in nanoseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_eval_duration_ns: Option<u64>,
     /// Tokens generated in the response.
@@ -653,6 +663,7 @@ where
         body["think"] = serde_json::Value::Bool(think);
     }
 
+    let started = std::time::Instant::now();
     let resp = send_cancellable(client.post(&url).json(&body), cancel)
         .await?
         .error_for_status()?;
@@ -661,10 +672,16 @@ where
     // Reasoning text, kept only as a fallback for a model that thinks anyway.
     let mut thinking = String::new();
     let mut stats = GenerationStats::default();
+    let mut first_output_ms = None;
+    let mut completed = false;
 
     for_each_ndjson_line(resp.bytes_stream(), MAX_GENERATE_LINE_BYTES, cancel, |line| {
         // Fold one parsed frame into text/thinking/stats; an error frame bails.
-        if let Ok(frame) = serde_json::from_slice::<GenerateChunk>(line) {
+        let frame = serde_json::from_slice::<GenerateChunk>(line)?;
+        {
+            if first_output_ms.is_none() && (!frame.response.is_empty() || !frame.thinking.is_empty()) {
+                first_output_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+            }
             if let Some(err) = frame.error {
                 return Err(Error::Ollama(err));
             }
@@ -676,12 +693,18 @@ where
                 thinking.push_str(&frame.thinking);
             }
             if frame.done {
+                completed = true;
                 stats = frame.into_stats();
+                stats.ttft_ms = first_output_ms;
             }
         }
         Ok(())
     })
     .await?;
+
+    if !completed {
+        return Err(Error::Ollama("generation ended without a completion frame".into()));
+    }
 
     // A thinking model can ignore `think: false` and spend its whole budget on
     // reasoning, leaving `response` empty — fall back to the reasoning so the
@@ -752,6 +775,8 @@ struct ChatChunk {
     #[serde(default)]
     prompt_eval_count: Option<u64>,
     #[serde(default)]
+    prompt_eval_cached_count: Option<u64>,
+    #[serde(default)]
     prompt_eval_duration: Option<u64>,
     #[serde(default)]
     eval_count: Option<u64>,
@@ -765,6 +790,8 @@ impl ChatChunk {
             total_duration_ns: self.total_duration,
             load_duration_ns: self.load_duration,
             prompt_eval_count: self.prompt_eval_count,
+            prompt_eval_cached_count: self.prompt_eval_cached_count,
+            ttft_ms: None,
             prompt_eval_duration_ns: self.prompt_eval_duration,
             eval_count: self.eval_count,
             eval_duration_ns: self.eval_duration,
@@ -833,6 +860,7 @@ where
         .read_timeout(GENERATE_READ_TIMEOUT)
         .build()?;
 
+    let started = std::time::Instant::now();
     let resp = match send_cancellable(client.post(&url).json(&chat_body(req)), cancel).await {
         Ok(resp) => resp.error_for_status()?,
         // Stopped while the model was loading: an empty turn, not a failure —
@@ -846,9 +874,15 @@ where
     let mut text = String::new();
     let mut thinking = String::new();
     let mut stats = GenerationStats::default();
+    let mut first_output_ms = None;
+    let mut completed = false;
 
     let outcome = for_each_ndjson_line(resp.bytes_stream(), MAX_GENERATE_LINE_BYTES, cancel, |line| {
-        if let Ok(frame) = serde_json::from_slice::<ChatChunk>(line) {
+        let frame = serde_json::from_slice::<ChatChunk>(line)?;
+        {
+            if first_output_ms.is_none() && (!frame.message.content.is_empty() || !frame.message.thinking.is_empty()) {
+                first_output_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+            }
             if let Some(err) = frame.error {
                 return Err(Error::Ollama(err));
             }
@@ -861,7 +895,9 @@ where
                 thinking.push_str(&frame.message.thinking);
             }
             if frame.done {
+                completed = true;
                 stats = frame.into_stats();
+                stats.ttft_ms = first_output_ms;
             }
         }
         Ok(())
@@ -870,6 +906,7 @@ where
     // A stop is a normal terminal state carrying real output; every other error
     // means we have nothing trustworthy to hand back.
     match outcome {
+        Ok(()) if !completed => return Err(Error::Ollama("chat ended without a completion frame".into())),
         Ok(()) | Err(Error::Cancelled) => {}
         Err(e) => return Err(e),
     }

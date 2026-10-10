@@ -51,26 +51,26 @@ export function ModelDetailAside({model, download, totalMemoryBytes, chip, onDow
           {contexts.map(n=><option key={n} value={n}>{formatContext(n)}</option>)}
         </select>
       </label>
-      <span className={"text-sm " + hint.tone}>{hint.label} at {formatContext(fitCtx)} · {totalNeededGB.toFixed(1)} GB estimated RAM</span>
+      <span className={"text-sm " + hint.tone}>{hint.label} at {formatContext(fitCtx)} · {totalNeededGB.toFixed(1)} GiB estimated RAM</span>
     </div>
     <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-fg-muted">
       <span>{formatBytes(model.size_bytes)} {model.status === "installed" ? "on disk" : "download"}</span>
       <span>{hint.tps ? `${hint.tps.source === "measured" ? "Measured" : "Estimated"} ${hint.tpsLabel}` : "Speed unknown"}</span>
-      <span>{availableGB > 0 ? `${hint.fit.headroomGB.toFixed(1)} GB estimated headroom` : "Memory capacity unknown"}</span>
+      <span>{availableGB > 0 ? `${hint.fit.headroomGB.toFixed(1)} GiB estimated headroom` : "Memory capacity unknown"}</span>
     </div>
     <details className="border-t border-hair pt-3">
       <summary className="cursor-pointer text-sm text-fg-muted">Memory breakdown & model details</summary>
       <div className="mt-3 flex flex-col gap-3">
         {segments.length > 0 && <SegmentedBar segments={segments} />}
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm text-fg-muted">
-          <dt>Weights</dt><dd>{weightsGB.toFixed(1)} GB</dd>
-          <dt>KV cache at {formatContext(fitCtx)}</dt><dd>{kvCacheGB.toFixed(1)} GB</dd>
-          <dt>Compute buffer</dt><dd>{computeBufferGB.toFixed(2)} GB</dd>
-          <dt>OS reserve</dt><dd>{osReserveGB.toFixed(1)} GB</dd>
+          <dt>Weights</dt><dd>{weightsGB.toFixed(1)} GiB</dd>
+          <dt>KV cache at {formatContext(fitCtx)}</dt><dd>{kvCacheGB.toFixed(1)} GiB</dd>
+          <dt>Compute buffer</dt><dd>{computeBufferGB.toFixed(2)} GiB</dd>
+          <dt>OS reserve</dt><dd>{osReserveGB.toFixed(1)} GiB</dd>
           <dt>Model context limit</dt><dd>{formatContext(maxContext)}</dd>
         </dl>
         <p className="text-sm text-fg-muted">{model.spec.blurb}</p>
-        <p className="text-xs text-fg-muted">This is a capacity estimate; other apps and loaded models may reduce available memory.{hint.fit.kvSource === "estimated" && " KV cache size is estimated from parameter count."}</p>
+        <p className="text-xs text-fg-muted">Baseline estimate: f16 KV cache, one sequence, Flash Attention. Server settings, other apps and loaded models can change memory use.{hint.fit.kvSource === "estimated" && " KV cache size is estimated from parameter count."}</p>
       </div>
     </details>
   </div>;

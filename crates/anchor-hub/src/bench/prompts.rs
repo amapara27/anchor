@@ -16,7 +16,7 @@
 /// Bump when the catalog's *structure* changes (scenarios added/removed,
 /// context derivation, repeat policy).
 pub const SUITE_ID: &str = "anchor-scenarios";
-pub const SUITE_VERSION: u32 = 2;
+pub const SUITE_VERSION: u32 = 3;
 /// Bump when a scenario's prompt *text* changes without changing its shape.
 pub const PROMPT_CATALOG_VERSION: u32 = 1;
 

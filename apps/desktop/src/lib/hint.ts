@@ -26,7 +26,7 @@ export interface HardwareHint {
   label: string;
   /** Tailwind text colour token for `label`. */
   tone: string;
-  /** GB of memory the model is short by. Non-null only when `wont_fit`. */
+  /** GiB of memory the model is short by. Non-null only when `wont_fit`. */
   deficitGB: number | null;
   /** Predicted (or measured) throughput. Null off Apple Silicon. */
   tps: TokPerSec | null;
@@ -35,7 +35,7 @@ export interface HardwareHint {
   tpsLabel: string | null;
   /** The actionable half: the shortfall when it won't fit, else the speed. */
   detail: string | null;
-  /** "Fits · ~28.0 tok/s" | "Won't fit · needs 4.2 GB more". No dangling separator. */
+  /** "Fits · ~28.0 tok/s" | "Won't fit · needs 4.2 GiB more". No dangling separator. */
   text: string;
 }
 
@@ -70,7 +70,7 @@ export function hardwareHint(
     { memory_bytes: profile?.memory_bytes },
     { arch: m.arch, size_bytes: m.sizeBytes },
   );
-  const tps = resolveTokPerSec(profile?.chip ?? null, m.id, m.params_b, m.quant as QuantId);
+  const tps = resolveTokPerSec(profile?.chip ?? null, m.id, m.params_b, m.quant as QuantId, m.sizeBytes);
   const { label, tone } = TIER[fit.tier];
   // Gate on the tier, not the sign: with host memory unknown `availableGB` is 0,
   // so headroom is wildly negative and would read as a bogus shortfall.
@@ -80,7 +80,7 @@ export function hardwareHint(
   const tpsLabel = tps ? `${tps.source === "measured" ? "" : "~"}${formatTokSec(tps.value)}` : null;
   // When it won't fit, the actionable number is the shortfall, not the speed —
   // a throughput figure for a model that can't load is noise.
-  const detail = deficitGB != null ? `needs ${deficitGB.toFixed(1)} GB more` : tpsLabel;
+  const detail = deficitGB != null ? `needs ${deficitGB.toFixed(1)} GiB more` : tpsLabel;
 
   return {
     tier: fit.tier,

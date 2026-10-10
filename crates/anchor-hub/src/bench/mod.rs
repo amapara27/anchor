@@ -8,9 +8,8 @@
 //!
 //! Timings are Ollama's own (`eval_count / eval_duration`), never wall-clock
 //! measured here — the server knows when the model actually started
-//! generating and we don't. The one exception is TTFT, which is a proxy
-//! (`prompt_eval_duration_ns`) rather than a new stopwatch: on an
-//! already-warmed model, generation begins the instant prompt eval finishes.
+//! generating and we don't. TTFT is measured from the HTTP request to the
+//! first received output chunk.
 
 mod prompts;
 
@@ -20,14 +19,6 @@ use anchor_core::{BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity};
 use serde::Serialize;
 
 use crate::{ollama, status, GenerateRequest, GenerationStats, Registry, Result};
-
-/// A drop of this many percentage points in thermal headroom between a run's
-/// start and end snapshots labels it "throttled" rather than "sustained".
-///
-/// ponytail: calibration knob, not a measured constant — real Apple Silicon
-/// thermal behavior varies by chassis (fanless MacBook Air vs. fan-equipped
-/// Pro). Tune against real hardware if this mislabels runs in practice.
-const THROTTLE_DELTA_PCT: u8 = 15;
 
 /// `OSThermalPressureLevel`'s nominal value — anything above it is real
 /// thermal pressure, not a threshold we picked.
@@ -49,28 +40,19 @@ pub enum BenchProgress {
     Done { runs: Vec<BenchRun> },
     /// The suite failed partway.
     Failed { message: String },
-    /// A live instantaneous decode-rate reading, for the running graphic.
-    /// Wall-clock, from token arrival timing — not Ollama's own
-    /// `eval_count/eval_duration`, which only exist once a whole call
-    /// finishes. Throttled (see [`LiveSampler`]), not one per token.
-    Sample { tps: f64 },
+    /// Recent response chunks per second; chunk boundaries are not tokens.
+    Sample { chunks_per_sec: f64 },
 }
 
-/// Tracks recent token-arrival timing to emit a throttled, real instantaneous
-/// decode-rate sample during a measured generation — the "live run" graphic's
-/// data source. Persists across an entire benchmark run (warmup through every
-/// repeat/cell) so the graphic reads as one continuous feed rather than
-/// resetting at each repeat boundary.
+/// Tracks received response chunks for the live activity waveform.
 struct LiveSampler {
     window: std::collections::VecDeque<std::time::Instant>,
     last_emit: std::time::Instant,
 }
 
-/// Tokens behind each reading — small enough to react quickly, large enough
-/// that one slow/fast token doesn't spike the graph.
+/// Chunks behind each reading, to smooth arrival bursts.
 const LIVE_SAMPLE_WINDOW: usize = 12;
-/// Floor between emitted samples, so a fast model (many tokens/sec) doesn't
-/// flood the Tauri channel with one message per token.
+/// Floor between emitted samples to limit channel traffic.
 const LIVE_SAMPLE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(90);
 
 impl LiveSampler {
@@ -78,7 +60,7 @@ impl LiveSampler {
         Self { window: std::collections::VecDeque::with_capacity(LIVE_SAMPLE_WINDOW), last_emit: std::time::Instant::now() }
     }
 
-    /// Records one token's arrival; returns an instantaneous tok/s reading
+    /// Records one chunk's arrival; returns a chunks/sec reading
     /// when the window has enough span and the throttle has elapsed.
     fn on_token(&mut self) -> Option<f64> {
         let now = std::time::Instant::now();
@@ -118,11 +100,14 @@ fn tps(count: Option<u64>, duration_ns: Option<u64>) -> Option<f64> {
     }
 }
 
-/// Time-to-first-token proxy, in milliseconds: on an already-warmed model,
-/// generation begins the instant prompt eval finishes, so `prompt_eval_duration_ns`
-/// stands in for TTFT without a new wall-clock measurement.
+/// Observed request-to-first-output latency, in milliseconds.
 fn ttft_ms(stats: &GenerationStats) -> Option<f64> {
-    stats.prompt_eval_duration_ns.map(|ns| ns as f64 / 1e6)
+    stats.ttft_ms
+}
+
+fn prefill_tps(stats: &GenerationStats) -> Option<f64> {
+    let uncached = stats.prompt_eval_count?.checked_sub(stats.prompt_eval_cached_count.unwrap_or(0))?;
+    (uncached > 0).then(|| tps(Some(uncached), stats.prompt_eval_duration_ns)).flatten()
 }
 
 fn now_ms() -> i64 {
@@ -146,19 +131,20 @@ async fn capture_env(registry: &Registry, model: &str) -> EnvTelemetry {
     env
 }
 
-/// "throttled" when thermal headroom dropped by at least [`THROTTLE_DELTA_PCT`]
-/// points between `start` and `end`, "sustained" when it held, "unknown" when
-/// either snapshot couldn't read thermal state at all.
+/// Thermal pressure observed at either boundary; no claim about the intervals between.
 fn thermal_label(start: &EnvTelemetry, end: &EnvTelemetry) -> String {
     // The OS pressure level first: it's the only thermal signal Apple Silicon
     // publishes, and any reading above nominal at either end means the run
     // wasn't cool. `pmset`'s speed limit is the Intel-era fallback below.
+    if start.thermal_level.into_iter().chain(end.thermal_level).any(|level| level > THERMAL_NOMINAL) {
+        return "pressure".into();
+    }
     if let (Some(s), Some(e)) = (start.thermal_level, end.thermal_level) {
-        return if s.max(e) > THERMAL_NOMINAL { "throttled" } else { "sustained" }.to_string();
+        return if s.max(e) > THERMAL_NOMINAL { "pressure" } else { "nominal" }.to_string();
     }
     match (start.thermal_pressure_pct, end.thermal_pressure_pct) {
-        (Some(s), Some(e)) if s.saturating_sub(e) >= THROTTLE_DELTA_PCT => "throttled",
-        (Some(_), Some(_)) => "sustained",
+        (Some(s), Some(e)) if s.min(e) < 100 => "pressure",
+        (Some(_), Some(_)) => "nominal",
         _ => "unknown",
     }
     .to_string()
@@ -168,8 +154,8 @@ fn thermal_label(start: &EnvTelemetry, end: &EnvTelemetry) -> String {
 /// nothing stands out, so a clean run doesn't grow a placeholder note.
 fn auto_notes(label: &str, start: &EnvTelemetry) -> Option<String> {
     let mut parts = Vec::new();
-    if label == "throttled" {
-        parts.push("thermally throttled during run".to_string());
+    if label == "pressure" {
+        parts.push("thermal pressure observed at scenario boundaries".to_string());
     }
     if start.on_ac_power == Some(false) {
         parts.push("running on battery".to_string());
@@ -184,10 +170,11 @@ fn sample_from(bench_run_id: &str, repeat_index: u32, is_warmup: bool, wall_star
         bench_run_id: bench_run_id.to_string(),
         repeat_index,
         is_warmup,
-        prefill_tps: tps(stats.prompt_eval_count, stats.prompt_eval_duration_ns),
+        prefill_tps: prefill_tps(stats),
         decode_tps: tps(stats.eval_count, stats.eval_duration_ns),
         ttft_ms: ttft_ms(stats),
         prompt_eval_count: stats.prompt_eval_count,
+        prompt_eval_cached_count: stats.prompt_eval_cached_count,
         prompt_eval_duration_ns: stats.prompt_eval_duration_ns,
         eval_count: stats.eval_count,
         eval_duration_ns: stats.eval_duration_ns,
@@ -240,9 +227,8 @@ impl Registry {
     /// Scenarios are grouped by derived `num_ctx` and run in ascending order so
     /// the model reloads once per distinct context size, not once per scenario
     /// — Ollama reloads on a `num_ctx` change, not on a prompt change. Each
-    /// context group gets one discarded warmup, whose `eval_duration` includes
-    /// weight loading: counting it would understate throughput on exactly the
-    /// machines that load slowest.
+    /// context group gets one discarded warmup to establish its allocation
+    /// and warm the runtime before collecting measurements.
     ///
     /// Setting `cancel` ends the suite at the next scenario boundary, or mid
     /// generation via [`ollama::generate`]. A stop is a normal terminal state,
@@ -256,28 +242,31 @@ impl Registry {
         install_id: &str,
         repeats: RepeatsMode,
         cancel: &std::sync::atomic::AtomicBool,
-        mut on_progress: F,
+        on_progress: F,
     ) -> Result<Vec<BenchRun>>
     where
         F: FnMut(BenchProgress) + Send,
     {
+        let result = self.run_benchmark_inner(model, hw, install_id, repeats, cancel, on_progress).await;
+        let _ = self.unload(model).await;
+        result
+    }
+
+    async fn run_benchmark_inner<F>(
+        &self, model: &str, hw: &HwIdentity, install_id: &str, repeats: RepeatsMode,
+        cancel: &std::sync::atomic::AtomicBool, mut on_progress: F,
+    ) -> Result<Vec<BenchRun>> where F: FnMut(BenchProgress) + Send {
         let digest = ollama::digest_of(&self.host, model)
             .await?
             .ok_or_else(|| crate::Error::Ollama(format!("{model} is not installed")))?;
         let ollama_version = ollama::version(&self.host).await.ok();
-        let quant = self
-            .cached_models()
-            .ok()
-            .and_then(|ms| ms.into_iter().find(|m| m.id == model))
-            .and_then(|m| m.quantization);
+        let quant = ollama::list_local_models(&self.host).await?
+            .into_iter().find(|m| m.id == model).and_then(|m| m.quantization);
 
         let groups = prompts::grouped_by_ctx();
         let total = CATALOG.len() as u32;
         let mut index = 0u32;
         let mut results = Vec::new();
-        // One sampler for the whole run (every ctx group, every scenario) so
-        // the live graphic reads as one continuous feed, not a reset per row.
-        let mut sampler = LiveSampler::new();
 
         'suite: for (num_ctx, scenarios) in groups {
             on_progress(BenchProgress::Status {
@@ -291,9 +280,10 @@ impl Registry {
             let warmup_predict = scenarios[0].gen_tokens.min(64) as u64;
             let warmup_request =
                 GenerateRequest::for_benchmark(model, scenarios[0].text(), warmup_predict, num_ctx);
+            let mut sampler = LiveSampler::new();
             let warmup = match ollama::generate(&self.host, &warmup_request, cancel, |_tok| {
                 if let Some(tps) = sampler.on_token() {
-                    on_progress(BenchProgress::Sample { tps });
+                    on_progress(BenchProgress::Sample { chunks_per_sec: tps });
                 }
             })
             .await
@@ -326,6 +316,14 @@ impl Registry {
                     scenario.gen_tokens as u64,
                     num_ctx,
                 );
+                let resident = status::running(self).await?
+                    .into_iter().find(|r| r.name == model)
+                    .ok_or_else(|| crate::Error::Ollama("benchmark model is not resident after warmup".into()))?;
+                let actual_ctx = resident.context_length.and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| crate::Error::Ollama("Ollama did not report the loaded context".into()))?;
+                if actual_ctx != num_ctx {
+                    return Err(crate::Error::Ollama(format!("requested {num_ctx} context, but Ollama loaded {actual_ctx}; benchmark discarded")));
+                }
                 let id = BenchRun::derive_id(
                     install_id,
                     &hw.hw_key,
@@ -333,8 +331,8 @@ impl Registry {
                     SUITE_ID,
                     SUITE_VERSION,
                     num_ctx,
-                    "f16",
-                    false,
+                    "unknown",
+                    None,
                     Some((scenario.id, prompts::PROMPT_CATALOG_VERSION)),
                 );
 
@@ -343,10 +341,11 @@ impl Registry {
                 let mut prefill = Vec::new();
                 let mut ttft = Vec::new();
                 for i in 1..=repeat_count {
+                    let mut sampler = LiveSampler::new();
                     let wall_start = now_ms();
                     let stats = match ollama::generate(&self.host, &request, cancel, |_tok| {
                         if let Some(tps) = sampler.on_token() {
-                            on_progress(BenchProgress::Sample { tps });
+                            on_progress(BenchProgress::Sample { chunks_per_sec: tps });
                         }
                     })
                     .await
@@ -357,11 +356,17 @@ impl Registry {
                         Err(crate::Error::Cancelled) => break 'suite,
                         Err(e) => return Err(e),
                     };
+                    if stats.prompt_eval_cached_count.zip(stats.prompt_eval_count).is_some_and(|(cached, total)| cached > total) {
+                        return Err(crate::Error::Ollama("cached token count exceeds prompt token count".into()));
+                    }
+                    if stats.eval_count.is_none_or(|v| v == 0) || stats.eval_duration_ns.is_none_or(|v| v == 0) {
+                        return Err(crate::Error::Ollama("benchmark generation has no valid decode measurement".into()));
+                    }
                     if let Some(d) = tps(stats.eval_count, stats.eval_duration_ns) {
                         decode.push(d);
                         on_progress(BenchProgress::Run { index: i, total: repeat_count, decode_tps: d });
                     }
-                    if let Some(p) = tps(stats.prompt_eval_count, stats.prompt_eval_duration_ns) {
+                    if let Some(p) = prefill_tps(&stats) {
                         prefill.push(p);
                     }
                     if let Some(t) = ttft_ms(&stats) {
@@ -373,7 +378,7 @@ impl Registry {
                 let env_end = capture_env(self, model).await;
                 let label = thermal_label(&env_start, &env_end);
                 let notes = auto_notes(&label, &env_start);
-                let peak_rss_bytes = status::running(self)
+                let resident_bytes = status::running(self)
                     .await
                     .ok()
                     .and_then(|rs| rs.into_iter().find(|r| r.name == model).and_then(|r| r.size));
@@ -386,15 +391,15 @@ impl Registry {
                     model_digest: digest.clone(),
                     quant: quant.clone(),
                     num_ctx,
-                    kv_cache_type: "f16".to_string(),
-                    flash_attn: false,
+                    kv_cache_type: "unknown".to_string(),
+                    flash_attn: None,
                     ollama_version: ollama_version.clone(),
                     suite_id: SUITE_ID.to_string(),
                     suite_version: SUITE_VERSION,
                     prefill_tps_median: median(prefill),
                     decode_tps_median: median(decode),
                     load_ms,
-                    peak_rss_bytes,
+                    resident_bytes,
                     repeats: repeat_count,
                     install_id: install_id.to_string(),
                     rating: None,
@@ -424,7 +429,6 @@ impl Registry {
             }
         }
 
-        let _ = self.unload(model).await;
         on_progress(BenchProgress::Done { runs: results.clone() });
         Ok(results)
     }
@@ -510,7 +514,7 @@ mod tests {
             assert!(run.decode_tps_median.unwrap() > 0.0, "{id}: decode throughput measured");
             assert!(run.prefill_tps_median.unwrap() > 0.0, "{id}: prefill throughput measured");
             assert!(run.model_digest.len() > 16, "{id}: digest recorded");
-            assert!(run.peak_rss_bytes.unwrap() > 0, "{id}: resident size read while loaded");
+            assert!(run.resident_bytes.unwrap() > 0, "{id}: resident size read while loaded");
             assert!(run.ttft_ms_median.unwrap() > 0.0, "{id}: ttft measured");
             assert!(run.env_start.is_some(), "{id}: telemetry captured at start");
             assert!(run.env_end.is_some(), "{id}: telemetry captured at end");
@@ -561,8 +565,8 @@ mod tests {
 
     #[test]
     fn thermal_label_detects_a_throttle_drop() {
-        assert_eq!(thermal_label(&env_with_thermal(Some(100)), &env_with_thermal(Some(80))), "throttled");
-        assert_eq!(thermal_label(&env_with_thermal(Some(100)), &env_with_thermal(Some(95))), "sustained");
+        assert_eq!(thermal_label(&env_with_thermal(Some(100)), &env_with_thermal(Some(80))), "pressure");
+        assert_eq!(thermal_label(&env_with_thermal(Some(100)), &env_with_thermal(Some(95))), "pressure");
         assert_eq!(thermal_label(&env_with_thermal(None), &env_with_thermal(Some(95))), "unknown");
     }
 
@@ -570,26 +574,26 @@ mod tests {
     // only thing standing between every run and a permanent "unknown".
     #[test]
     fn thermal_label_prefers_the_os_pressure_level() {
-        assert_eq!(thermal_label(&env_with_level(0), &env_with_level(0)), "sustained");
-        assert_eq!(thermal_label(&env_with_level(0), &env_with_level(10)), "throttled");
-        assert_eq!(thermal_label(&env_with_level(20), &env_with_level(0)), "throttled");
+        assert_eq!(thermal_label(&env_with_level(0), &env_with_level(0)), "nominal");
+        assert_eq!(thermal_label(&env_with_level(0), &env_with_level(10)), "pressure");
+        assert_eq!(thermal_label(&env_with_level(20), &env_with_level(0)), "pressure");
 
         // A level reading wins even where the Intel speed limit says otherwise.
         let mut cool_pct = env_with_thermal(Some(100));
         cool_pct.thermal_level = Some(20);
-        assert_eq!(thermal_label(&cool_pct, &cool_pct), "throttled");
+        assert_eq!(thermal_label(&cool_pct, &cool_pct), "pressure");
     }
 
     #[test]
     fn auto_notes_flags_throttling_and_battery() {
         let mut start = env_with_thermal(Some(100));
-        assert_eq!(auto_notes("sustained", &start), None);
+        assert_eq!(auto_notes("nominal", &start), None);
 
         start.on_ac_power = Some(false);
-        assert_eq!(auto_notes("sustained", &start).as_deref(), Some("running on battery"));
+        assert_eq!(auto_notes("nominal", &start).as_deref(), Some("running on battery"));
         assert_eq!(
-            auto_notes("throttled", &start).as_deref(),
-            Some("thermally throttled during run; running on battery")
+            auto_notes("pressure", &start).as_deref(),
+            Some("thermal pressure observed at scenario boundaries; running on battery")
         );
     }
 }

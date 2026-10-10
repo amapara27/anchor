@@ -44,7 +44,7 @@ function formatElapsed(ms: number): string {
  *  table only the exception is worth a flag; the full reading lives in the
  *  live-run card's `ThermalReadout`. */
 function ThermalBadge({ label }: { label: string | null }) {
-  if (label !== "throttled") return null;
+  if (label !== "throttled" && label !== "pressure") return null;
   return (
     <span title="The Mac was under thermal pressure during this run — numbers may be lower than a cool run.">
       <WarningIcon className="size-3 shrink-0 text-warn" />
@@ -325,7 +325,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
 
       <details className="border-t border-hair pt-4">
         <summary className="cursor-pointer text-[13px] text-fg-muted">Method</summary>
-        <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine fixed workloads. Results are medians after warm-up. Thorough runs three repeats; Fast runs long generations once. Rankings compare the same scenario within each hardware-match group.</p>
+        <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine workloads with target input lengths and output caps. Results are medians after warm-up. Prefill counts uncached tokens; TTFT measures request to first received output. Thorough runs three repeats; Fast runs long generations once. Rankings use the current method and matching scenario/context. The live waveform shows response chunks, not tokens. Thermal status comes from boundary snapshots. Server KV cache and Flash Attention settings are not reported.</p>
       </details>
       <details className="border-t border-hair pt-4">
         <summary className="cursor-pointer text-[13px] text-fg-muted">Run history <span className="data ml-2 text-[11px]">{history.length}</span></summary>
@@ -459,11 +459,11 @@ function LiveRunCard({
   return <section aria-label="Benchmark status" className="flex flex-col gap-3 border-b border-hair pb-4">
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
       <span className="flex items-center gap-2 text-[13px] font-medium">{running && <span className="size-1.5 rounded-full bg-accent" aria-hidden />}{title}</span>
-      {displayTps != null && <span className="data text-[15px]">{displayTps.toFixed(1)} <span className="text-xs text-fg-muted">tok/s</span></span>}
+      {displayTps != null && <span className="data text-[15px]">{displayTps.toFixed(1)} <span className="text-xs text-fg-muted">{running ? "chunks/s" : "tok/s"}</span></span>}
       <span className="min-w-0 flex-1 text-xs text-fg-muted">{meta}</span>
       {running ? <span className="data text-xs text-fg-muted">{formatElapsed(elapsedMs)}</span> : <ThermalReadout run={mine} />}
     </div>
-    {running && waveform.length > 0 && <div className="flex h-8 items-end gap-px" aria-label="Live decode rate">
+    {running && waveform.length > 0 && <div className="flex h-8 items-end gap-px" aria-label="Received response chunks per second">
       {waveform.map((v,i)=><span key={i} className="min-w-px flex-1 bg-accent" style={{height:Math.max(3,Math.min(100,v/max*100))+"%"}} />)}
     </div>}
     <div role="progressbar" aria-label="Benchmark scenarios completed" aria-valuemin={0} aria-valuemax={totalSegments} aria-valuenow={filledSegments} className={running ? "flex gap-1.5" : "sr-only"}>

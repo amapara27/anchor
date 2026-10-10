@@ -3,7 +3,6 @@ import { useModels } from "../lib/useModels";
 import { useComparison } from "../lib/useComparison";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { formatBytes, formatTokSec, tokensPerSecond } from "../lib/format";
-import { saveMeasuredRun } from "../lib/measured";
 import { recordUse } from "../lib/lastUsed";
 import { exportComparison } from "../lib/exportImage";
 import { ModelPicker } from "./ModelPicker";
@@ -41,8 +40,7 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
     .filter(Boolean)
     .join(" · ");
 
-  // Persist each finished run once, feeding the fit engine's measured resolver
-  // (tokps.ts) so a real number replaces the estimate on this chip+quant.
+  // Record use once per completed comparison.
   const saved = useRef(false);
   useEffect(() => {
     if (!bothDone) {
@@ -51,9 +49,6 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
     }
     if (saved.current) return;
     saved.current = true;
-    const ts = Date.now();
-    saveMeasuredRun({ modelId: modelA, chip, quant: aModel?.spec.quant ?? "unknown", tokPerSec: aTok!, prompt, ts });
-    saveMeasuredRun({ modelId: modelB, chip, quant: bModel?.spec.quant ?? "unknown", tokPerSec: bTok!, prompt, ts });
     recordUse(modelA); // feeds Disk Usage's last-used column
     recordUse(modelB);
   }, [bothDone, modelA, modelB, chip, aTok, bTok, prompt, aModel, bModel]);

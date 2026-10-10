@@ -335,7 +335,7 @@ pub struct BenchRun {
     pub num_ctx: u32,
     /// KV cache element type, e.g. `"f16"`. Changes memory and speed.
     pub kv_cache_type: String,
-    pub flash_attn: bool,
+    pub flash_attn: Option<bool>,
     pub ollama_version: Option<String>,
     /// Which standard suite produced this, so results stay comparable.
     pub suite_id: String,
@@ -347,8 +347,8 @@ pub struct BenchRun {
     pub decode_tps_median: Option<f64>,
     /// Cold-load time in milliseconds.
     pub load_ms: Option<u64>,
-    /// Peak resident bytes while loaded, from `/api/ps`.
-    pub peak_rss_bytes: Option<u64>,
+    /// Ollama-reported allocation after the scenario, not process peak RSS.
+    pub resident_bytes: Option<u64>,
     /// Measured runs behind the medians, excluding the discarded warmup.
     pub repeats: u32,
 
@@ -377,15 +377,11 @@ pub struct BenchRun {
     /// versions suite logic — the scenario set, context derivation, repeat
     /// counts). `None` on those same retired rows.
     pub prompt_version: Option<u32>,
-    /// Time-to-first-token proxy, in milliseconds: `prompt_eval_duration_ns`,
-    /// median over repeats. On an already-warmed/loaded model, generation
-    /// begins the instant prompt eval finishes, so this needs no wall-clock
-    /// instrumentation of its own.
+    /// Observed request-to-first-output milliseconds, median over repeats.
     pub ttft_ms_median: Option<f64>,
     pub env_start: Option<EnvTelemetry>,
     pub env_end: Option<EnvTelemetry>,
-    /// `"sustained"` | `"throttled"` | `"unknown"`, derived from the thermal
-    /// delta between `env_start` and `env_end`.
+    /// `"nominal"` | `"pressure"` | `"unknown"`, observed at scenario boundaries.
     pub thermal_label: Option<String>,
     /// Free-text anomaly notes. Auto-populated where derivable (thermal,
     /// battery), user-editable afterward.
@@ -414,9 +410,10 @@ impl BenchRun {
         suite_version: u32,
         num_ctx: u32,
         kv_cache_type: &str,
-        flash_attn: bool,
+        flash_attn: Option<bool>,
         prompt: Option<(&str, u32)>,
     ) -> String {
+        let flash_attn = flash_attn.map(|v| v.to_string()).unwrap_or_else(|| "unknown".into());
         let base = format!(
             "{install_id}|{hw_key}|{model_digest}|{suite_id}@{suite_version}|{num_ctx}|{kv_cache_type}|{flash_attn}"
         );
@@ -442,6 +439,7 @@ pub struct BenchSample {
     pub decode_tps: Option<f64>,
     pub ttft_ms: Option<f64>,
     pub prompt_eval_count: Option<u64>,
+    pub prompt_eval_cached_count: Option<u64>,
     pub prompt_eval_duration_ns: Option<u64>,
     pub eval_count: Option<u64>,
     pub eval_duration_ns: Option<u64>,
@@ -525,7 +523,7 @@ mod tests {
         // under, so introducing Full mode must not orphan existing rows.
         let id = BenchRun::derive_id(
             "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-std", 1, 4096, "f16",
-            false, None,
+            Some(false), None,
         );
         assert_eq!(
             id,
@@ -537,15 +535,15 @@ mod tests {
     fn derive_id_with_prompt_appends_a_distinct_segment() {
         let base = BenchRun::derive_id(
             "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-full", 1, 8192, "f16",
-            false, None,
+            Some(false), None,
         );
         let short = BenchRun::derive_id(
             "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-full", 1, 8192, "f16",
-            false, Some(("short", 1)),
+            Some(false), Some(("short", 1)),
         );
         let gen_heavy = BenchRun::derive_id(
             "install-1", "apple-m4-10c-10g-16gb", "sha256:abcdef", "anchor-full", 1, 8192, "f16",
-            false, Some(("generation_heavy", 1)),
+            Some(false), Some(("generation_heavy", 1)),
         );
         assert_eq!(short, format!("{base}|short@1"));
         // Two prompts sharing a num_ctx must not collide on one row.

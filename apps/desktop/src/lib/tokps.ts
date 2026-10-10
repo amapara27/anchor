@@ -5,7 +5,6 @@
 import type { QuantId, TokPerSec } from "../types";
 // Explicit .ts extensions so the Node-run selfcheck can resolve them too.
 import { quantMeta } from "./quant.ts";
-import { getMeasuredRuns } from "./measured.ts";
 
 /** Unified-memory bandwidth (GB/s) by Apple Silicon generation + tier.
  *  ponytail: seed table, overwrite with measured. Conservative where unsure. */
@@ -36,25 +35,26 @@ export function estimateTokPerSec(
   chip: string | null,
   params_b: number,
   quant: QuantId,
+  sizeBytes?: number | null,
 ): TokPerSec | null {
   const parsed = parseChip(chip);
-  if (!parsed || !params_b) return null;
+  if (!parsed || (!sizeBytes && !params_b)) return null;
   const bw = BANDWIDTH[parsed.gen]?.[parsed.tier];
   if (!bw) return null;
-  const weightsGB = params_b * (quantMeta(quant).bpw / 8); // decimal GB
+  if (!sizeBytes && quantMeta(quant).id !== quant) return null;
+  const weightsGB = sizeBytes ? sizeBytes / 1e9 : params_b * (quantMeta(quant).bpw / 8);
   if (weightsGB <= 0) return null;
   return { value: (bw / weightsGB) * EFFICIENCY, source: "estimated" };
 }
 
-/** Throughput for a model, preferring a measured run on this chip+quant over the
- *  estimate. Returns which source was used so the UI can label it. */
+/** Baseline throughput estimate; unverified historical comparisons are not reusable. */
 export function resolveTokPerSec(
   chip: string | null,
-  modelId: string,
+  _modelId: string,
   params_b: number,
   quant: QuantId,
+  sizeBytes?: number | null,
 ): TokPerSec | null {
-  const measured = getMeasuredRuns(modelId).find((r) => r.chip === chip && r.quant === quant);
-  if (measured) return { value: measured.tokPerSec, source: "measured" };
-  return estimateTokPerSec(chip, params_b, quant);
+  // Saved comparisons do not identify context, runtime settings or model digest.
+  return estimateTokPerSec(chip, params_b, quant, sizeBytes);
 }

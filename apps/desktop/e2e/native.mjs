@@ -12,7 +12,7 @@ const scratch=await mkdtemp(path.join(tmpdir(),'anchor-native-e2e-'));
 const catalog=JSON.parse(await readFile(path.join(root,'crates/anchor-search/profiles/models.json'),'utf8')).slice(0,2);
 const models=catalog.map(p=>({name:p.id,model:p.id,digest:'sha256:'+p.id,size:1024**3,modified_at:new Date().toISOString(),details:{family:'llama',parameter_size:'1.2B',quantization_level:'Q8_0'}}));
 const requests=[];
-let slow=false,offline=false;
+let slow=false,offline=false,resident=null;
 const server=createServer(async(req,res)=>{
   let raw='';for await(const part of req)raw+=part;
   const body=raw?JSON.parse(raw):{};
@@ -21,17 +21,19 @@ const server=createServer(async(req,res)=>{
   if(offline){res.writeHead(503);return res.end('offline fixture');}
   if(req.url==='/api/version')return json({version:'0.12.0'});
   if(req.url==='/api/tags')return json({models});
-  if(req.url==='/api/ps')return json({models:[]});
+  if(req.url==='/api/ps')return json({models:resident?[resident]:[]});
   if(req.url==='/api/show')return json({details:{family:'llama',parameter_size:'1.2B',quantization_level:'Q8_0'},model_info:{'llama.context_length':131072,'llama.block_count':16,'llama.attention.head_count':32,'llama.attention.head_count_kv':8,'llama.embedding_length':2048,'general.architecture':'llama'}});
   if(req.url==='/api/delete'){const index=models.findIndex(m=>m.name===body.model);if(index>=0)models.splice(index,1);return json({});}
   if(req.url==='/api/generate'||req.url==='/api/chat'){
     res.setHeader('content-type','application/x-ndjson');
     const chat=req.url==='/api/chat';
+    if(!chat && body.keep_alive===0 && body.prompt===''){resident=null;return json({done:true});}
+    resident={name:body.model,size:2*1024**3,context_length:body.options?.num_ctx??4096};
     const text='Native fixture answer for '+body.model;
     res.write(JSON.stringify(chat?{message:{role:'assistant',content:text},done:false}:{response:text,done:false})+'\n');
     // Delayed completion is necessary to exercise actual cancellation/navigation.
     await new Promise(r=>setTimeout(r,slow?1500:35));
-    if(!res.destroyed)res.end(JSON.stringify({done:true,message:{content:''},response:'',total_duration:1e9,load_duration:1e7,prompt_eval_count:100,prompt_eval_duration:1e8,eval_count:body.options?.num_predict??32,eval_duration:5e8})+'\n');
+    if(!res.destroyed)res.end(JSON.stringify({done:true,message:{content:''},response:'',total_duration:1e9,load_duration:1e7,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration:1e8,eval_count:body.options?.num_predict??32,eval_duration:5e8})+'\n');
     return;
   }
   res.writeHead(404);res.end(JSON.stringify({error:'unsupported fixture route '+req.url}));

@@ -109,6 +109,8 @@ export interface PullProgress {
  * UI derives readable values, e.g. tok/sec = `eval_count / (eval_duration_ns / 1e9)`.
  */
 export interface GenerationStats {
+  prompt_eval_cached_count?: number;
+  ttft_ms?: number;
   /** Total wall time for the request, in nanoseconds. */
   total_duration_ns?: number;
   /** Time spent loading the model's weights into RAM, in nanoseconds. */
@@ -529,7 +531,7 @@ export interface BenchRun {
   quant: string | null;
   num_ctx: number;
   kv_cache_type: string;
-  flash_attn: boolean;
+  flash_attn: boolean | null;
   ollama_version: string | null;
   suite_id: string;
   suite_version: number;
@@ -538,7 +540,7 @@ export interface BenchRun {
   /** Generation throughput, median over `repeats`. */
   decode_tps_median: number | null;
   load_ms: number | null;
-  peak_rss_bytes: number | null;
+  resident_bytes: number | null;
   repeats: number;
   install_id: string;
   rating: number | null;
@@ -555,11 +557,11 @@ export interface BenchRun {
   prompt_id: string | null;
   /** Version of the prompt text, independent of `suite_version`. `null` on those same retired rows. */
   prompt_version: number | null;
-  /** Time-to-first-token proxy, median over repeats, in milliseconds. */
+  /** Observed time to first output, median over repeats, in milliseconds. */
   ttft_ms_median: number | null;
   env_start: EnvTelemetry | null;
   env_end: EnvTelemetry | null;
-  /** "sustained" | "throttled" | "unknown", derived from the thermal delta across the run. */
+  /** "nominal" | "pressure" | "unknown", observed at scenario boundaries. */
   thermal_label: string | null;
   /** Free-text anomaly notes, auto-populated where derivable, user-editable. */
   notes: string | null;
@@ -576,8 +578,8 @@ export type BenchProgress =
   | { kind: "scenario_done"; run: BenchRun; index: number; total: number }
   | { kind: "done"; runs: BenchRun[] }
   | { kind: "failed"; message: string }
-  /** A live instantaneous decode-rate reading, throttled (~90ms), for the running graphic. */
-  | { kind: "sample"; tps: number };
+  /** Recent received output chunks per second, throttled (~90ms). */
+  | { kind: "sample"; chunks_per_sec: number };
 
 /** Fit tier, re-exported shape kept in sync with `lib/fit.ts`. */
 export type FitTier = "ok" | "tight" | "wont_fit" | "unknown";

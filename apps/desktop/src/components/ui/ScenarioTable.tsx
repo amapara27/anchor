@@ -21,15 +21,15 @@ export interface ScenarioRow {
 export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelect?: (scenarioId: string) => void }) {
   const best = Math.max(...rows.map((r) => r.run?.decode_tps_median ?? 0), 1);
   const find = (s: Scenario) => rows.find((r) => r.scenarioId === s.id);
-  const cols = "minmax(0,1.6fr) 64px 64px 64px 84px 84px minmax(0,1fr)";
+  const cols = "minmax(0,1.6fr) 76px 76px 64px 84px 84px minmax(0,1fr)";
 
   return (
     <div className="overflow-x-auto rounded-[var(--radius-card)] border border-hair">
       <div className="min-w-[720px]">
         <div className="label-caps grid gap-px bg-hair" style={{ gridTemplateColumns: cols }}>
           <span className="bg-inset px-3 py-2">Scenario</span>
-          <span className="data bg-inset px-3 py-2 text-right">Prompt</span>
-          <span className="data bg-inset px-3 py-2 text-right">Gen</span>
+          <span className="data bg-inset px-3 py-2 text-right">In target</span>
+          <span className="data bg-inset px-3 py-2 text-right">Out cap</span>
           <span className="data bg-inset px-3 py-2 text-right">Ctx</span>
           <span className="data bg-inset px-3 py-2 text-right">Prefill</span>
           <span className="data bg-inset px-3 py-2 text-right">Decode</span>
@@ -54,7 +54,7 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
                   {s.id}
                   {/* Per-scenario, not per-suite: a long run can heat up partway,
                       so only some rows were measured under pressure. */}
-                  {row?.run?.thermal_label === "throttled" && (
+                  {["throttled", "pressure"].includes(row?.run?.thermal_label ?? "") && (
                     <WarningIcon
                       className="size-3 shrink-0 text-warn"
                       title="Measured under thermal pressure"

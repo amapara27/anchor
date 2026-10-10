@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -301,6 +301,14 @@ const V9: &str = "
         ON bench_samples (bench_run_id, repeat_index);
 ";
 
+/// Preserve legacy history while representing unverifiable runtime settings as unknown.
+const V10: &str = "
+    ALTER TABLE bench_runs ADD COLUMN observed_flash_attn BOOLEAN;
+    ALTER TABLE bench_runs ADD COLUMN resident_bytes BIGINT;
+    UPDATE bench_runs SET resident_bytes = peak_rss_bytes;
+    ALTER TABLE bench_samples ADD COLUMN prompt_eval_cached_count INTEGER;
+";
+
 /// Reads cached architecture metadata for `tag`, if it was recorded against
 /// this exact `digest`.
 ///
@@ -372,6 +380,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 9 {
         tx.execute_batch(V9)?;
+    }
+    if version < 10 {
+        tx.execute_batch(V10)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -458,22 +469,22 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
     tx.execute(
         "INSERT INTO bench_runs (
             id, hw_key, chip_key, chip, cpu_cores, gpu_cores, memory_gb, os_version,
-            model_name, model_digest, quant, num_ctx, kv_cache_type, flash_attn,
+            model_name, model_digest, quant, num_ctx, kv_cache_type, observed_flash_attn,
             ollama_version, suite_id, suite_version,
-            prefill_tps_median, decode_tps_median, load_ms, peak_rss_bytes, repeats,
+            prefill_tps_median, decode_tps_median, load_ms, resident_bytes, repeats,
             install_id, rating, review, visible, created_at, updated_at, source, synced_at,
             prompt_id, prompt_version, ttft_ms_median, thermal_label, notes,
-            env_start_json, env_end_json
+            env_start_json, env_end_json, flash_attn
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
             ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
-            ?31, ?32, ?33, ?34, ?35, ?36, ?37
+            ?31, ?32, ?33, ?34, ?35, ?36, ?37, FALSE
          )
          ON CONFLICT(id) DO UPDATE SET
             prefill_tps_median = excluded.prefill_tps_median,
             decode_tps_median  = excluded.decode_tps_median,
             load_ms            = excluded.load_ms,
-            peak_rss_bytes     = excluded.peak_rss_bytes,
+            resident_bytes     = excluded.resident_bytes,
             repeats            = excluded.repeats,
             rating             = excluded.rating,
             review             = excluded.review,
@@ -506,7 +517,7 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
             r.prefill_tps_median,
             r.decode_tps_median,
             r.load_ms,
-            r.peak_rss_bytes,
+            r.resident_bytes,
             r.repeats,
             r.install_id,
             r.rating,
@@ -532,8 +543,8 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
             "INSERT INTO bench_samples (
                 id, bench_run_id, repeat_index, is_warmup, prefill_tps, decode_tps, ttft_ms,
                 prompt_eval_count, prompt_eval_duration_ns, eval_count, eval_duration_ns,
-                total_duration_ns, load_duration_ns, wall_start_ms, created_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                total_duration_ns, load_duration_ns, wall_start_ms, created_at, prompt_eval_cached_count
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         )?;
         for s in samples {
             stmt.execute(rusqlite::params![
@@ -552,6 +563,7 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
                 s.load_duration_ns,
                 s.wall_start_ms,
                 s.created_at,
+                s.prompt_eval_cached_count,
             ])?;
         }
     }
@@ -561,9 +573,9 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
 
 /// Every column of `bench_runs`, in the order [`row_to_bench`] reads them.
 const BENCH_COLUMNS: &str = "id, hw_key, chip_key, chip, cpu_cores, gpu_cores, memory_gb, os_version,
-     model_name, model_digest, quant, num_ctx, kv_cache_type, flash_attn,
+     model_name, model_digest, quant, num_ctx, kv_cache_type, observed_flash_attn,
      ollama_version, suite_id, suite_version,
-     prefill_tps_median, decode_tps_median, load_ms, peak_rss_bytes, repeats,
+     prefill_tps_median, decode_tps_median, load_ms, resident_bytes, repeats,
      install_id, rating, review, visible, created_at, updated_at, source, synced_at,
      prompt_id, prompt_version, ttft_ms_median, thermal_label, notes, env_start_json, env_end_json";
 
@@ -608,7 +620,7 @@ pub fn bench_runs_for(
            FROM bench_runs b
           WHERE b.visible = TRUE AND b.chip_key = ?2
             AND (?4 IS NULL OR b.model_digest = ?4)
-            AND (?5 IS NULL OR b.suite_id = ?5)
+            AND (?5 IS NULL OR (b.suite_id = ?5 AND b.suite_version = ?8))
             AND (?6 IS NULL OR b.prompt_id IS ?6)
             AND (?7 IS NULL OR b.num_ctx = ?7)
             AND NOT EXISTS (
@@ -626,7 +638,7 @@ pub fn bench_runs_for(
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
-        rusqlite::params![hw.hw_key, hw.chip_key, hw.memory_gb, model_digest, suite_id, prompt_id, num_ctx],
+        rusqlite::params![hw.hw_key, hw.chip_key, hw.memory_gb, model_digest, suite_id, prompt_id, num_ctx, crate::bench::SUITE_VERSION],
         |row| {
             let mut run = row_to_bench(row)?;
             run.match_quality = Some(MatchQuality::from_tier(row.get::<_, i64>(37)?));
@@ -667,9 +679,9 @@ pub fn bench_history(
 /// (warmup first).
 pub fn bench_samples_for(conn: &Connection, bench_run_id: &str) -> Result<Vec<BenchSample>> {
     let mut stmt = conn.prepare(
-        "SELECT id, bench_run_id, repeat_index, is_warmup, prefill_tps, decode_tps, ttft_ms,
+        "SELECT id, bench_run_id, repeat_index, is_warmup, CASE WHEN (SELECT suite_id = 'anchor-scenarios' AND suite_version >= 3 FROM bench_runs WHERE id = bench_run_id) THEN prefill_tps END, decode_tps, CASE WHEN (SELECT suite_id = 'anchor-scenarios' AND suite_version >= 3 FROM bench_runs WHERE id = bench_run_id) THEN ttft_ms END,
                 prompt_eval_count, prompt_eval_duration_ns, eval_count, eval_duration_ns,
-                total_duration_ns, load_duration_ns, wall_start_ms, created_at
+                total_duration_ns, load_duration_ns, wall_start_ms, created_at, prompt_eval_cached_count
            FROM bench_samples WHERE bench_run_id = ?1 ORDER BY repeat_index",
     )?;
     let rows = stmt.query_map([bench_run_id], |row| {
@@ -689,6 +701,7 @@ pub fn bench_samples_for(conn: &Connection, bench_run_id: &str) -> Result<Vec<Be
             load_duration_ns: row.get(12)?,
             wall_start_ms: row.get(13)?,
             created_at: row.get(14)?,
+            prompt_eval_cached_count: row.get(15)?,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -703,6 +716,9 @@ pub fn update_bench_notes(conn: &Connection, run_id: &str, notes: Option<&str>) 
 }
 
 fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
+    let suite_id: String = row.get(15)?;
+    let suite_version: u32 = row.get(16)?;
+    let observed = suite_id == crate::bench::SUITE_ID && suite_version >= 3;
     Ok(BenchRun {
         id: row.get(0)?,
         hw: HwIdentity {
@@ -718,15 +734,15 @@ fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
         model_digest: row.get(9)?,
         quant: row.get(10)?,
         num_ctx: row.get(11)?,
-        kv_cache_type: row.get(12)?,
+        kv_cache_type: if !observed { "unknown".into() } else { row.get(12)? },
         flash_attn: row.get(13)?,
         ollama_version: row.get(14)?,
-        suite_id: row.get(15)?,
-        suite_version: row.get(16)?,
-        prefill_tps_median: row.get(17)?,
+        suite_id,
+        suite_version,
+        prefill_tps_median: if row.get::<_, u32>(16)? < 3 { None } else { row.get(17)? },
         decode_tps_median: row.get(18)?,
         load_ms: row.get(19)?,
-        peak_rss_bytes: row.get(20)?,
+        resident_bytes: row.get(20)?,
         repeats: row.get(21)?,
         install_id: row.get(22)?,
         rating: row.get(23)?,
@@ -739,7 +755,7 @@ fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
         match_quality: None,
         prompt_id: row.get(30)?,
         prompt_version: row.get(31)?,
-        ttft_ms_median: row.get(32)?,
+        ttft_ms_median: if row.get::<_, u32>(16)? < 3 { None } else { row.get(32)? },
         thermal_label: row.get(33)?,
         notes: row.get(34)?,
         env_start: env_from_json(row.get::<_, Option<String>>(35)?.as_deref()),

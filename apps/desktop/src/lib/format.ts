@@ -1,10 +1,10 @@
 // Small, dependency-free formatting helpers for the model library.
 import type { GenerationStats } from "../types";
 
-/** Human-readable byte size, e.g. 4_700_000_000 → "4.7 GB". */
+/** Human-readable byte size, e.g. 4_700_000_000 → "4.4 GiB". */
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || bytes <= 0) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   const exp = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   const value = bytes / 1024 ** exp;
   // Whole numbers for bytes/KB; one decimal for MB and up.
@@ -52,11 +52,11 @@ export function formatDuration(ns: number | null | undefined): string {
 // above. They live here, not in the browse component, because they are real
 // logic and engine.selfcheck.ts pins them.
 
-const SIZE_UNITS: Record<string, number> = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+const SIZE_UNITS: Record<string, number> = { KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
 
-/** Published download size, e.g. "4.9GB" → 5261334118. Null if unfamiliar. */
+/** Published download size, e.g. "4.9GB" → 4900000000. Null if unfamiliar. */
 export function parseSize(size: string): number | null {
-  const m = size.trim().match(/^([\d.]+)\s*(KB|MB|GB|TB)$/i);
+  const m = size.trim().match(/^(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)$/i);
   if (!m) return null;
   return Number(m[1]) * SIZE_UNITS[m[2].toUpperCase()];
 }

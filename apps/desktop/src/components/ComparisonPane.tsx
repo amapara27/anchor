@@ -149,11 +149,6 @@ function StatRow({
   sizeBytes?: number | null;
 }) {
   const tokSec = tokensPerSecond(stats);
-  // Time to first token ≈ model load + prompt evaluation.
-  const ttftNs =
-    stats.load_duration_ns != null || stats.prompt_eval_duration_ns != null
-      ? (stats.load_duration_ns ?? 0) + (stats.prompt_eval_duration_ns ?? 0)
-      : null;
   return (
     <div className="mt-4 border-t border-hair pt-4">
       <div className="grid grid-cols-2 gap-2">
@@ -167,7 +162,7 @@ function StatRow({
             </span>
           }
         />
-        <StatCard compact label="Load + prompt" value={formatDuration(ttftNs)} sub="load + prompt eval" />
+        <StatCard compact label="TTFT" value={stats.ttft_ms == null ? "—" : `${Math.round(stats.ttft_ms)} ms`} sub="first received output" />
         <StatCard compact label="Total" value={formatDuration(stats.total_duration_ns)} />
         <StatCard
           compact

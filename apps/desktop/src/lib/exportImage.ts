@@ -33,7 +33,7 @@ export interface ComparisonExport {
   bOutput: string;
   aTok: number;
   bTok: number;
-  /** e.g. "Apple M4 · 16.0 GB". */
+  /** e.g. "Apple M4 · 16.0 GiB". */
   hardware: string;
 }
 
@@ -287,7 +287,7 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
   const bottom = el("div", { display: "flex", alignItems: "flex-end", gap: "76px" });
 
   const decodeCol = el("div", { flex: "none" });
-  const decodeSub = [d.suiteLabel, d.ttftMs != null && `${d.ttftMs.toFixed(0)} ms prompt eval`].filter(Boolean).join(" · ");
+  const decodeSub = [d.suiteLabel, d.ttftMs != null && `${d.ttftMs.toFixed(0)} ms TTFT`].filter(Boolean).join(" · ");
   const decodeNumRow = el("div", { display: "flex", alignItems: "baseline", gap: "16px", marginTop: "26px" });
   decodeNumRow.append(
     el(
@@ -325,7 +325,7 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
   specCol.append(
     specRow("Quant", [d.quant, d.paramSize].filter(Boolean).join(" · ") || "—"),
     specRow("Machine", [d.chip, d.cpuCores != null && `${d.cpuCores}-core`].filter(Boolean).join(" · ")),
-    specRow("Memory", d.memoryGb != null ? `${d.memoryGb.toFixed(0)} GB unified` : "—"),
+    specRow("Memory", d.memoryGb != null ? `${d.memoryGb.toFixed(0)} GiB unified` : "—"),
     specRow("OS · Runtime", [d.osVersion && `macOS ${d.osVersion}`, d.ollamaVersion && `Ollama ${d.ollamaVersion}`].filter(Boolean).join(" · ") || "—", true),
   );
 

@@ -275,13 +275,13 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
         }
         BenchProgress::Done { runs } => finished = runs,
         BenchProgress::Failed { message } => eprintln!("\n{message}"),
-        BenchProgress::Sample { tps } => {
+        BenchProgress::Sample { chunks_per_sec: tps } => {
             if !animated {
                 return;
             }
             waveform.push(tps);
             progress_line(&format!(
-                "{} {current}  {}  {tps:>6.1} tok/s",
+                "{} {current}  {}  {tps:>6.1} chunks/s",
                 crate::ui::spinner(),
                 crate::ui::sparkline(&waveform, WAVEFORM_WIDTH),
             ));
@@ -325,11 +325,11 @@ fn conditions_line(runs: &[BenchRun]) -> Option<String> {
     if known.is_empty() {
         return None;
     }
-    let hot = known.iter().filter(|r| r.thermal_label.as_deref() == Some("throttled")).count();
+    let hot = known.iter().filter(|r| matches!(r.thermal_label.as_deref(), Some("throttled" | "pressure"))).count();
     let mut line = if hot > 0 {
-        format!("thermal pressure during {hot} of {} scenarios — expect lower numbers than a cool run", known.len())
+        format!("thermal pressure observed at boundaries of {hot} of {} scenarios — expect lower numbers than a cool run", known.len())
     } else {
-        "thermal nominal throughout".to_string()
+        "thermal nominal at scenario boundaries".to_string()
     };
     if known.iter().any(|r| r.env_start.as_ref().and_then(|e| e.on_ac_power) == Some(false)) {
         line.push_str("; ran on battery");
@@ -508,14 +508,14 @@ mod tests {
             quant: None,
             num_ctx: 2048,
             kv_cache_type: "f16".into(),
-            flash_attn: false,
+            flash_attn: Some(false),
             ollama_version: None,
             suite_id: "anchor-scenarios".into(),
             suite_version: 2,
             prefill_tps_median: None,
             decode_tps_median: None,
             load_ms: None,
-            peak_rss_bytes: None,
+            resident_bytes: None,
             repeats: 1,
             install_id: "i".into(),
             rating: None,
@@ -557,10 +557,10 @@ mod tests {
         );
         assert_eq!(
             conditions_line(&[run_with(Some("sustained"), true)]).as_deref(),
-            Some("thermal nominal throughout")
+            Some("thermal nominal at scenario boundaries")
         );
         let hot = conditions_line(&[run_with(Some("throttled"), false), run_with(Some("sustained"), false)]).unwrap();
-        assert!(hot.starts_with("thermal pressure during 1 of 2 scenarios"), "{hot}");
+        assert!(hot.starts_with("thermal pressure observed at boundaries of 1 of 2 scenarios"), "{hot}");
         assert!(hot.ends_with("ran on battery"), "{hot}");
     }
 }

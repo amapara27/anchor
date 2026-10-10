@@ -207,9 +207,9 @@ assert(
 // verdict is built entirely out of what these recover. A silent null here means
 // a tag renders no verdict; a wrong number means it renders a false one.
 
-assert(parseSize("4.9GB") === 4.9 * 1024 ** 3, "GB size parses");
-assert(parseSize("637MB") === 637 * 1024 ** 2, "MB size parses");
-assert(parseSize("1.2 TB") === 1.2 * 1024 ** 4, "spaced TB size parses");
+assert(parseSize("4.9GB") === 4.9 * 1e9, "GB size parses");
+assert(parseSize("637MB") === 637 * 1e6, "MB size parses");
+assert(parseSize("1.2 TB") === 1.2 * 1e12, "spaced TB size parses");
 assert(parseSize("unknown") === null, "unfamiliar size ⇒ null, not NaN");
 
 assert(parseTagParams("llama3.1:8b") === 8, "tag params: 8b");

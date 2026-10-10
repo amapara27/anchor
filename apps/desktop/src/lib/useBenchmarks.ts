@@ -8,7 +8,6 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { BenchProgress, BenchRepeatsMode, BenchRun, MatchQuality } from "../types";
 import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
 import { recordUse } from "./lastUsed";
-import { saveMeasuredRun } from "./measured";
 
 /** Results grouped by how well the measuring machine matches this one. */
 export interface MatchGroup {
@@ -31,29 +30,6 @@ function group(runs: BenchRun[]): MatchGroup[] {
     quality,
     runs: runs.filter((r) => (r.match_quality ?? "same_family") === quality),
   })).filter((g) => g.runs.length > 0);
-}
-
-/**
- * Feed a finished suite back into the hardware-truth engine, so every model
- * picker upgrades from a bandwidth estimate to this machine's real number.
- * The run's `hw.chip` and `quant` are the same strings `resolveTokPerSec` looks
- * up (`HardwareProfile.chip`, `Model.quantization`) — if either drifts the match
- * silently misses and the estimate keeps winning.
- *
- * ponytail: localStorage bridge, mirroring what Compare already writes. Swap for
- * a `bench_medians()` query when results need to outlive it — a restored DB or
- * cloud-synced runs, neither of which exists yet.
- */
-function recordMeasured(run: BenchRun): void {
-  if (run.decode_tps_median == null) return;
-  saveMeasuredRun({
-    modelId: run.model_name,
-    chip: run.hw.chip,
-    quant: run.quant ?? "unknown",
-    tokPerSec: run.decode_tps_median,
-    prompt: `${run.suite_id} v${run.suite_version}`,
-    ts: Date.now(),
-  });
 }
 
 /** Live progress for one scenario. Context is derived from the scenario, so
@@ -192,7 +168,7 @@ export function useBenchmarks(modelId: string | null) {
             setProgress(`run ${event.index} of ${event.total} · ${event.decode_tps.toFixed(1)} tok/s`);
             break;
           case "sample":
-            setWaveform((w) => [...w, event.tps].slice(-WAVEFORM_LENGTH));
+            setWaveform((w) => [...w, event.chunks_per_sec].slice(-WAVEFORM_LENGTH));
             break;
           case "scenario_started":
             setProgress(`scenario ${event.index} of ${event.total} · ${event.scenario_id} @ ${event.num_ctx}`);
@@ -205,9 +181,6 @@ export function useBenchmarks(modelId: string | null) {
             break;
           case "scenario_done":
             setRunProgress({ index: event.index, total: event.total });
-            // Only the headline scenario feeds the hardware-truth engine: it is
-            // the shape the model pickers' tok/s estimate is calibrated against.
-            if (event.run.prompt_id === HEADLINE_SCENARIO) recordMeasured(event.run);
             setScenarios((ss) =>
               ss.map((s) => (s.scenarioId === event.run.prompt_id ? { ...s, run: event.run } : s)),
             );

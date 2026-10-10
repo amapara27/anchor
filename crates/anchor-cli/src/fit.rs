@@ -193,6 +193,7 @@ fn print(subject: &Subject, b: &Breakdown) {
     );
     println!();
     println!("  {}", subject.origin);
+    println!("  Baseline: f16 KV, one sequence, Flash Attention; server settings can change memory use.");
     if b.result.kv_source == KvSource::Estimated {
         println!("  KV is bucketed from parameter count — treat it as a lower bound.");
     }

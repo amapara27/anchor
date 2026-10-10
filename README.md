@@ -93,7 +93,7 @@ The question every other feature answers from a different angle: will this model
 
 Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time and a live waveform while a run is in progress.
 
-One suite, run in full every time: nine scenarios, each a fixed (prompt tokens, generation tokens) shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), so a throttled run is flagged rather than silently reported as a model's true speed.
+One suite, run in full every time: nine scenarios, each a target input length and capped output shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), with pressure observed at scenario boundaries recorded alongside the result. Decode uses Ollama timings; prefill excludes cached tokens and TTFT measures the request to first received output. Server KV cache and Flash Attention settings are recorded as unknown when not exposed.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
@@ -210,7 +210,8 @@ cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-search \
            -p anchor-system                       # logic tests, no webview
 node --experimental-strip-types \
   apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures
-pnpm --filter @anchor/desktop test:e2e      # browser + isolated native macOS workflow
+pnpm --filter @anchor/desktop test:e2e      # browser, HTTP/SQLite measurements, native IPC
+pnpm --filter @anchor/desktop test:e2e:measurements # headless HTTP/SQLite measurements
 ```
 
 E2E tests require macOS, Rust, pnpm and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). They run the real interface and native IPC against an isolated Ollama HTTP fixture and temporary database; they do not download model weights or touch your installed models.

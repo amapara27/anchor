@@ -314,7 +314,7 @@ function tagToLibraryModel(
     id: t.tag,
     name: t.tag,
     family: entry.name,
-    size_bytes: installed ? sizeBytes : null,
+    size_bytes: sizeBytes,
     status: installed ? "installed" : "available",
     parameter_size: null,
     quantization: "Q4_K_M",
