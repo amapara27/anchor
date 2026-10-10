@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
-const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-search/profiles/models.json', import.meta.url), 'utf8')).slice(0, 3);
+const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/profiles/models.json', import.meta.url), 'utf8')).slice(0, 3);
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
@@ -62,8 +62,6 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
             emit(args.onEvent,{kind:'result',response:'A useful local answer.',thinking:'',stats});return;
           }
           case 'stop_chat': state.chatStop=true;return;
-          case 'recent_searches': return [];
-          case 'search_models': return catalog.map((profile:any)=>({profile,score:0.8}));
           case 'download_model': {
             emit(args.onEvent,{status:'downloading',total:100,completed:10});await sleep(400);
             if(options.failDownload) throw 'Download failed: connection lost';
@@ -126,18 +124,19 @@ test('models → inspect → context → try → navigation preserves conversati
   await page.getByRole('button',{name:'Send message'}).click();
   await nav(page,'Models').click();
   await expect(page.getByRole('status',{name:'Activity'})).toContainText('Trying');
-  await nav(page,'Try & history').click();
+  await nav(page,'Try').click();
   await expect(page.getByText('A useful local answer.',{exact:true})).toBeVisible();
   await page.getByRole('textbox',{name:'Message',exact:true}).fill('A draft worth keeping');
-  await nav(page,'Models').click();await nav(page,'Try & history').click();
+  await nav(page,'Models').click();await nav(page,'Try').click();
   await expect(page.getByRole('textbox',{name:'Message',exact:true})).toHaveValue('A draft worth keeping');
   expect(await page.evaluate(()=> (window as any).__e2e.conversations.length)).toBe(1);
   expect(await page.evaluate(()=> (window as any).__e2e.presets.find((p:any)=>p.id==='trial-context-32768').num_ctx)).toBe(32768);
 });
 
-test('Find uses installed metadata and keyboard selection',async({page})=>{
+test('Find suggestions use installed metadata, filter and keyboard selection',async({page})=>{
   await boot(page);await page.getByRole('tab',{name:'Find',exact:true}).click();
-  await page.getByLabel('Describe your use case').fill('low memory');await page.getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByLabel('Filter suggested models').fill(catalog[0].name);
+  await expect(page.getByRole('button',{name:'Inspect '+catalog[2].name,exact:true})).toHaveCount(0);
   const result=page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true});
   await expect(result).toContainText('Q8_0');await result.focus();await page.keyboard.press('Enter');
   await expect(page.getByRole('region',{name:'Model inspector'})).toBeVisible();
@@ -145,7 +144,7 @@ test('Find uses installed metadata and keyboard selection',async({page})=>{
 
 test('empty installation → find → download → installed; removal requires confirmation',async({page})=>{
   await boot(page,{empty:true});await page.getByRole('button',{name:'Find a model',exact:true}).click();
-  await page.getByLabel('Describe your use case').fill('writing');await page.getByRole('button',{name:'Search',exact:true}).click();
+  await page.getByLabel('Filter suggested models').fill(catalog[0].name);
   await page.getByRole('button',{name:'Download '+catalog[0].name,exact:true}).click();
   await expect(page.getByRole('status',{name:'Activity'})).toContainText('downloading');
   await page.getByRole('tab',{name:'Installed',exact:true}).click();
@@ -189,8 +188,8 @@ test('offline recovery and failed download are visible',async({page})=>{
   await boot(page,{offline:true,failDownload:true});await expect(page.getByRole('alert')).toContainText('not reachable');
   await page.evaluate(()=>{(window as any).__e2e.offline=false;});await page.getByRole('button',{name:'Retry',exact:true}).click();
   await expect(page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true})).toBeVisible();
-  await page.getByRole('tab',{name:'Find',exact:true}).click();await page.getByLabel('Describe your use case').fill('coding');
-  await page.getByRole('button',{name:'Search',exact:true}).click();await page.getByRole('button',{name:'Download '+catalog[2].name,exact:true}).click();
+  await page.getByRole('tab',{name:'Find',exact:true}).click();
+  await page.getByRole('button',{name:'Download '+catalog[2].name,exact:true}).click();
   await expect(page.getByRole('status',{name:'Activity'})).toContainText('Download failed');
 });
 
@@ -203,7 +202,7 @@ for(const width of [800,1000]) test('minimum/default window fits core controls a
   await page.screenshot({path:'test-results/models-'+width+'.png',fullPage:true});
 });
 
-test('selected inspector brings actions into view and history works by keyboard', async({page})=>{
+test('selected inspector brings actions into view and New trial starts an empty thread by keyboard', async({page})=>{
   await page.setViewportSize({width:800,height:600});
   await boot(page);
   await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
@@ -214,10 +213,14 @@ test('selected inspector brings actions into view and history works by keyboard'
   expect(rect!.y).toBeGreaterThanOrEqual(0);
   expect(rect!.y+rect!.height).toBeLessThanOrEqual(600);
   await action.click();
-  await page.getByRole('button',{name:'History',exact:true}).click();
-  const conversation=page.getByRole('button',{name:'Open New trial',exact:true});
-  await conversation.focus();await page.keyboard.press('Enter');
-  await expect(conversation).toHaveAttribute('aria-pressed','true');
+  await page.getByRole('textbox',{name:'Message',exact:true}).fill('First trial');
+  await page.getByRole('button',{name:'Send message'}).click();
+  await expect(page.getByText('A useful local answer.',{exact:true})).toBeVisible();
+  const fresh=page.getByRole('button',{name:'New trial',exact:true});
+  await expect(fresh).toBeEnabled();
+  await fresh.focus();await page.keyboard.press('Enter');
+  await expect(page.getByText('A useful local answer.',{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=> (window as any).__e2e.conversations.length)).toBe(2);
 });
 
 // One bounded visual matrix for the native window sizes; transport data is synthetic.
@@ -268,11 +271,9 @@ for (const [width,height,theme] of [[1440,900,'dark'],[1000,700,'light'],[800,60
     await expect(page.getByRole('tab',{name:'Installed',exact:true})).toBeFocused();
     await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('tab',{name:'Find',exact:true})).toBeFocused();
-    await page.getByLabel('Describe your use case').fill('coding');
-    await page.getByRole('button',{name:'Search',exact:true}).click();
     await expect(page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true})).toBeVisible();
     await capture('find');
-    await nav(page,'Try & history').click();await capture('try');
+    await nav(page,'Try').click();await capture('try');
   });
 }
 

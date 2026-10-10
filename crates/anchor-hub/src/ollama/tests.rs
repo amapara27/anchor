@@ -317,7 +317,7 @@ fn chat_body_sends_a_system_turn_ahead_of_history() {
 async fn catalog_arch_matches_live_metadata() {
     let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".into());
     let installed = super::list_local_models(&host).await.expect("ollama reachable");
-    let profiles = anchor_search::load_profiles().expect("catalog parses");
+    let profiles = anchor_core::catalog::load_profiles().expect("catalog parses");
 
     let mut checked = 0;
     for p in &profiles {

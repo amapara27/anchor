@@ -9,7 +9,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..');
 const scratch=await mkdtemp(path.join(tmpdir(),'anchor-native-e2e-'));
-const catalog=JSON.parse(await readFile(path.join(root,'crates/anchor-search/profiles/models.json'),'utf8')).slice(0,2);
+const catalog=JSON.parse(await readFile(path.join(root,'crates/anchor-core/profiles/models.json'),'utf8')).slice(0,2);
 const models=catalog.map(p=>({name:p.id,model:p.id,digest:'sha256:'+p.id,size:1024**3,modified_at:new Date().toISOString(),details:{family:'llama',parameter_size:'1.2B',quantization_level:'Q8_0'}}));
 const requests=[];
 let slow=false,offline=false,resident=null;
@@ -74,7 +74,7 @@ try{
   await click('Try model');
   await fill('Message','Native E2E prompt');
   await attrClick('Send message');
-  await nav('Models');await nav('Try & history');
+  await nav('Models');await nav('Try');
   await wait(async()=> (await visibleText()).includes('Native fixture answer'),'actual Rust chat stream and persistence');
   assert(requests.some(r=>r.url==='/api/chat'&&r.body.options?.num_ctx===32768),'selected fit context reaches Ollama');
   await nav('Models');await click('Compare','[role="tab"]');

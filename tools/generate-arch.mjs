@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const CATALOG = join(ROOT, "crates/anchor-search/profiles/models.json");
+const CATALOG = join(ROOT, "crates/anchor-core/profiles/models.json");
 const REGISTRY = "https://registry.ollama.ai/v2/library";
 const MODEL_LAYER = "application/vnd.ollama.image.model";
 

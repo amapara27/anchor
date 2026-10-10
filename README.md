@@ -20,7 +20,7 @@
 
 ## About
 
-Anchor is a compact native macOS tool for finding, checking and testing local AI models. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, chatting with what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
+Anchor is a compact native macOS tool for finding, checking and testing local AI models. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, trying what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
 
 It is **not** an inference engine. Ollama does the inference; Anchor is the management layer around it. That boundary is deliberate and it shapes most of the design decisions in the codebase — if a feature would require Anchor to run weights itself, it is out of scope.
 
@@ -36,9 +36,9 @@ Built for developers, students, researchers, and small business operators who wa
 
 Download the latest `.dmg` from [Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to Applications. It is signed and notarized, so it opens without a Gatekeeper prompt, and it updates itself from then on.
 
-Open **Models → Add model**, find a model for your task, inspect its memory estimate, and download it. Select an installed model and choose **Try model** to start a trial at the chosen context. Existing conversations remain available through **More tools → Try & history → History**.
+Open **Models → Add model**, pick a suggested model or browse the Ollama library, inspect its memory estimate, and download it. Select an installed model and choose **Try model** to start a trial at the chosen context. Past trials stay in SQLite and are listed by `anchor chat ls`.
 
-No API keys are required. Inference and saved history work locally after setup when Ollama is configured on this Mac. Model downloads, fresh library data, the first semantic-search model download, update checks and external sharing use the network.
+No API keys are required. Inference and saved history work locally after setup when Ollama is configured on this Mac. Model downloads, fresh library data, update checks and external sharing use the network.
 
 ### CLI
 
@@ -53,9 +53,9 @@ Use `curl` rather than a browser — the CLI is a bare binary with no notarizati
 
 ## Features
 
-### Chat
+### Try
 
-Streaming conversations against any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. Conversations, titles, and full message history persist in SQLite across launches, and each conversation can carry its own inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
+A quick streaming trial against any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. **New trial** starts a fresh thread; every trial persists in SQLite (readable with `anchor chat ls|show`) and carries its inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/chat_light.png">
@@ -65,7 +65,7 @@ Streaming conversations against any installed model, with reasoning/thinking out
 ### Exploring models
 
 - **Model hub** — every installed Ollama model in one place, cached to SQLite so the list is instant on launch. Download with inline progress, remove, and inspect per-model detail: parameter count, quantization, context window, and file size.
-- **Semantic search** — natural-language queries over a curated model catalog, embedded locally with BGE-small (`fastembed`, in-process ONNX) and matched by cosine similarity. No external API, no vector database. Results are filtered by capability first, so a vision query never surfaces a text-only model.
+- **Suggested models** — a curated catalog with real GGUF architecture metadata, filterable by name, publisher or use case and sorted by what fits this Mac.
 - **Browse the full library** — every model and tag on ollama.com, not just the curated catalog, for when you know what you want by name.
 - **Side-by-side comparison** — run the same prompt through two models sequentially and compare their output and measured generation speed.
 
@@ -125,11 +125,10 @@ A real scan of Ollama's on-disk store: total blob and manifest size, how much co
 
 ## Using the CLI
 
-`anchor` is the terminal front-end over the same crates — and the same database, so a conversation started in the terminal appears in the app's sidebar, and a benchmark run there lands in its history.
+`anchor` is the terminal front-end over the same crates — and the same database, so a trial started in either is stored in one place, and a benchmark run there lands in the app's history.
 
 ```bash
 anchor models ls                            # installed models
-anchor models discover "summarize papers"   # semantic search over the catalog
 anchor models browse --filter qwen          # everything on ollama.com
 anchor models compare llama3.2:1b qwen3.5:9b "why is the sky blue?"
 anchor fit deepseek-v2 --ctx 32768          # weights + KV cache + verdict
@@ -167,7 +166,7 @@ pnpm dev                                   # app in dev mode
 cargo install --path crates/anchor-cli     # the CLI, from source
 ```
 
-The first Rust build is slow — `fastembed` pulls in ONNX Runtime. Subsequent builds are incremental. Anchor profiles your hardware on first use and downloads the BGE-small embedding model when you first use semantic search.
+Anchor profiles your hardware on first use.
 
 `pnpm build` produces an unsigned local bundle. Signed, notarized releases are cut with `pnpm release:mac`, which needs a Developer ID certificate and an App Store Connect API key.
 
@@ -182,9 +181,8 @@ anchor/
 │   └── src-tauri/          # Tauri 2 shell — thin command wrappers only
 └── crates/
     ├── anchor-cli/         # `anchor` terminal front-end over the same crates + database
-    ├── anchor-core/        # shared domain types + the memory-fit engine; UI- and Tauri-free
+    ├── anchor-core/        # shared domain types, the curated catalog + the memory-fit engine; UI- and Tauri-free
     ├── anchor-hub/         # model registry, SQLite, Ollama REST, server lifecycle
-    ├── anchor-search/      # semantic search: BGE-small embeddings + cosine
     └── anchor-system/      # macOS hardware profiling via system_profiler
 ```
 
@@ -195,10 +193,9 @@ anchor/
 | Backend | Rust, Tokio, `reqwest` |
 | Inference | Ollama REST API |
 | Storage | SQLite via `rusqlite`, versioned migrations |
-| Embeddings | `fastembed` (BGE-small, 384-dim), cosine in Rust |
 | Hardware | `system_profiler` subprocess |
 
-All state — the registry, conversations, benchmark runs, and cached embedding models — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Inference and stored chats remain local when Ollama uses its default local host. A remote `OLLAMA_HOST` receives your prompts. Downloads, fresh library/metadata requests, update checks and explicit sharing can use the network; the app has no automatic telemetry path.
+All state — the registry, conversations and benchmark runs — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Inference and stored chats remain local when Ollama uses its default local host. A remote `OLLAMA_HOST` receives your prompts. Downloads, fresh library/metadata requests, update checks and explicit sharing can use the network; the app has no automatic telemetry path.
 
 ## Development
 
@@ -206,8 +203,7 @@ All state — the registry, conversations, benchmark runs, and cached embedding 
 pnpm dev                                     # run the app (Vite on :1420)
 pnpm --filter @anchor/desktop build          # typecheck + frontend build (fast, no Rust)
 cargo run -p anchor-cli -- models ls         # run the CLI from the workspace
-cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-search \
-           -p anchor-system                       # logic tests, no webview
+cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-system   # logic tests, no webview
 node --experimental-strip-types \
   apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures
 pnpm --filter @anchor/desktop test:e2e      # browser, HTTP/SQLite measurements, native IPC

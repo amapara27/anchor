@@ -1,4 +1,4 @@
-//! The models hub: what's installed, what's discoverable, what's browsable, and
+//! The models hub: what's installed, what's browsable, and
 //! side-by-side comparison. Mirrors the `Models` section of the desktop app.
 
 use std::sync::atomic::AtomicBool;
@@ -35,14 +35,6 @@ pub enum Cmd {
     Ps,
     /// Evict a model's weights from memory.
     Unload { model: String },
-    /// Semantic search over Anchor's curated catalog.
-    Discover {
-        /// What you want the model to do, in plain language.
-        query: Vec<String>,
-        /// How many results to show.
-        #[arg(short = 'n', long, default_value_t = 3)]
-        limit: usize,
-    },
     /// Every model published on ollama.com.
     Browse {
         /// Re-scrape instead of using the cached listing.
@@ -85,7 +77,6 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             println!("unloaded {model}");
             Ok(())
         }
-        Cmd::Discover { query, limit } => discover(&query.join(" "), limit, json).await,
         Cmd::Browse { refresh, filter } => browse(refresh, filter.as_deref(), json).await,
         Cmd::Tags { name } => tags(&name, json).await,
         Cmd::Compare {
@@ -119,7 +110,7 @@ async fn ls(json: bool) -> Result<(), String> {
         return print_json(&models);
     }
     if models.is_empty() {
-        println!("no models installed — try `anchor models discover \"...\"`");
+        println!("no models installed — try `anchor models browse`");
         return Ok(());
     }
     println!(
@@ -237,66 +228,6 @@ async fn ps(json: bool) -> Result<(), String> {
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "—".into())
         );
-    }
-    Ok(())
-}
-
-async fn discover(query: &str, limit: usize, json: bool) -> Result<(), String> {
-    if query.trim().is_empty() {
-        return Err("give me something to search for".into());
-    }
-    let dir = crate::data_dir()?;
-    // ponytail: the index is rebuilt per invocation — 38 profiles through a
-    // local ONNX embedder, a couple of seconds. Cache the vectors next to the
-    // embedding model if that ever grates. The first run downloads BGE-small
-    // into the same `embeddings/` cache the app uses.
-    //
-    // `build` is synchronous and gives no progress, so the spinner is ticked by
-    // a companion task rather than by the work: for a first run, which downloads
-    // the embedding model, a silent minute reads as a hang.
-    let building = std::sync::Arc::new(AtomicBool::new(true));
-    let ticker = tokio::spawn({
-        let building = building.clone();
-        let first_run = !dir.join("embeddings").exists();
-        async move {
-            let note = if first_run { "downloading the embedding model (first run only)" } else { "embedding the catalog" };
-            while building.load(std::sync::atomic::Ordering::Relaxed) {
-                progress_line(&format!("{} {note}", crate::ui::spinner()));
-                tokio::time::sleep(std::time::Duration::from_millis(90)).await;
-            }
-        }
-    });
-    let built = tokio::task::spawn_blocking({
-        let cache = dir.join("embeddings");
-        move || anchor_search::SemanticIndex::build(cache)
-    })
-    .await;
-    building.store(false, std::sync::atomic::Ordering::Relaxed);
-    let _ = ticker.await;
-    progress_done();
-    let index = built.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-    let results = index.search(query, limit).map_err(|e| e.to_string())?;
-
-    // Best-effort, exactly as in the app: a failed history write must not sink
-    // an otherwise-good search.
-    let ids: Vec<String> = results.iter().map(|r| r.profile.id.clone()).collect();
-    let history = anchor_search::QueryHistory::new(dir.join("search_history.json"));
-    if let Err(e) = history.record(query, &ids) {
-        eprintln!("note: couldn't record the query in history: {e}");
-    }
-
-    if json {
-        return print_json(&results);
-    }
-    for hit in &results {
-        let p = &hit.profile;
-        println!("{}  ({:.0}% match)", p.id, hit.score * 100.0);
-        println!("  {}", p.blurb);
-        println!(
-            "  {}B · {} · ~{:.1} GiB download · {} ctx",
-            p.params_b, p.quant, p.download_gb, p.context_tokens
-        );
-        println!();
     }
     Ok(())
 }

@@ -26,7 +26,6 @@ const SHORTCUTS = [
   { label: "Command palette", keys: "⌘K" },
   { label: "Send message", keys: "↩" },
   { label: "Newline in message", keys: "⇧↩" },
-  { label: "Rename conversation", keys: "double-click" },
   { label: "Close dialog / dropdown", keys: "esc" },
   { label: "Toggle appearance", keys: "titlebar" },
 ];

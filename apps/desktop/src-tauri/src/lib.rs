@@ -16,7 +16,6 @@ use anchor_hub::{
     BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats, Preset,
     PullProgress, Registry, RepeatsMode, StoredMessage,
 };
-use anchor_search::{QueryHistory, SemanticIndex};
 use anchor_system::Profiler;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, RunEvent};
@@ -54,13 +53,6 @@ struct ServerState {
     chats: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     bench_cancel: AtomicBool,
     comparison_cancel: AtomicBool,
-}
-
-/// Holds the semantic-search index, built lazily on the first search.
-#[derive(Default)]
-struct SearchState {
-    index: tokio::sync::RwLock<Option<SemanticIndex>>,
-    build_lock: tokio::sync::Mutex<()>,
 }
 
 /// Builds a [`Registry`] backed by `registry.db` in the app's data directory.
@@ -144,8 +136,8 @@ async fn list_models(app: AppHandle) -> Result<Vec<Model>, String> {
 /// the library joins against live installed models. This is the backend source
 /// of truth that replaces the frontend's old hard-coded catalog.
 #[tauri::command]
-fn list_catalog() -> Result<Vec<anchor_search::ModelProfile>, String> {
-    anchor_search::load_profiles().map_err(|e| e.to_string())
+fn list_catalog() -> Result<Vec<anchor_core::catalog::ModelProfile>, String> {
+    anchor_core::catalog::load_profiles().map_err(|e| e.to_string())
 }
 
 /// How long the scraped Ollama library listing stays good. Models are published
@@ -153,7 +145,7 @@ fn list_catalog() -> Result<Vec<anchor_search::ModelProfile>, String> {
 const LIBRARY_MAX_AGE_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// The full public Ollama library — every model installable from ollama.com,
-/// not just the curated profiles that Discover's semantic search ranks.
+/// not just the curated suggested profiles.
 ///
 /// Served from a SQLite cache; `refresh: true` forces a re-scrape (the button
 /// in the UI). Needs no Ollama server: this is about what *could* be installed.
@@ -197,59 +189,6 @@ async fn tag_arch(
         .tag_arch(&tag, &digest, now_ms())
         .await
         .map_err(|e| e.to_string())
-}
-
-/// Builds a [`QueryHistory`] backed by `search_history.json` in the app's data
-/// directory (the rolling log of the user's recent searches).
-fn history(app: &AppHandle) -> Result<QueryHistory, String> {
-    let dir = data_dir(&app)
-        .map_err(|e| format!("could not resolve app data dir: {e}"))?;
-    Ok(QueryHistory::new(dir.join("search_history.json")))
-}
-
-/// Ranks the catalog against a natural-language `query` and returns the top
-/// `limit` models (default 3) by cosine similarity. Builds the index on first
-/// use, retaining it for subsequent searches. Recording the query to
-/// history is best-effort and never fails the search.
-#[tauri::command]
-async fn search_models(
-    app: AppHandle,
-    query: String,
-    limit: Option<usize>,
-) -> Result<Vec<anchor_search::ScoredModel>, String> {
-    let k = limit.unwrap_or(3);
-    let state = app.state::<SearchState>();
-    let _building = state.build_lock.lock().await;
-    if state.index.read().await.is_none() {
-        let dir = data_dir(&app).map_err(|e| e.to_string())?.join("embeddings");
-        let index = tauri::async_runtime::spawn_blocking(move || SemanticIndex::build(dir)).await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-        *state.index.write().await = Some(index);
-    }
-    let guard = state.index.read().await;
-    let index = guard
-        .as_ref()
-        .ok_or("Model search is still warming up — try again in a moment.")?;
-    let results = index.search(&query, k).map_err(|e| e.to_string())?;
-
-    // Best-effort: a failed history write shouldn't sink an otherwise-good search.
-    let ids: Vec<String> = results.iter().map(|r| r.profile.id.clone()).collect();
-    if let Err(e) = history(&app).and_then(|h| h.record(&query, &ids).map_err(|e| e.to_string())) {
-        eprintln!("[anchor-search] failed to record query history: {e}");
-    }
-    Ok(results)
-}
-
-/// Returns the most recent search queries (newest first), for the Discover
-/// page's "Recent" suggestions. Reads the same `QueryHistory` store that
-/// `search_models` writes to; a missing/empty store yields an empty list.
-#[tauri::command]
-fn recent_searches(
-    app: AppHandle,
-    limit: Option<usize>,
-) -> Result<Vec<anchor_search::QueryRecord>, String> {
-    let mut records = history(&app)?.load();
-    records.truncate(limit.unwrap_or(10));
-    Ok(records)
 }
 
 /// Pulls a model via Ollama, streaming progress events back over `on_event`.
@@ -626,18 +565,6 @@ async fn conversation_messages(app: AppHandle, id: String) -> Result<Vec<StoredM
     registry(&app)?.messages_for(&id).map_err(|e| e.to_string())
 }
 
-/// Renames a conversation.
-#[tauri::command]
-async fn rename_conversation(app: AppHandle, id: String, title: String) -> Result<(), String> {
-    registry(&app)?.rename_conversation(&id, &title).map_err(|e| e.to_string())
-}
-
-/// Deletes a conversation and all of its messages.
-#[tauri::command]
-async fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
-    registry(&app)?.delete_conversation(&id).map_err(|e| e.to_string())
-}
-
 /// Evicts a model's weights from Ollama. The frontend calls this when a run is
 /// cancelled or its view unmounts, so a dropped generation stream never leaves a
 /// model resident. Best-effort — a down server (nothing to unload) is ignored.
@@ -940,12 +867,15 @@ pub fn run() {
         // updated in place — it has to ship in the very first release.
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ServerState::default())
-        .manage(SearchState::default())
         .setup(|app| {
             // Clean up a server a previous run left behind before anything can
             // reuse it and conclude Anchor doesn't own it.
             if let Ok(dir) = data_dir(app.handle()) {
                 server::reap_orphan(&dir);
+                // ponytail: one-time sweep of the removed semantic search's cache
+                // (BGE model, ~130 MB) and query log; delete this once installs have updated.
+                let _ = std::fs::remove_dir_all(dir.join("embeddings"));
+                let _ = std::fs::remove_file(dir.join("search_history.json"));
             }
             #[cfg(not(feature = "native-e2e"))]
             tray::init(app.handle())?;
@@ -957,8 +887,6 @@ pub fn run() {
             list_library,
             library_tags,
             tag_arch,
-            search_models,
-            recent_searches,
             download_model,
             cancel_download,
             compare_models,
@@ -969,8 +897,6 @@ pub fn run() {
             list_conversations,
             create_conversation,
             conversation_messages,
-            rename_conversation,
-            delete_conversation,
             list_presets,
             save_preset,
             delete_preset,

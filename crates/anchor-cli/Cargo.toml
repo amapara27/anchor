@@ -14,7 +14,6 @@ path = "src/main.rs"
 [dependencies]
 anchor-core = { workspace = true }
 anchor-hub = { workspace = true }
-anchor-search = { workspace = true }
 anchor-system = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

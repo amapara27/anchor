@@ -2,7 +2,7 @@
 //!
 //! Like the Tauri shell, this is deliberately thin: every command resolves the
 //! shared data directory, makes sure Ollama is reachable, and delegates to
-//! [`anchor_hub`] / [`anchor_search`] / [`anchor_system`]. It reads and writes
+//! [`anchor_hub`] / [`anchor_core`] / [`anchor_system`]. It reads and writes
 //! the *same* files the desktop app does — `registry.db`, `hardware.json`,
 //! `install_id` — so a conversation started here shows up in the app, and a
 //! benchmark run here lands in the app's history.
@@ -50,7 +50,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Installed models, discovery, and the public Ollama library.
+    /// Installed models and the public Ollama library.
     Models {
         #[command(subcommand)]
         cmd: models::Cmd,

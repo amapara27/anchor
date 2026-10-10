@@ -78,7 +78,7 @@ async fn resolve(id: &str) -> Result<Subject, String> {
         return Ok(from_installed(model));
     }
 
-    let profiles = anchor_search::load_profiles().map_err(|e| e.to_string())?;
+    let profiles = anchor_core::catalog::load_profiles().map_err(|e| e.to_string())?;
     if let Some(p) = profiles.iter().find(|p| p.id == id) {
         return Ok(Subject {
             id: p.id.clone(),

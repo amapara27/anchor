@@ -13,28 +13,10 @@ import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ChatMessage } from "./ChatMessage";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
-import { ClockIcon, PencilIcon, PlusIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from "./icons";
+import { PlusIcon, SendIcon, StopIcon } from "./icons";
 
 /** A solid, widely-installed default (matches the Research Assistant's pick). */
 const DEFAULT_MODEL = "llama3.1:8b";
-
-const DAY_MS = 86_400_000;
-
-/** Bucket conversations by recency — the design's Today / Earlier headings. */
-function groupConversations(list: Conversation[]) {
-  const now = Date.now();
-  const groups: { label: string; items: Conversation[] }[] = [
-    { label: "Today", items: [] },
-    { label: "Earlier this week", items: [] },
-    { label: "Older", items: [] },
-  ];
-  for (const c of list) {
-    const age = now - c.updated_ms;
-    const bucket = age < DAY_MS ? 0 : age < 7 * DAY_MS ? 1 : 2;
-    groups[bucket].items.push(c);
-  }
-  return groups.filter((g) => g.items.length > 0);
-}
 
 /**
  * Whether loading `modelId` right now would push this Mac into heavy swap,
@@ -71,8 +53,8 @@ function wontFitGivenResidency(
 }
 
 /**
- * The Chat workspace: a conversation rail, a streaming thread over local Ollama
- * models, and a composer. Conversations persist in SQLite (via `useChat`); the
+ * Try: one streaming thread over a local Ollama model, and a composer. Each
+ * trial persists in SQLite (via `useChat`, readable with `anchor chat ls`); the
  * model pill surfaces the hardware fit hint — the moat — for the chosen model.
  */
 export function ChatWorkspace() {
@@ -87,10 +69,7 @@ export function ChatWorkspace() {
     running,
     loadingModel,
     error,
-    select,
     create,
-    rename,
-    remove,
     send,
     stop,
     regenerate,
@@ -100,10 +79,6 @@ export function ChatWorkspace() {
   const [model, setModel] = useState("");
   const [presetId, setPresetId] = useState(DEFAULT_PRESET_ID);
   const [input, setInput] = useState("");
-  const [query, setQuery] = useState("");
-  const [showHistory, setShowHistory] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [pendingSwap, setPendingSwap] = useState<{ text: string } | null>(null);
   // Conversations (or "__new__" for one not yet created) the user has already
   // clicked through a won't-fit warning for — don't re-ask every message.
@@ -134,13 +109,6 @@ export function ChatWorkspace() {
     if (activeId) setPreset(activeId, next === DEFAULT_PRESET_ID ? null : next);
   };
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? conversations.filter((c) => c.title.toLowerCase().includes(q)) : conversations;
-  }, [conversations, query]);
-
-  const groups = useMemo(() => groupConversations(filtered), [filtered]);
-
   const doSend = async (text: string) => {
     setInput("");
     let id = activeId;
@@ -161,63 +129,6 @@ export function ChatWorkspace() {
 
   return (
     <div className="relative flex min-w-0 flex-1">
-      {/* Conversation rail */}
-      <aside hidden={!showHistory} className={(showHistory ? "flex " : "hidden ") + "w-[262px] shrink-0 flex-col border-r border-hair bg-chrome"}>
-        <div className="flex flex-col gap-2.5 border-b border-hair px-3 py-3.5">
-          <button
-            type="button"
-            onClick={() => create(model, presetId)}
-            disabled={!model}
-            className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-lg bg-fg text-[13px] font-medium text-canvas transition-[opacity,transform] duration-150 ease-out hover:opacity-90 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-40"
-          >
-            <PlusIcon className="size-3.5" />
-            New chat
-          </button>
-          <label className="flex h-[30px] items-center gap-2 rounded-lg border border-hair bg-inset px-2.5">
-            <SearchIcon className="size-3.5 shrink-0 text-fg-subtle" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search conversations"
-              aria-label="Search conversations"
-              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-fg placeholder:text-fg-subtle focus:outline-none"
-            />
-          </label>
-        </div>
-
-        <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-2 py-2.5">
-          {groups.length === 0 ? (
-            <p className="px-2 py-3 text-[11.5px] leading-relaxed text-fg-subtle">
-              {conversations.length === 0 ? "No conversations yet." : "No conversations match that search."}
-            </p>
-          ) : (
-            groups.map((group) => (
-              <div key={group.label} className="mb-3.5">
-                <span className="label-caps block px-1.5 pb-1.5">{group.label}</span>
-                {group.items.map((c) => (
-                  <ConversationRow
-                    key={c.id}
-                    convo={c}
-                    active={c.id === activeId}
-                    renaming={renamingId === c.id}
-                    onOpen={() => select(c.id)}
-                    onStartRename={() => setRenamingId(c.id)}
-                    onCommitRename={(title) => {
-                      if (title.trim()) rename(c.id, title.trim());
-                      setRenamingId(null);
-                    }}
-                    onDelete={() => setPendingDelete(c.id)}
-                  />
-                ))}
-              </div>
-            ))
-          )}
-          <p className="px-2 text-[11.5px] leading-[1.5] text-fg-subtle">
-            Double-click a conversation or press F2 to rename it. History is stored in a local SQLite file.
-          </p>
-        </div>
-      </aside>
-
       {/* Thread */}
       <section className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ThreadHeader
@@ -231,9 +142,7 @@ export function ChatWorkspace() {
           onPresetChange={changePreset}
           profile={profile}
           pickerDisabled={running || loading}
-          onRename={(title) => activeConvo && rename(activeConvo.id, title)}
-          historyOpen={showHistory}
-          onToggleHistory={() => setShowHistory(v => !v)}
+          onNewTrial={() => void create(model, presetId)}
         />
 
         <MessageList
@@ -264,18 +173,6 @@ export function ChatWorkspace() {
       </section>
 
       <ConfirmDialog
-        open={pendingDelete !== null}
-        title="Delete conversation?"
-        body="This permanently removes the conversation and all its messages."
-        confirmLabel="Delete"
-        onConfirm={() => {
-          if (pendingDelete) remove(pendingDelete);
-          setPendingDelete(null);
-        }}
-        onCancel={() => setPendingDelete(null)}
-      />
-
-      <ConfirmDialog
         open={pendingSwap != null}
         title="This model probably won't fit"
         body="Loading it now would likely push this Mac into heavy swap — expect slow, stuttering responses. Continue anyway?"
@@ -291,83 +188,7 @@ export function ChatWorkspace() {
   );
 }
 
-/** One row in the conversation rail; double-click swaps in an inline editor. */
-function ConversationRow({
-  convo,
-  active,
-  renaming,
-  onOpen,
-  onStartRename,
-  onCommitRename,
-  onDelete,
-}: {
-  convo: Conversation;
-  active: boolean;
-  renaming: boolean;
-  onOpen: () => void;
-  onStartRename: () => void;
-  onCommitRename: (title: string) => void;
-  onDelete: () => void;
-}) {
-  const [draft, setDraft] = useState(convo.title);
-
-  useEffect(() => setDraft(convo.title), [convo.title, renaming]);
-
-  return (
-    <div
-      className={[
-        "group flex cursor-pointer flex-col gap-1 rounded-lg px-2.5 py-2 transition-colors duration-150 ease-out",
-        active ? "bg-raised" : "hover:bg-inset",
-      ].join(" ")}
-    >
-      {renaming ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => onCommitRename(draft)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
-            if (e.key === "Escape") onCommitRename(convo.title);
-          }}
-          onClick={(e) => e.stopPropagation()}
-          className="w-full rounded-md border border-accent-line bg-surface px-1.5 py-0.5 text-[13px] font-semibold text-fg focus:outline-none"
-        />
-      ) : (
-        <span className="flex min-w-0 items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onOpen}
-            onDoubleClick={onStartRename}
-            onKeyDown={e => { if (e.key === "F2") { e.preventDefault(); onStartRename(); } }}
-            aria-label={"Open " + convo.title}
-            aria-pressed={active}
-            className={`min-w-0 flex-1 truncate text-left text-[13px] font-medium ${active ? "text-fg" : "text-fg-muted"}`}
-            title={convo.title}
-          >
-            {convo.title}
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            aria-label="Delete conversation"
-            className="shrink-0 cursor-pointer text-fg-subtle opacity-0 transition-opacity hover:text-danger focus:opacity-100 group-hover:opacity-100"
-          >
-            <TrashIcon className="size-3.5" />
-          </button>
-        </span>
-      )}
-      <span className="data flex items-center gap-1.5 text-[10px] text-fg-subtle">
-        <span className="truncate">{convo.model}</span>
-      </span>
-    </div>
-  );
-}
-
-/** Title (click to rename), model + preset pills, and the live context meter. */
+/** Title, model + preset pills, the live context meter, and New trial. */
 function ThreadHeader({
   convo,
   messages,
@@ -379,12 +200,8 @@ function ThreadHeader({
   onPresetChange,
   profile,
   pickerDisabled,
-  onRename,
-  historyOpen,
-  onToggleHistory,
+  onNewTrial,
 }: {
-  historyOpen: boolean;
-  onToggleHistory: () => void;
   convo: Conversation | undefined;
   messages: ReturnType<typeof useChat>["messages"];
   model: string;
@@ -395,10 +212,8 @@ function ThreadHeader({
   onPresetChange: (id: string) => void;
   profile: ReturnType<typeof useHardwareProfile>["profile"];
   pickerDisabled: boolean;
-  onRename: (title: string) => void;
+  onNewTrial: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
 
   // Context use: the newest turn's prompt + response is what the model holds.
   const contextTokens = useMemo(() => {
@@ -424,39 +239,9 @@ function ThreadHeader({
   return (
     <div className="chat-toolbar shrink-0">
       <div className="flex min-w-[160px] flex-1 flex-col gap-0.5">
-        {editing && convo ? (
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => {
-              if (draft.trim()) onRename(draft.trim());
-              setEditing(false);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            className="max-w-[520px] rounded-[7px] border border-accent-line bg-surface px-2 py-0.5 text-base font-semibold tracking-tight text-fg focus:outline-none"
-          />
-        ) : (
-          <button
-            type="button"
-            disabled={!convo}
-            onClick={() => {
-              if (!convo) return;
-              setDraft(convo.title);
-              setEditing(true);
-            }}
-            title={convo ? "Rename conversation" : undefined}
-            className="flex cursor-text items-center gap-2 text-left text-fg transition-colors hover:text-accent-text disabled:pointer-events-none"
-          >
-            <span className="max-w-[460px] truncate text-base font-semibold tracking-tight">
-              {convo?.title ?? "New conversation"}
-            </span>
-            {convo && <PencilIcon className="size-3 opacity-55" />}
-          </button>
-        )}
+        <span className="max-w-[460px] truncate text-base font-semibold tracking-tight text-fg">
+          {convo?.title ?? "New trial"}
+        </span>
         <span className="data text-[10.5px] text-fg-subtle">
           {turns} {turns === 1 ? "turn" : "turns"}
           {contextTokens != null && ` · ${contextTokens.toLocaleString()} tokens in context`}
@@ -493,7 +278,7 @@ function ThreadHeader({
           <Meter fraction={contextTokens / contextLimit} color="var(--accent-text)" className="w-24" />
         </div>
       )}
-      <button type="button" onClick={onToggleHistory} aria-expanded={historyOpen} className={"flex h-8 shrink-0 items-center gap-2 rounded-lg border border-hair px-3 text-[13px] text-fg transition-colors hover:border-hair2 hover:bg-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line " + (historyOpen ? "bg-raised" : "")}><ClockIcon className="size-3.5 text-fg-muted" />History</button>
+      <button type="button" onClick={onNewTrial} disabled={!model || pickerDisabled} className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-hair px-3 text-[13px] text-fg transition-colors hover:border-hair2 hover:bg-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line disabled:pointer-events-none disabled:opacity-40"><PlusIcon className="size-3.5 text-fg-muted" />New trial</button>
     </div>
   );
 }

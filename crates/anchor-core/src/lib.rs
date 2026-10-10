@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod catalog;
 pub mod fit;
 
 /// A local AI model that Anchor knows about.

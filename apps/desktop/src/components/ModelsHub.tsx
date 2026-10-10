@@ -6,7 +6,7 @@ import { formatBytes } from "../lib/format";
 import { hardwareHint } from "../lib/hint";
 import { DEFAULT_CONTEXT } from "../lib/fit";
 import { ModelDetailAside } from "./ModelDetailAside";
-import { SearchPage } from "./SearchPage";
+import { SuggestedModels } from "./SuggestedModels";
 import { BrowsePage } from "./BrowsePage";
 import { ModelComparison } from "./ModelComparison";
 import { Tabs } from "./ui/Tabs";
@@ -85,8 +85,8 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
           {rows.length === 0 && <p className="border-t border-hair px-4 py-8 text-sm text-fg-muted">No models match these filters.</p>}
         </div>)}
       {(tab === "discover" || tab === "browse") && <div>
-        <div className="button-group mb-5">{([['discover','By task'],['browse','Ollama library']] as const).map(([mode,label])=><button key={mode} aria-pressed={findMode === mode} onClick={() => setFindMode(mode)}>{label}</button>)}</div>
-        {findMode === "discover" ? <SearchPage onSelect={select} /> : <BrowsePage onSelect={setSelected} selectedTag={selected?.id ?? null} />}
+        <div className="button-group mb-5">{([['discover','Suggested'],['browse','Ollama library']] as const).map(([mode,label])=><button key={mode} aria-pressed={findMode === mode} onClick={() => setFindMode(mode)}>{label}</button>)}</div>
+        {findMode === "discover" ? <SuggestedModels onSelect={select} /> : <BrowsePage onSelect={setSelected} selectedTag={selected?.id ?? null} />}
       </div>}
       {compared && <div hidden={tab !== "compare"}><ModelComparison onBusy={onCompareBusy} /></div>}
       </div>

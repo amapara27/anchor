@@ -14,7 +14,6 @@
       "Summarization",
       "Long context"
     ],
-    "profile": "A well-rounded general-purpose chat assistant with a 128K context window. Keywords: everyday chat, instruction following, summarize long documents and articles, draft and rewrite text, answer questions, brainstorm. The safe default choice when you are unsure which model to pick.",
     "capabilities": [
       "general"
     ],
@@ -41,13 +40,12 @@
     "context_tokens": 131072,
     "quant": "Q4_K_M",
     "download_gb": 2,
-    "blurb": "Compact and fast \u2014 a good default on memory-constrained machines.",
+    "blurb": "Compact and fast — a good default on memory-constrained machines.",
     "use_cases": [
       "Low memory",
       "Fast chat",
       "Drafting"
     ],
-    "profile": "A compact, fast 3B chat model that runs on a low-memory laptop. Keywords: small footprint, limited RAM, runs offline on a laptop, low latency, fast everyday assistant, quick drafting, short summaries, simple question answering. Choose it when speed and small size matter more than maximum quality.",
     "capabilities": [
       "general"
     ],
@@ -80,7 +78,6 @@
       "Autocomplete",
       "Low memory"
     ],
-    "profile": "A tiny 1B model for edge devices and the lowest-memory machines. Keywords: minimal RAM, runs on a small laptop or phone, ultra-low latency, fast autocomplete, intent routing, keyword extraction, simple text transforms. Not for complex reasoning.",
     "capabilities": [
       "general"
     ],
@@ -113,7 +110,6 @@
       "Long-form writing",
       "Agents"
     ],
-    "profile": "A frontier-class 70B model with near state-of-the-art quality. Keywords: hardest complex reasoning, nuanced instruction following, long-form writing and synthesis, sophisticated agent workflows, deep analysis. The strongest general model here, but needs a high-memory machine (64GB+).",
     "capabilities": [
       "general",
       "reasoning"
@@ -147,7 +143,6 @@
       "Structured output",
       "Data extraction"
     ],
-    "profile": "A strong, efficient 7B all-rounder with excellent multilingual ability and reliable JSON output. Keywords: general assistant, translation and multilingual chat, extract structured data into JSON, parse and transform text, generate structured responses for downstream tools, everyday reasoning on modest hardware.",
     "capabilities": [
       "general"
     ],
@@ -180,7 +175,6 @@
       "Multilingual",
       "Agents"
     ],
-    "profile": "A capable 14B model with strong reasoning and multilingual skill for its size. Keywords: analytical question answering, multilingual tasks, tool-using agents, extract structured data, summarize reports, mid-complexity work that needs more depth than a 7B while still running on a 16GB machine.",
     "capabilities": [
       "general",
       "reasoning"
@@ -214,7 +208,6 @@
       "Analysis",
       "Agents"
     ],
-    "profile": "A high-quality 32B model whose reasoning approaches much larger systems. Keywords: complex analysis, multi-step reasoning, demanding agent workflows, careful instruction following, professional writing. For when you have 32GB+ but cannot fit a 70B.",
     "capabilities": [
       "general",
       "reasoning"
@@ -248,7 +241,6 @@
       "Web scraping",
       "Debugging"
     ],
-    "profile": "A code-specialized 7B model for software development in Python, JavaScript, TypeScript, Go, Rust, SQL, and more. Keywords: write and debug code, web scraping and web crawling, parse HTML and JSON, build scrapers and automation scripts, extract structured data from web pages and APIs, code review, refactoring, generate unit tests. A local coding assistant and pair programmer.",
     "capabilities": [
       "code"
     ],
@@ -281,7 +273,6 @@
       "Architecture",
       "Debugging"
     ],
-    "profile": "A top-tier 32B coding model, among the best for local software development. Keywords: generate substantial code, design and reason about software architecture, complex debugging, large multi-file refactors, code review, autonomous coding agent. For developers with 32GB+ of memory.",
     "capabilities": [
       "code"
     ],
@@ -314,7 +305,6 @@
       "Extraction",
       "Function calling"
     ],
-    "profile": "A fast, efficient 7B workhorse that punches above its weight. Keywords: fast general-purpose chat, everyday assistant, information extraction, summarization, function and tool calling, low-latency backbone for apps and agents on everyday hardware.",
     "capabilities": [
       "general"
     ],
@@ -347,7 +337,6 @@
       "Function calling",
       "Multilingual"
     ],
-    "profile": "A 12B model with a long 128K context and strong function calling, built with NVIDIA. Keywords: process long documents, multilingual tasks, tool-using agents, reason over large inputs while staying efficient to run.",
     "capabilities": [
       "general"
     ],
@@ -380,7 +369,6 @@
       "Long-form writing",
       "Synthesis"
     ],
-    "profile": "A sparse mixture-of-experts model (8x7B) with high quality at strong speed but a large memory footprint. Keywords: demanding reasoning, long-form generation, synthesis across sources, high-throughput serving. Needs ample RAM (48GB+).",
     "capabilities": [
       "general",
       "reasoning"
@@ -414,7 +402,6 @@
       "Reasoning",
       "Math"
     ],
-    "profile": "A small 3.8B model with strong reasoning for its size. Keywords: runs on a low-memory laptop, on-device math and logic, step-by-step reasoning on constrained hardware, summarization, edge deployment without a large model.",
     "capabilities": [
       "general",
       "reasoning"
@@ -448,7 +435,6 @@
       "Reasoning",
       "STEM"
     ],
-    "profile": "A reasoning-focused 14B model that excels at math, logic, and STEM. Keywords: step-by-step quantitative reasoning, solve math problems, logic puzzles, technical and scientific question answering, coding logic. Prioritizes careful thinking over broad world knowledge.",
     "capabilities": [
       "reasoning",
       "general"
@@ -482,7 +468,6 @@
       "Fast chat",
       "Drafting"
     ],
-    "profile": "A tiny, efficient 2B open model from Google's Gemini lineage. Keywords: runs on minimal RAM, fast on-device chat, quick drafting, classification, lightweight assistant features where a very small, responsive model is preferred.",
     "capabilities": [
       "general"
     ],
@@ -515,7 +500,6 @@
       "Writing",
       "Q&A"
     ],
-    "profile": "A balanced 9B open model from Google's Gemini lineage. Keywords: general-purpose chat, polished writing and editing, question answering, summarization. A good quality-to-size tradeoff on mainstream hardware.",
     "capabilities": [
       "general"
     ],
@@ -548,7 +532,6 @@
       "Reasoning",
       "Analysis"
     ],
-    "profile": "A larger 27B Gemma for higher-quality writing and reasoning. Keywords: professional and creative writing, careful analysis, nuanced question answering, editing. Strong open Google model for machines with 32GB+.",
     "capabilities": [
       "general",
       "reasoning"
@@ -582,7 +565,6 @@
       "Math",
       "Planning"
     ],
-    "profile": "A reasoning-focused 7B distillation that thinks step by step and shows its chain of thought. Keywords: solve math and logic, step-by-step reasoning, logic puzzles, planning, structured problem solving where transparent multi-step thinking matters more than speed.",
     "capabilities": [
       "reasoning",
       "general"
@@ -616,7 +598,6 @@
       "Math",
       "Analysis"
     ],
-    "profile": "A 14B reasoning distillation stronger than the 7B. Keywords: harder math and logic, careful step-by-step analysis, multi-step planning, technical reasoning with explicit chain-of-thought. Needs 16GB.",
     "capabilities": [
       "reasoning",
       "general"
@@ -650,7 +631,6 @@
       "Math",
       "Research"
     ],
-    "profile": "A high-end 32B reasoning distillation approaching frontier problem-solving. Keywords: the most demanding math, logic, and research-style reasoning among local models, explicit step-by-step thinking. For machines with 32GB+.",
     "capabilities": [
       "reasoning",
       "general"
@@ -684,7 +664,6 @@
       "Completion",
       "Debugging"
     ],
-    "profile": "A mixture-of-experts coding model (16B) with broad programming-language coverage and a long context. Keywords: write and debug code, code generation and completion, repository-scale understanding, fast local coding assistant for Python and many other languages.",
     "capabilities": [
       "code"
     ],
@@ -717,7 +696,6 @@
       "Infilling",
       "Completion"
     ],
-    "profile": "A Llama-based 13B code model for programming. Keywords: write and debug code, fill-in-the-middle completion, write functions from descriptions, IDE and editor integration, general coding assistance in Python, C++, Java, and more.",
     "capabilities": [
       "code"
     ],
@@ -750,7 +728,6 @@
       "Autocomplete",
       "Infilling"
     ],
-    "profile": "Google's 7B code model built on Gemma. Keywords: code completion and fill-in-the-middle, generate short functions and snippets, lightweight coding assistance and autocomplete inside editors.",
     "capabilities": [
       "code"
     ],
@@ -783,7 +760,6 @@
       "Completion",
       "Multi-language"
     ],
-    "profile": "An open 7B code model from BigCode trained on hundreds of programming languages with a permissive license. Keywords: code completion, fill-in-the-middle, multi-language programming assistance where license transparency matters.",
     "capabilities": [
       "code"
     ],
@@ -816,7 +792,6 @@
       "Captioning",
       "Visual Q&A"
     ],
-    "profile": "A multimodal 7B vision-language model that accepts images. Keywords: describe and caption an image, answer questions about a picture, read a screenshot or chart, visual question answering. Runs on everyday hardware.",
     "capabilities": [
       "vision"
     ],
@@ -849,7 +824,6 @@
       "Document images",
       "Visual Q&A"
     ],
-    "profile": "A larger 13B vision-language model for richer image understanding. Keywords: detailed image description, analyze a screenshot or document image, visual reasoning, visual question answering at higher quality than the 7B.",
     "capabilities": [
       "vision"
     ],
@@ -882,7 +856,6 @@
       "Document understanding",
       "Charts"
     ],
-    "profile": "Meta's 11B multimodal model that reasons over images and text with a long context. Keywords: describe what is in an image or screenshot, understand documents and scanned pages, interpret charts and diagrams, image-grounded question answering.",
     "capabilities": [
       "vision"
     ],
@@ -915,7 +888,6 @@
       "Knowledge base",
       "Citations"
     ],
-    "profile": "A 35B model purpose-built for retrieval-augmented generation (RAG) and tool use, with strong grounding and citations over long contexts. Keywords: build a local knowledge base over your files, document Q&A and chat with your documents, answer with citations, multi-step tool-using agents, enterprise retrieval workflows. This is the model that generates grounded answers from retrieved files.",
     "capabilities": [
       "general"
     ],
@@ -948,7 +920,6 @@
       "Knowledge base",
       "Agents"
     ],
-    "profile": "Cohere's flagship 104B model for advanced retrieval-augmented generation and agentic tool use. Keywords: high-accuracy knowledge base and document Q&A with citations over your files, complex multi-step tool-using agents, demanding enterprise retrieval. Needs substantial memory (80GB+).",
     "capabilities": [
       "general"
     ],
@@ -981,7 +952,6 @@
       "Vector search",
       "Similarity"
     ],
-    "profile": "An embedding model that converts text into numeric embedding vectors. It does NOT chat, generate text, or answer questions. Keywords: compute text embeddings, generate vectors for semantic search, populate a vector database, nearest-neighbor similarity, clustering, deduplication. Use it to encode and index text; pair it with a separate chat model to produce answers.",
     "capabilities": [
       "embedding"
     ],
@@ -1014,7 +984,6 @@
       "Reranking",
       "Vector search"
     ],
-    "profile": "A high-accuracy open embedding model that turns text into vectors. It does NOT generate text or hold conversations. Keywords: top-quality text embeddings, semantic search ranking, encode text for a vector database, rerank candidate results, similarity and clustering where embedding precision is the priority.",
     "capabilities": [
       "embedding"
     ],
@@ -1047,7 +1016,6 @@
       "Vector search",
       "On-device"
     ],
-    "profile": "A tiny, very fast embedding model that encodes text into compact vectors. It does NOT chat or generate text. Keywords: lightweight text embeddings, on-device vector similarity, fast semantic search, quick clustering where speed and small size outweigh embedding accuracy.",
     "capabilities": [
       "embedding"
     ],
@@ -1080,7 +1048,6 @@
       "Edge",
       "Experimentation"
     ],
-    "profile": "A very small 1.1B chat model. Keywords: runs on minimal RAM, ultra-low-resource and edge deployment, experimentation and learning, prototyping, simple drafting where footprint and speed matter far more than answer quality.",
     "capabilities": [
       "general"
     ],
@@ -1113,7 +1080,6 @@
       "Drafting",
       "Summarization"
     ],
-    "profile": "A small 1.7B model tuned for instruction following, capable for its size. Keywords: runs on a low-memory laptop, on-device assistant, drafting and rewriting, short summarization, lightweight tasks on constrained devices.",
     "capabilities": [
       "general"
     ],
@@ -1146,7 +1112,6 @@
       "Enterprise",
       "Knowledge base"
     ],
-    "profile": "IBM's 8B enterprise model tuned for tool use and business workflows under a permissive license. Keywords: function and tool calling, document Q&A and knowledge bases, summarize business content, agentic enterprise workflows.",
     "capabilities": [
       "general"
     ],
@@ -1179,7 +1144,6 @@
       "Creative writing",
       "Roleplay"
     ],
-    "profile": "An uncensored, instruction-tuned fine-tune of Mixtral. Keywords: uncensored and unfiltered assistant, open-ended and creative chat, roleplay and storytelling, brainstorming without refusals, a compliant less-restricted model. Memory-hungry like base Mixtral (48GB+).",
     "capabilities": [
       "general"
     ],
@@ -1212,7 +1176,6 @@
       "Q&A",
       "Drafting"
     ],
-    "profile": "Intel's 7B conversational fine-tune based on Mistral. Keywords: friendly general-purpose chat, everyday assistant, question answering, drafting on mainstream hardware.",
     "capabilities": [
       "general"
     ],
@@ -1245,7 +1208,6 @@
       "Reasoning",
       "Writing"
     ],
-    "profile": "A 7B instruction-tuned model that handles complex, multi-part prompts well. Keywords: follow detailed multi-step instructions, structured writing, reason over involved requests, careful adherence to nuanced directions.",
     "capabilities": [
       "general",
       "reasoning"

@@ -90,16 +90,6 @@ function useChatState() {
       });
   }, []);
 
-  const select = useCallback(
-    (id: string) => {
-      activeIdRef.current = id;
-      setActiveId(id);
-      setError(undefined);
-      loadMessages(id);
-    },
-    [loadMessages],
-  );
-
   const create = useCallback(
     async (model: string, presetId?: string | null) => {
       const convo = await invoke<Conversation>("create_conversation", {
@@ -121,24 +111,6 @@ function useChatState() {
     setConversations((c) => c.map((x) => (x.id === id ? { ...x, preset_id: presetId } : x)));
     invoke("set_conversation_preset", { id, presetId }).catch(() => {});
   }, []);
-
-  const rename = useCallback((id: string, title: string) => {
-    setConversations((c) => c.map((x) => (x.id === id ? { ...x, title } : x)));
-    invoke("rename_conversation", { id, title }).catch(() => {});
-  }, []);
-
-  const remove = useCallback(
-    (id: string) => {
-      setConversations((c) => c.filter((x) => x.id !== id));
-      if (id === activeId) {
-        activeIdRef.current = null;
-        setActiveId(null);
-        setMessages([]);
-      }
-      invoke("delete_conversation", { id }).catch(() => {});
-    },
-    [activeId],
-  );
 
   /** Ends the in-flight turn in a conversation, keeping what it generated so
    *  far. The backend persists the partial answer and emits its usual `result`,
@@ -250,10 +222,7 @@ function useChatState() {
     runningIds,
     loadingModel,
     error,
-    select,
     create,
-    rename,
-    remove,
     send,
     stop,
     regenerate,

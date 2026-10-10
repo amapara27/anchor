@@ -163,7 +163,7 @@ export type Quant = string; // e.g. "Q4_K_M", "Q8_0", "F16"
 /**
  * What a model can do. Drives the pre-ranking filter in semantic search (a
  * "computer vision" query must never surface a text-only model) and the
- * capability badges in the UI. Mirrors `anchor_search::Capability` (lowercase).
+ * capability badges in the UI. Mirrors `anchor_core::catalog::Capability` (lowercase).
  */
 export type Capability = "vision" | "code" | "embedding" | "reasoning" | "general";
 
@@ -189,7 +189,7 @@ export interface ModelSpec {
 
 /**
  * A curated catalog entry as returned by the `list_catalog` backend command
- * (mirrors `anchor_search::ModelProfile`). Replaces the old hard-coded
+ * (mirrors `anchor_core::catalog::ModelProfile`). Replaces the old hard-coded
  * frontend catalog; `buildLibrary` joins these against live installed models.
  */
 export interface ModelProfile {
@@ -210,32 +210,8 @@ export interface ModelProfile {
   arch: ArchMeta | null;
   blurb: string;
   use_cases: string[];
-  /** Authored description used for semantic search (not shown directly). */
-  profile: string;
   /** What the model can do — at least one entry. Mirrors the Rust `capabilities`. */
   capabilities: Capability[];
-}
-
-/**
- * A semantic-search hit, mirroring `anchor_search::ScoredModel`. Returned by the
- * `search_models` command: a catalog profile plus its cosine similarity to the
- * query (`1.0` = identical direction, higher = more relevant).
- */
-export interface ScoredModel {
-  profile: ModelProfile;
-  score: number;
-}
-
-/**
- * One recorded search, mirroring `anchor_search::QueryRecord`. Returned by the
- * `recent_searches` command (newest first).
- */
-export interface QueryRecord {
-  query: string;
-  /** Unix epoch milliseconds when the query was recorded. */
-  timestamp_ms: number;
-  /** Model ids that were returned for this query, most relevant first. */
-  results: string[];
 }
 
 /**
@@ -248,6 +224,8 @@ export interface LibraryModel extends Model {
   tags: string[];
   /** Free-form user note. */
   note: string;
+  /** From the curated catalog (vs. installed locally from elsewhere). */
+  curated?: boolean;
 }
 
 /** Progress state for an in-flight download. */

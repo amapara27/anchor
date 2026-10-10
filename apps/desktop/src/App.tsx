@@ -65,7 +65,7 @@ function Workspace() {
       <span className="tool-sidebar-label">Workspace</span>
       {([
         {id: "models", sub: "installed", label: "Models", icon: LayersIcon},
-        {id: "chat", label: "Try & history", icon: ChatIcon},
+        {id: "chat", label: "Try", icon: ChatIcon},
         {id: "models", sub: "compare", label: "Compare", icon: CompareIcon},
         {id: "benchmarks", label: "Benchmarks", icon: ZapIcon},
         {id: "storage", label: "Manage storage", icon: StorageIcon},

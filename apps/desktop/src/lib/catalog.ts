@@ -6,7 +6,7 @@ const GB = 1024 ** 3;
  * Joins the backend model catalog against live install state for the UI.
  *
  * The catalog itself now comes from the backend `list_catalog` command
- * (`anchor_search`'s curated profiles), not a hard-coded frontend list. This
+ * (`anchor_core::catalog`'s curated profiles), not a hard-coded frontend list. This
  * module just adapts those profiles into the `LibraryModel` shape the UI
  * renders and overlays real Ollama-reported facts when a model is installed.
  */
@@ -60,6 +60,7 @@ export function buildLibrary(installed: Model[], catalog: ModelProfile[]): Libra
       spec: live ? enrichSpec(spec, live) : spec,
       tags: [],
       note: "",
+      curated: true,
     };
   });
 

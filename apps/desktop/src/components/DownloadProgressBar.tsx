@@ -19,7 +19,7 @@ export function ProgressTrack({ pct, className = "h-1.5" }: { pct: number; class
   );
 }
 
-/** Compact download bar: label + bytes + track. Used by ModelCard and SearchResultCard. */
+/** Compact download bar: label + bytes + track. Used by the Find lists and the inspector. */
 export function DownloadProgressBar({ download, totalBytes }: { download: DownloadState; totalBytes: number }) {
   const pct = Math.round(download.progress * 100);
   const verifying = download.status === "verifying";
