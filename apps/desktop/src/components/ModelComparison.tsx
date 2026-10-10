@@ -70,7 +70,7 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
     <div className="flex flex-col gap-6">
       {/* Setup */}
       <div className="comparison-setup">
-        <div className="flex flex-col items-stretch gap-3 lg:flex-row lg:items-end">
+        <div className="flex flex-col items-stretch gap-4 lg:flex-row lg:items-start">
           <ModelPicker
             label="Model A"
             value={modelA}
@@ -79,11 +79,6 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
             disabledId={modelB}
             disabled={running || loading}
           />
-          <div className="hidden shrink-0 items-center justify-center pb-9 lg:flex">
-            <span className="text-xs text-fg-subtle">
-              and
-            </span>
-          </div>
           <ModelPicker
             label="Model B"
             value={modelB}
@@ -108,7 +103,7 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
             disabled={running}
             rows={3}
             placeholder="Ask both models the same thing…"
-            className="scrollbar-slim w-full resize-y rounded-lg border border-hair bg-inset px-3 py-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-60"
+            className="scrollbar-slim w-full resize-y rounded-lg border border-hair bg-inset px-3 py-2.5 text-[13px] text-fg transition-colors placeholder:text-fg-subtle hover:border-hair2 focus:border-hair2 focus:outline-none focus:ring-2 focus:ring-accent-line disabled:opacity-60"
           />
         </div>
 
@@ -136,7 +131,7 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
       {hasRun && (
         <div className="flex flex-col gap-4">
           <div className="flex min-h-8 items-center justify-between">
-            <h3 className="label-caps">Results</h3>
+            <h3 className="text-[15px] font-semibold tracking-tight">Results</h3>
             {bothDone && fraction >= 1 && (
               <Button variant="ghost" onClick={handleExport}>
                 Export result
@@ -191,9 +186,7 @@ function ThroughputBar({
   const max = Math.max(aTok, bTok) || 1;
   return (
     <div className="comparison-setup">
-      <div className="label-caps">
-        Throughput comparison
-      </div>
+      <h3 className="text-[13px] font-medium text-fg">Throughput</h3>
       <div className="mt-3 space-y-3">
         {[
           { name: aName, tok: aTok, lead: aTok >= bTok },
@@ -204,10 +197,10 @@ function ThroughputBar({
               <span className="data truncate font-medium text-fg">{row.name}</span>
               <span className="data text-fg-muted">{formatTokSec(row.tok)}</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-raised">
+            <div className="h-1.5 overflow-hidden rounded-[2px] bg-raised">
               <div
                 className={[
-                  "h-full rounded-full transition-[width] duration-500 [transition-timing-function:var(--ease-out)]",
+                  "h-full rounded-[2px] transition-[width] duration-500 [transition-timing-function:var(--ease-out)]",
                   row.lead ? "bg-accent" : "bg-hair2",
                 ].join(" ")}
                 style={{ width: `${(row.tok / max) * 100}%` }}

@@ -127,13 +127,6 @@ export const ChevronDownIcon = (p: IconProps) => (
   </Svg>
 );
 
-export const SparkleIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z" />
-    <path d="M19 15l.7 2.1L22 18l-2.3.9L19 21l-.7-2.1L16 18l2.3-.9Z" />
-  </Svg>
-);
-
 /** Lightning bolt — used for the tok/sec throughput stat. */
 export const ZapIcon = (p: IconProps) => (
   <Svg {...p}>
@@ -174,12 +167,6 @@ export const SendIcon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 19V5" />
     <path d="m6 11 6-6 6 6" />
-  </Svg>
-);
-
-export const ShieldIcon = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M12 3.5 19 6.5v5.5c0 4-3 6.6-7 7.8-4-1.2-7-3.8-7-7.8V6.5z" />
   </Svg>
 );
 

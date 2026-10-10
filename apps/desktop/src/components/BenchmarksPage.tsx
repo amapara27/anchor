@@ -7,7 +7,7 @@ import { formatBytes, formatRelativeTime } from "../lib/format";
 import { renderBenchmarkCard, type BenchmarkCardData } from "../lib/exportImage";
 import { savePng } from "../lib/savePng";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
+import { Meta, PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { ModelSelect } from "./ui/ModelSelect";
 import { Tabs } from "./ui/Tabs";
 import { Meter } from "./ui/SegmentedBar";
@@ -18,7 +18,7 @@ import {
   SUITE_ID,
   numCtxFor,
 } from "../lib/scenarios";
-import { ZapIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon, StopIcon } from "./icons";
+import { ChevronRightIcon, PlayIcon, DownloadIcon, ShareIcon, CloseIcon, WarningIcon, StopIcon } from "./icons";
 
 type BenchTab = "suite" | "leaderboard";
 
@@ -224,25 +224,11 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     <>
       <PageHeader
         title="Benchmarks"
-        actions={
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className={`size-1.5 rounded-full ${profile ? "bg-ok" : "bg-hair2"}`} aria-hidden />
-              <span className="text-[12.5px] font-semibold text-fg">
-                {profile?.chip ?? profile?.model_name ?? "This Mac"}
-              </span>
-              <span className="data text-[11px] text-fg-subtle">
-                {[
-                  profile?.memory_bytes != null && formatBytes(profile.memory_bytes),
-                  profile?.os_version && `macOS ${profile.os_version}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </span>
-            </div>
-
-          </div>
-        }
+        meta={<>
+          <Meta k="Machine">{profile?.chip ?? profile?.model_name ?? "This Mac"}</Meta>
+          {profile?.memory_bytes != null && <Meta k="Memory">{formatBytes(profile.memory_bytes)}</Meta>}
+          {profile?.os_version && <Meta k="macOS">{profile.os_version}</Meta>}
+        </>}
       />
 
       {error && <p className="text-sm text-danger">{error}</p>}
@@ -285,7 +271,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       {tab === "suite" && (
         <section className="flex flex-col gap-3">
           {!modelId ? (
-            <p className="card px-4 py-10 text-center text-sm text-fg-muted">Install a model to benchmark it.</p>
+            <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">Install a model to benchmark it.</p>
           ) : (
             <ScenarioTable
               rows={scenarioRows}
@@ -302,15 +288,15 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       {tab === "leaderboard" && (
         <div className="flex flex-col gap-3.5">
           <div className="flex flex-wrap items-center gap-4">
-            <label className="flex items-center gap-2 text-xs text-fg-muted">Scenario
-              <select aria-label="Leaderboard scenario" title={activeScenario?.label} value={scenarioFilter} onChange={e=>setScenarioFilter(e.target.value)} className="rounded-control border border-hair bg-surface px-3 py-2 text-sm text-fg">
+            <label className="flex items-center gap-2 text-[13px] text-fg-muted">Scenario
+              <select aria-label="Leaderboard scenario" title={activeScenario?.label} value={scenarioFilter} onChange={e=>setScenarioFilter(e.target.value)} className="select-native data">
                 {SCENARIOS_BY_COST.map(sc=><option key={sc.id} value={sc.id}>{sc.id}</option>)}
               </select>
             </label>
             {activeScenario && <span aria-label="Scenario token counts" className="data text-[11px] text-fg-muted">{activeScenario.promptTokens} in / {activeScenario.genTokens} out · {numCtxFor(activeScenario)/1024}K context</span>}
           </div>
           {groups.length === 0 ? (
-            <p className="card px-4 py-10 text-center text-sm text-fg-muted">
+            <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">
               No results for this scenario.
             </p>
           ) : (
@@ -323,12 +309,12 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       )}
 
 
-      <details className="border-t border-hair pt-4">
-        <summary className="cursor-pointer text-[13px] text-fg-muted">Method</summary>
+      <details className="group border-t border-hair pt-4">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Method</summary>
         <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine workloads with target input lengths and output caps. Results are medians after warm-up. Prefill counts uncached tokens; TTFT measures request to first received output. Thorough runs three repeats; Fast runs long generations once. Rankings use the current method and matching scenario/context. The live waveform shows response chunks, not tokens. Thermal status comes from boundary snapshots. Server KV cache and Flash Attention settings are not reported.</p>
       </details>
-      <details className="border-t border-hair pt-4">
-        <summary className="cursor-pointer text-[13px] text-fg-muted">Run history <span className="data ml-2 text-[11px]">{history.length}</span></summary>
+      <details className="group border-t border-hair pt-4">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-subtle">{history.length}</span></summary>
         <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={!!mine} /></div>
       </details>
       {shareCard && (
@@ -356,28 +342,12 @@ function SegToggle<T extends string>({
   small?: boolean;
 }) {
   return (
-    <div className="flex gap-1 rounded-control border border-hair p-[3px]">
-      {options.map((o) => {
-        const active = o.key === value;
-        return (
-          <button
-            key={o.key}
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange(o.key)}
-            className={[
-              "flex-1 whitespace-nowrap rounded font-medium transition-colors duration-150 ease-out",
-              small ? "py-1.5 text-[10.5px]" : "py-2 text-[13px]",
-              active
-                ? "bg-accent-soft font-semibold text-accent-text"
-                : "text-fg-muted hover:text-fg",
-              "disabled:pointer-events-none disabled:opacity-50",
-            ].join(" ")}
-          >
-            {o.label}
-          </button>
-        );
-      })}
+    <div className={"button-group" + (small ? "" : " h-8 items-center")}>
+      {options.map((o) => (
+        <button key={o.key} type="button" disabled={disabled} aria-pressed={o.key === value} onClick={() => onChange(o.key)}>
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -406,19 +376,19 @@ function RunSetupCard({
   onRun: () => void;
   onStop: () => void;
 }) {
-  return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-4 rounded-card border border-hair bg-surface p-4">
-    <div className="min-w-[220px] flex-1">
+  return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-x-4 gap-y-3">
+    <div className="min-w-[220px] max-w-[460px] flex-1">
       <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
         disabled={installed.length === 0 || running} variant="field" ariaLabel="Benchmark model"
         placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />
     </div>
-    <div className="w-[200px]" title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
-      <span className="mb-2 block text-xs text-fg-muted">Rigor</span>
-      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running} small
+    <div title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
+      <span className="mb-1.5 block text-xs text-fg-muted">Rigor</span>
+      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running}
         options={[{key:"fast",label:"Fast"},{key:"thorough",label:"Thorough"}]} />
     </div>
     {running ? <GhostButton onClick={onStop} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />Stop</GhostButton> :
-      <PrimaryButton onClick={onRun} disabled={!modelId}><ZapIcon className="size-3.5" />Run suite</PrimaryButton>}
+      <PrimaryButton onClick={onRun} disabled={!modelId}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}
   </section>;
 }
 
@@ -496,9 +466,9 @@ function HistoryCard({
       : `${history.length} run${history.length === 1 ? "" : "s"}`;
 
   return (
-    <div className="card flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-hair bg-inset px-5 py-3">
-        <span className="label-caps text-[10px]">History</span>
+    <div className="flex flex-col overflow-hidden rounded-card border border-hair">
+      <div className="flex items-center justify-between gap-3 border-b border-hair bg-surface px-4 py-2">
+        <span className="th">recent runs</span>
         <SegToggle
           value={historyScope}
           onChange={setHistoryScope}
@@ -510,22 +480,22 @@ function HistoryCard({
         />
       </div>
 
-      <div className="flex flex-1 flex-col overflow-y-auto py-1">
+      <div className="flex flex-1 flex-col overflow-y-auto">
         {rows.length === 0 ? (
           <p className="flex flex-1 items-center justify-center px-5 text-center text-[12.5px] text-fg-muted">
             No runs yet.
           </p>
         ) : (
           rows.map((r, i) => (
-            <div key={r.id} className="grid grid-cols-[1fr_74px] items-center gap-3 px-5 py-2.5">
+            <div key={r.id} className="grid grid-cols-[1fr_74px] items-center gap-3 border-b border-hair px-4 py-2.5 last:border-b-0">
               <div className="min-w-0">
                 <div className="flex items-baseline gap-1.5">
                   <span className="data truncate text-[12.5px] font-medium text-fg">{r.model_name}</span>
                   <span className="data shrink-0 text-[10.5px] text-fg-subtle">{formatRelativeTime(r.updated_at)}</span>
                 </div>
-                <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-hair">
+                <span className="mt-1.5 block h-1 overflow-hidden rounded-[2px] bg-hair">
                   <span
-                    className="block h-full rounded-full bg-accent"
+                    className="block h-full rounded-[2px] bg-accent"
                     style={{ width: `${((r.decode_tps_median ?? 0) / max) * 100}%`, opacity: 1 - i * 0.16 }}
                   />
                 </span>
@@ -538,7 +508,7 @@ function HistoryCard({
         )}
       </div>
 
-      <div className="flex items-center justify-between gap-2.5 border-t border-hair px-5 py-4">
+      <div className="flex items-center justify-between gap-2.5 border-t border-hair px-4 py-2.5">
         <span className="data truncate text-[11px] text-fg-subtle">{footer}</span>
         <div className="flex shrink-0 gap-1.5">
           <GhostButton onClick={onShare} disabled={!canShare} className="h-7 text-[11.5px]">
@@ -570,7 +540,7 @@ function Group({
           {median != null && ` · median ${median.toFixed(1)} tok/s`}
         </span>
       </div>
-      <div className="card overflow-hidden">
+      <div className="overflow-hidden rounded-card border border-hair">
         {group.runs.map((r, i) => {
           const mine = r.source === "local";
           return (

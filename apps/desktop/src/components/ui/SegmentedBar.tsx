@@ -30,7 +30,7 @@ export function SegmentedBar({
   return (
     <div className={`flex flex-col gap-2.5 ${className}`}>
       <span
-        className="flex gap-px overflow-hidden rounded-full bg-hair"
+        className="flex gap-px overflow-hidden rounded-[2px] bg-hair"
         style={{ height }}
         role="img"
         aria-label={segments.map((s) => `${s.label} ${Math.round(s.fraction * 100)}%`).join(", ")}
@@ -71,9 +71,9 @@ export function Meter({
   className?: string;
 }) {
   return (
-    <span className={`block overflow-hidden rounded-full bg-hair ${className}`} style={{ height }}>
+    <span className={`block overflow-hidden rounded-[2px] bg-hair ${className}`} style={{ height }}>
       <span
-        className="block h-full rounded-full"
+        className="block h-full rounded-[2px]"
         style={{ width: `${Math.max(0, Math.min(1, fraction)) * 100}%`, background: color }}
       />
     </span>

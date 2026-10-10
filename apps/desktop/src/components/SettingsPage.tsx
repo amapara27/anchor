@@ -10,7 +10,7 @@ import { PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
-import { RefreshIcon, ShieldIcon } from "./icons";
+import { RefreshIcon } from "./icons";
 
 type Section = "appearance" | "inference" | "hardware" | "privacy";
 
@@ -70,19 +70,15 @@ export function SettingsPage() {
                 onClick={() => setSection(s.key)}
                 aria-current={active ? "true" : undefined}
                 className={[
-                  "flex h-8 cursor-pointer items-center rounded-lg px-2.5 text-left text-[13px] font-medium",
-                  "transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-                  active ? "bg-accent-soft text-accent-text" : "text-fg-muted hover:bg-inset hover:text-fg",
+                  "flex h-8 cursor-pointer items-center rounded-lg px-2.5 text-left text-[13px]",
+                  "transition-colors duration-150 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+                  active ? "bg-raised text-fg" : "text-fg-muted hover:bg-inset hover:text-fg",
                 ].join(" ")}
               >
                 {s.label}
               </button>
             );
           })}
-          <div className="card mt-3 flex flex-col gap-1.5 p-3">
-            <span className="label-caps text-[9.5px]">Anchor</span>
-            <span className="text-[11px] leading-[1.45] text-fg-subtle">Pre-release build</span>
-          </div>
         </nav>
 
         <div className="settings-content flex min-w-0 flex-col gap-6">
@@ -91,8 +87,8 @@ export function SettingsPage() {
           {section === "hardware" && <HardwarePanel />}
           {section === "privacy" && <PrivacyPanel />}
 
-          <section className="card flex flex-col gap-2.5 p-5">
-            <span className="label-caps">Shortcuts</span>
+          <section className="flex flex-col gap-2.5">
+            <h2 className="text-[15px] font-semibold tracking-tight text-fg">Shortcuts</h2>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2">
               {SHORTCUTS.map((k) => (
                 <span key={k.label} className="flex items-center gap-2.5 border-b border-hair py-1.5">
@@ -143,9 +139,9 @@ function AppearancePanel() {
       name: "Match system",
       tag: "auto",
       preview: (
-        <span className="flex overflow-hidden rounded-lg border border-hair">
-          <Swatch bg="#0A0A0B" border="transparent" bars={["#EAEAEC", "#8B7BE8"]} half />
-          <Swatch bg="#F7F4ED" border="transparent" bars={["#1C1A15", "#9A7317"]} half />
+        <span className="flex overflow-hidden rounded-control border border-hair">
+          <Swatch bg="#0A0A0B" border="transparent" bars={["#EAEAEC", "#3A3A42", "#8B7BE8"]} half />
+          <Swatch bg="#F7F4ED" border="transparent" bars={["#1C1A15", "#CFC7B4", "#9A7317"]} half />
         </span>
       ),
     },
@@ -165,15 +161,15 @@ function AppearancePanel() {
               onClick={() => setPref(c.key)}
               aria-pressed={active}
               className={[
-                "flex cursor-pointer flex-col gap-2.5 rounded-[11px] border bg-inset p-3 text-left",
-                "transition-colors duration-150 hover:bg-raised",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/45",
-                active ? "border-accent-line" : "border-hair",
+                "flex cursor-pointer flex-col gap-2.5 rounded-card border bg-inset p-2.5 text-left",
+                "transition-colors duration-150 hover:border-hair2",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line",
+                active ? "border-fg" : "border-hair",
               ].join(" ")}
             >
               {c.preview}
               <span className="flex items-center gap-2 text-[12.5px] font-medium">
-                <span className={active ? "text-accent-text" : "text-fg-muted"}>{c.name}</span>
+                <span className={active ? "text-fg" : "text-fg-muted"}>{c.name}</span>
                 <span className="data ml-auto text-[10px] text-fg-subtle">{active ? "active" : c.tag}</span>
               </span>
             </button>
@@ -188,13 +184,13 @@ function Swatch({ bg, border, bars, half }: { bg: string; border: string; bars: 
   const widths = [60, 85, 40];
   return (
     <span
-      className={`flex flex-col gap-1.5 p-2.5 ${half ? "flex-1" : "rounded-lg"}`}
+      className={`flex flex-col gap-1.5 p-2.5 ${half ? "flex-1" : "rounded-control"}`}
       style={{ background: bg, border: half ? undefined : `1px solid ${border}` }}
     >
       {bars.map((c, i) => (
         <span
           key={i}
-          className="block h-[5px] rounded-full"
+          className="block h-[4px] rounded-[1px]"
           style={{ background: c, width: `${widths[i] ?? 50}%` }}
         />
       ))}
@@ -473,7 +469,7 @@ function HardwarePanel() {
         </GhostButton>
       </div>
 
-      <div className="grid grid-cols-4 gap-2.5">
+      <div className="stat-strip">
         {profile?.total_cores != null && (
           <Tile
             label="CPU"
@@ -504,10 +500,8 @@ function HardwarePanel() {
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-center gap-2 text-[13.5px] font-semibold text-fg">
             Ollama server
-            <span
-              className={`data flex items-center gap-1.5 rounded-full border border-hair px-2 py-0.5 text-[10px] uppercase tracking-[0.06em] ${reachable ? "text-ok" : "text-fg-subtle"}`}
-            >
-              <span className="size-[5px] rounded-full bg-current" aria-hidden />
+            <span className="flex items-center gap-1.5 text-[12px] font-normal text-fg-muted">
+              <span className={`size-1.5 rounded-full ${reachable ? "bg-ok" : "bg-fg-subtle"}`} aria-hidden />
               {reachable ? "running" : "stopped"}
             </span>
           </span>
@@ -546,11 +540,11 @@ function chipName(profile: HardwareProfile | null): string {
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <span className="flex flex-col gap-1 rounded-[9px] border border-hair bg-inset p-3">
-      <span className="label-caps text-[9.5px]">{label}</span>
-      <span className="data text-[17px] text-fg">{value}</span>
-      {sub && <span className="text-[11px] text-fg-subtle">{sub}</span>}
-    </span>
+    <div>
+      <span className="stat-k">{label}</span>
+      <span className="stat-v text-[17px]">{value}</span>
+      {sub && <span className="stat-sub">{sub}</span>}
+    </div>
   );
 }
 
@@ -560,19 +554,16 @@ function PrivacyPanel() {
       title="Privacy & sharing"
       blurb="Inference is always local. Chats are stored locally. Downloads, update checks and explicit exports can use the network."
     >
-      <div className="flex items-center gap-3 rounded-[var(--radius-card)] border border-accent-line bg-accent-soft px-3.5 py-3">
-        <span className="flex size-[26px] shrink-0 items-center justify-center rounded-lg border border-accent-line">
-          <ShieldIcon className="size-3.5 text-accent-text" />
-        </span>
-        <span className="flex flex-col gap-0.5">
-          <span className="text-[13px] font-semibold text-accent-text">
-            Inference uses your configured Ollama server
-          </span>
-          <span className="text-[11.5px] text-fg-muted">
-            Chats are stored in a local SQLite file you can delete.
-          </span>
-        </span>
-      </div>
+      <dl className="flex flex-col border-t border-hair text-[13px]">
+        <div className="flex items-baseline justify-between gap-4 border-b border-hair py-2.5">
+          <dt className="text-fg-muted">Inference</dt>
+          <dd className="text-fg">Your configured Ollama server</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-4 border-b border-hair py-2.5">
+          <dt className="text-fg-muted">Chats</dt>
+          <dd className="text-fg">A local SQLite file you can delete</dd>
+        </div>
+      </dl>
     </SectionCard>
   );
 }

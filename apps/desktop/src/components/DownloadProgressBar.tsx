@@ -5,14 +5,14 @@ import type { DownloadState } from "../types";
 export function ProgressTrack({ pct, className = "h-1.5" }: { pct: number; className?: string }) {
   return (
     <div
-      className={`${className} overflow-hidden rounded-full bg-raised`}
+      className={`${className} overflow-hidden rounded-[2px] bg-raised`}
       role="progressbar"
       aria-valuenow={pct}
       aria-valuemin={0}
       aria-valuemax={100}
     >
       <div
-        className="h-full rounded-full bg-accent transition-[width] duration-150 ease-out"
+        className="h-full rounded-[2px] bg-accent transition-[width] duration-150 ease-out"
         style={{ width: `${pct}%` }}
       />
     </div>

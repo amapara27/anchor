@@ -6,7 +6,7 @@ import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { SearchResultCard } from "./SearchResultCard";
 import { Button } from "./ui/Button";
 import { Chip } from "./ui/Chip";
-import { ClockIcon, RefreshIcon, SearchIcon, SparkleIcon, WarningIcon, XIcon } from "./icons";
+import { ClockIcon, RefreshIcon, SearchIcon, WarningIcon, XIcon } from "./icons";
 
 /** First-run suggestions so the empty state is never a dead end. */
 const EXAMPLES = [
@@ -52,7 +52,6 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
 
   return (
     <div className="space-y-6">
-<p className="text-[13px] text-fg-muted">Describe a task to search the curated model catalog.</p>
 
       <form
         onSubmit={(e) => {
@@ -69,7 +68,7 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
           onChange={(e) => setInput(e.target.value)}
           placeholder="e.g. a model for web scraping, or RAG over my notes…"
           aria-label="Describe your use case"
-          className="w-full rounded-[var(--radius-card)] border border-hair bg-inset py-3 pl-10 pr-32 text-sm text-fg placeholder:text-fg-subtle transition-colors focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25"
+          className="h-10 w-full rounded-control border border-hair bg-inset pl-10 pr-32 text-[13px] text-fg placeholder:text-fg-subtle transition-colors hover:border-hair2 focus:border-hair2 focus:outline-none focus:ring-2 focus:ring-accent-line"
         />
         {/* Right cluster: clear + Search grouped so they can't overlap. */}
         <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -87,9 +86,9 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
             variant="primary"
             type="submit"
             disabled={!input.trim() || status === "searching"}
-            className="text-xs font-semibold"
+            className="h-7 px-2.5 text-xs"
           >
-            <SparkleIcon className="size-3.5" /> Search
+            Search
           </Button>
         </div>
       </form>
@@ -100,7 +99,7 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
           {recents.length > 0 && (
             <ChipRow icon={<ClockIcon className="size-3.5" />} label="Recent" chips={recents} onPick={run} />
           )}
-          <ChipRow icon={<SparkleIcon className="size-3.5" />} label="Try" chips={EXAMPLES} onPick={run} />
+          <ChipRow label="Examples" chips={EXAMPLES} onPick={run} />
         </div>
       )}
 
@@ -115,28 +114,17 @@ export function SearchPage({ onSelect }: { onSelect: (id: string) => void }) {
           {/* Results header: query up front, count as a mono figure. */}
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div className="min-w-0">
-                            <h2 className="mt-1 truncate text-lg font-semibold tracking-tight text-fg">“{query}”</h2>
+              <h2 className="truncate text-[13px] text-fg-muted"><span className="data text-fg">{results.length}</span> {results.length === 1 ? "result" : "results"} for <span className="text-fg">{query}</span></h2>
               {!confident && (
                 <p className="mt-1 text-sm text-fg-muted">
                   No close match in the catalog — these are the nearest models, not answers to your query.
                 </p>
               )}
             </div>
-            <span className="mono-metric shrink-0 text-xs text-fg-muted">
-              Found: {results.length} {results.length === 1 ? "model" : "models"}
-            </span>
           </div>
 
           {/* Ranked results share one compact list. */}
-          {confident && results.length > 0 && renderCard(results[0], 1)}
-          {results.length > (confident ? 1 : 0) && (
-            <div className="space-y-3">
-              {confident && <h3 className="label-caps">Other relevant models</h3>}
-              <div className="flex flex-col">
-                {results.slice(confident ? 1 : 0).map((r, i) => renderCard(r, (confident ? 2 : 1) + i))}
-              </div>
-            </div>
-          )}
+          <div className="search-results">{results.map((r, i) => renderCard(r, i + 1))}</div>
         </div>
       )}
     </div>
@@ -150,14 +138,14 @@ function ChipRow({
   chips,
   onPick,
 }: {
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   label: string;
   chips: string[];
   onPick: (q: string) => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-fg-subtle">
+      <span className="inline-flex w-[72px] items-center gap-1.5 text-xs text-fg-subtle">
         {icon}
         {label}
       </span>
@@ -179,7 +167,7 @@ function ResultSkeleton() {
   return (
     <div className="space-y-3" aria-hidden>
       {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="card shimmer p-4">
+        <div key={i} className="shimmer border-b border-hair py-5">
           <div className="flex items-center justify-between">
             <div className="h-4 w-40 rounded bg-raised" />
             <div className="h-7 w-24 rounded-lg bg-raised" />

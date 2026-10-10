@@ -1,9 +1,9 @@
-// Shared button. `primary` (accent) is reserved for the ONE primary action per
-// view; secondary actions use `ghost`, tertiary/inline use `text`.
+// Shared button. `primary` (inverted ink) is reserved for the ONE primary action
+// per view; secondary actions use `ghost`, tertiary/inline use `text`.
 type Variant = "primary" | "ghost" | "text";
 
 const STYLES: Record<Variant, string> = {
-  primary: "bg-accent text-accent-fg hover:bg-accent/90",
+  primary: "bg-fg text-canvas hover:opacity-90",
   ghost: "text-fg ring-1 ring-inset ring-hair hover:bg-raised hover:ring-hair2",
   text: "text-fg-muted hover:text-fg",
 };

@@ -77,7 +77,7 @@ function Workspace() {
           <item.icon className="size-[18px] shrink-0" /><span className="tool-nav-label">{item.label}</span>
         </button>;
       })}
-      <div className="tool-sidebar-footer"><p className="mb-1 text-fg-muted">{profile?.chip ?? "This Mac"}</p><p>{profile?.memory_bytes ? formatBytes(profile.memory_bytes) + " memory" : "Hardware unavailable"}</p></div>
+      <div className="tool-sidebar-footer"><p className="text-fg">{profile?.chip ?? "This Mac"}</p><p className="data">{profile?.memory_bytes ? formatBytes(profile.memory_bytes) + " memory" : "Hardware unavailable"}</p></div>
     </nav>
     {/* Mounted once per tool: navigation never discards a running job or draft. */}
     {Array.from(visited).map(page => <main key={page} hidden={tab !== page} className={tab !== page ? "hidden" : "flex min-h-0 flex-1 overflow-hidden"}>

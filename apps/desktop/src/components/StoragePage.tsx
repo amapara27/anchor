@@ -5,7 +5,6 @@ import { useStorageScan } from "../lib/useStorageScan";
 import { formatBytes } from "../lib/format";
 import { getLastUsed, isStale, STALE_DAYS } from "../lib/lastUsed";
 import { PageHeader, GhostButton } from "./PageHeader";
-import { StatCard } from "./ui/StatCard";
 import { SegmentedBar, type Segment } from "./ui/SegmentedBar";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
 import { RefreshIcon } from "./icons";
@@ -19,7 +18,10 @@ const FAMILY_COLORS = [
   "var(--inset)",
 ];
 
-const ROW_COLUMNS = "grid-cols-[26px_minmax(0,1fr)_90px_128px_120px]";
+const ROW_COLUMNS = "grid-cols-[22px_minmax(0,1fr)_90px_140px_110px]";
+
+/** A measured zero reads as "0 B"; "—" is reserved for unknown. */
+const sized = (bytes: number) => (bytes > 0 ? formatBytes(bytes) : "0 B");
 
 /** Last-used date, e.g. "Mar 3, 2026", or "never" when untracked. */
 function formatLastUsed(ms: number | null): string {
@@ -101,46 +103,53 @@ export function StoragePage() {
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <section className="flex flex-col gap-3 border-b border-hair pb-5">
-        <div className="flex flex-wrap items-baseline gap-2.5">
-          <span className="label-caps">Disk map · by model family</span>
-          <span className="data ml-auto text-[11.5px] text-fg-muted">
-            {formatBytes(totalBytes)} of models · {rows.length} installed
+      <div className="stat-strip" aria-label="Storage summary">
+        <div>
+          <span className="stat-k">On disk</span>
+          <span className="stat-v">{sized(totalBytes)}</span>
+          <span className="stat-sub">{rows.length} installed {rows.length === 1 ? "model" : "models"}</span>
+        </div>
+        <div>
+          <span className="stat-k">Unused model sizes</span>
+          <span className={`stat-v ${reclaimBytes > 0 ? "text-warn" : ""}`}>{sized(reclaimBytes)}</span>
+          <span className="stat-sub" title={staleRows.length > 0 ? `Not used in Anchor for ${STALE_DAYS}+ days` : undefined}>
+            {staleRows.length > 0
+              ? `${staleRows.length} not used for ${STALE_DAYS}+ days`
+              : "Everything's been used recently."}
           </span>
         </div>
+        <div>
+          <span className="stat-k">Dedupe savings</span>
+          <span className="stat-v">{scan ? sized(scan.dedup_savings_bytes) : "—"}</span>
+          <span className="stat-sub">{scan ? "shared blobs across tags" : scanning ? "Scanning…" : "Rescan disk to compute"}</span>
+        </div>
+        <div>
+          <span className="stat-k">Orphaned blobs</span>
+          <span className="stat-v">{scan ? sized(scan.orphaned_bytes) : "—"}</span>
+          <span className="stat-sub">{scan ? `${scan.orphaned_blobs.length} ${scan.orphaned_blobs.length === 1 ? "file" : "files"}` : scanning ? "Scanning…" : "Rescan disk to check"}</span>
+        </div>
+      </div>
+
+      <section className="flex flex-col gap-2.5">
+        <div className="flex flex-wrap items-baseline gap-2.5">
+          <h2 className="text-[15px] font-semibold tracking-tight">Disk map</h2>
+          <span className="text-xs text-fg-muted">by model family</span>
+        </div>
         {diskMap.length > 0 ? (
-          <SegmentedBar segments={diskMap} height={12} legend />
+          <SegmentedBar segments={diskMap} height={6} legend />
         ) : (
-          <p className="text-sm text-fg-subtle">No models installed.</p>
+          <p className="text-sm text-fg-muted">No models installed.</p>
         )}
       </section>
 
-      <div className="grid grid-cols-2 divide-x divide-hair rounded-card border border-hair">
-        <StatCard
-          label="Unused model sizes"
-          value={formatBytes(reclaimBytes)}
-          tone={reclaimBytes > 0 ? "warn" : "default"}
-          sub={
-            staleRows.length > 0
-              ? `${staleRows.length} ${staleRows.length === 1 ? "model" : "models"} not used in Anchor for ${STALE_DAYS}+ days`
-              : "Everything's been used recently."
-          }
-        />
-        <StatCard
-          label="Dedupe savings"
-          value={formatBytes(scan?.dedup_savings_bytes ?? 0)}
-          sub={scan ? "from blobs already shared across installed tags" : scanning ? "Scanning…" : "Rescan disk to compute"}
-        />
-      </div>
-
-      <section className="card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-3 border-b border-hair px-4 py-3">
-          <span className="text-[13.5px] font-semibold text-fg">Installed weights</span>
-          <span className="data text-[11px] text-fg-subtle">largest first</span>
+      <section className="flex flex-col gap-2.5">
+        <div className="flex min-h-8 flex-wrap items-center gap-3">
+          <h2 className="text-[15px] font-semibold tracking-tight">Installed weights</h2>
+          <span className="text-xs text-fg-muted">largest first</span>
           {selectedIds.length > 0 ? (
             <span className="ml-auto flex items-center gap-2.5">
-              <span className="data text-[11.5px] text-accent-text">
-                {selectedIds.length} selected · model sizes {formatBytes(selectedBytes)}
+              <span className="data text-[12px] text-fg-muted">
+                <span className="text-fg">{selectedIds.length}</span> selected · {formatBytes(selectedBytes)}
               </span>
               <GhostButton className="h-7 text-xs" onClick={() => setSelected({})}>
                 Clear
@@ -165,90 +174,87 @@ export function StoragePage() {
           )}
         </div>
 
-        <div className={`label-caps grid ${ROW_COLUMNS} gap-3 border-b border-hair bg-inset px-4 py-2.5`}>
-          <span />
-          <span>Model</span>
-          <span className="text-right">Size</span>
-          <span>Last used in Anchor</span>
-          <span>Family</span>
-        </div>
+        <div className="overflow-hidden rounded-card border border-hair">
+          <div className={`th grid ${ROW_COLUMNS} gap-3 border-b border-hair bg-surface px-4 py-2`}>
+            <span />
+            <span>model</span>
+            <span className="text-right">size</span>
+            <span>last used in Anchor</span>
+            <span>family</span>
+          </div>
 
-        {rows.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-fg-subtle">No models installed.</p>
-        ) : (
-          rows.map(({ model, lastUsed, stale }) => {
-            const checked = !!selected[model.id];
-            return (
-              <div
-                key={model.id}
-                onClick={() => setSelected((s) => ({ ...s, [model.id]: !s[model.id] }))}
-                className={[
-                  `grid ${ROW_COLUMNS} cursor-pointer items-center gap-3 border-b border-hair px-4 py-2.5`,
-                  "transition-colors duration-150 ease-out hover:bg-inset",
-                  checked ? "bg-accent-soft" : "",
-                ].join(" ")}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  aria-label={`Select ${model.name}`}
-                  onClick={e => e.stopPropagation()}
-                  onChange={e => setSelected(s => ({ ...s, [model.id]: e.target.checked }))}
-                  className="size-[15px] cursor-pointer"
-                />
-                <span className="flex min-w-0 items-center gap-2.5">
-                  <span className="data truncate text-[12.5px] text-fg">{model.name}</span>
-                  {stale && (
-                    <span className="data shrink-0 rounded-full border border-hair px-1.5 py-px text-[9.5px] uppercase tracking-[0.06em] text-warn">
-                      stale
-                    </span>
-                  )}
-                </span>
-                <span className="data text-right text-[11.5px] text-fg-muted">
-                  {formatBytes(model.size_bytes)}
-                </span>
-                <span className={`data text-[11px] ${stale ? "text-warn" : "text-fg-muted"}`}>
-                  {formatLastUsed(lastUsed)}
-                </span>
-                <span className="data truncate text-[11px] text-fg-subtle">{model.family}</span>
-              </div>
-            );
-          })
-        )}
+          {rows.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-fg-muted">No models installed.</p>
+          ) : (
+            rows.map(({ model, lastUsed, stale }) => {
+              const checked = !!selected[model.id];
+              return (
+                <div
+                  key={model.id}
+                  onClick={() => setSelected((s) => ({ ...s, [model.id]: !s[model.id] }))}
+                  className={[
+                    `grid ${ROW_COLUMNS} min-h-11 cursor-pointer items-center gap-3 border-b border-hair px-4 py-2 last:border-b-0`,
+                    "transition-colors duration-150 ease-out",
+                    checked ? "bg-accent-soft" : "hover:bg-inset",
+                  ].join(" ")}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    aria-label={`Select ${model.name}`}
+                    onClick={e => e.stopPropagation()}
+                    onChange={e => setSelected(s => ({ ...s, [model.id]: e.target.checked }))}
+                    className="size-[14px] cursor-pointer"
+                  />
+                  <span className="flex min-w-0 items-baseline gap-2.5">
+                    <span className="truncate text-[13px] font-medium text-fg">{model.name}</span>
+                    <span className="data truncate text-[11px] text-fg-subtle">{model.id}</span>
+                    {stale && <span className="shrink-0 text-[11px] text-warn">stale</span>}
+                  </span>
+                  <span className="data text-right text-[12px] text-fg-muted">
+                    {formatBytes(model.size_bytes)}
+                  </span>
+                  <span className={`data text-[12px] ${stale ? "text-warn" : "text-fg-muted"}`}>
+                    {formatLastUsed(lastUsed)}
+                  </span>
+                  <span className="data truncate text-[12px] text-fg-muted">{model.family}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
       </section>
 
-      <div className="grid grid-cols-2 gap-2.5">
-        <section className="card flex flex-col gap-3 p-4">
-          <span className="label-caps">Locations</span>
+      <div className="grid gap-x-8 gap-y-6 border-t border-hair pt-5 md:grid-cols-2">
+        <section className="flex flex-col gap-2.5">
+          <h2 className="text-[13px] font-medium text-fg">Locations</h2>
           {scan ? (
-            <div className="flex flex-col gap-2 text-[11.5px]">
-              <span className="flex items-center justify-between gap-3">
-                <span className="text-fg-subtle">Store</span>
-                <span className="data truncate text-fg" title={scan.root}>
-                  {scan.root}
-                </span>
-              </span>
-              <span className="flex items-center justify-between">
-                <span className="text-fg-subtle">Blobs</span>
-                <span className="data text-fg-muted">{formatBytes(scan.blobs_bytes)}</span>
-              </span>
-              <span className="flex items-center justify-between">
-                <span className="text-fg-subtle">Manifests</span>
-                <span className="data text-fg-muted">{formatBytes(scan.manifests_bytes)}</span>
-              </span>
-            </div>
+            <dl className="flex flex-col text-[13px]">
+              <div className="flex items-baseline justify-between gap-3 py-1">
+                <dt className="text-fg-muted">Store</dt>
+                <dd className="data truncate text-[12px] text-fg" title={scan.root}>{scan.root}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 py-1">
+                <dt className="text-fg-muted">Blobs</dt>
+                <dd className="data text-[12px] text-fg">{formatBytes(scan.blobs_bytes)}</dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 py-1">
+                <dt className="text-fg-muted">Manifests</dt>
+                <dd className="data text-[12px] text-fg">{formatBytes(scan.manifests_bytes)}</dd>
+              </div>
+            </dl>
           ) : (
-            <p className="text-sm text-fg-subtle">
+            <p className="text-[13px] text-fg-muted">
               {scanning ? "Scanning…" : "No Ollama model store found yet — pull a model first."}
             </p>
           )}
         </section>
 
-        <section className="card flex flex-col gap-3 p-4">
-          <span className="label-caps">Housekeeping</span>
+        <section className="flex flex-col gap-2.5">
+          <h2 className="text-[13px] font-medium text-fg">Housekeeping</h2>
           {scan && scan.orphaned_blobs.length > 0 ? (
             <>
-              <p className="text-[11.5px] leading-[1.5] text-fg-subtle">
+              <p className="text-[13px] leading-[1.5] text-fg-muted">
                 {scan.orphaned_blobs.length} orphaned {scan.orphaned_blobs.length === 1 ? "blob" : "blobs"} — not
                 referenced by any installed model or tag (usually left behind by an interrupted pull). Safe to
                 delete.
@@ -258,14 +264,14 @@ export function StoragePage() {
               </GhostButton>
             </>
           ) : scan && scan.unreadable_manifests > 0 ? (
-            <p className="text-[11.5px] leading-[1.5] text-warn">
+            <p className="text-[13px] leading-[1.5] text-warn">
               Couldn&rsquo;t read {scan.unreadable_manifests}{" "}
               {scan.unreadable_manifests === 1 ? "manifest" : "manifests"} in the model store, so which blobs are
               still in use can&rsquo;t be determined. Cleanup is off — deleting against a partial picture could
               remove data an installed model still needs.
             </p>
           ) : (
-            <p className="text-[11.5px] text-fg-subtle">
+            <p className="text-[13px] text-fg-muted">
               {scan
                 ? "No orphaned blobs — everything on disk is referenced."
                 : scanning

@@ -1,9 +1,8 @@
 import type { LibraryModel } from "../types";
 import type { SlotState } from "../lib/useComparison";
 import { formatBytes, formatDuration, formatTokSec, tokensPerSecond } from "../lib/format";
-import { SparkleIcon, WarningIcon, ZapIcon } from "./icons";
+import { WarningIcon } from "./icons";
 import { ProgressTrack } from "./DownloadProgressBar";
-import { StatCard } from "./ui/StatCard";
 
 interface ComparisonPaneProps {
   /** "A" / "B" — shown as an eyebrow so the panes are distinguishable. */
@@ -30,17 +29,14 @@ export function ComparisonPane({
     <div className="flex min-h-[18rem] min-w-0 flex-col border-t border-hair pt-4">
       {/* Header: name + phase chip */}
       <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="label-caps text-[10px]">
-            Model {slotLabel}
-          </div>
-          <h3 className="truncate text-base font-semibold text-fg">{model?.name ?? "—"}</h3>
+        <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
+          <span className="data shrink-0 rounded border border-hair px-1.5 text-[11px] text-fg-muted">{slotLabel}</span>
+          <h3 className="truncate text-[14px] font-semibold tracking-tight text-fg">{model?.name ?? "—"}</h3>
+          {model && <span className="data truncate text-[11px] text-fg-subtle">{model.id}</span>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {fastest && revealed && fraction >= 1 && (
-            <span className="inline-flex items-center gap-1 rounded-md bg-accent/12 px-2 py-0.5 text-[11px] font-semibold text-accent-text ring-1 ring-inset ring-accent/25">
-              <ZapIcon className="size-3" /> Fastest
-            </span>
+            <span className="text-[12px] font-medium text-accent-text">Fastest</span>
           )}
           <PhaseChip phase={state.phase} />
         </div>
@@ -108,8 +104,8 @@ function PaneBody({
 function GeneratingState() {
   return (
     <div className="flex h-full flex-col justify-center gap-3 py-6">
-      <div className="flex items-center gap-2 text-sm font-medium text-accent-text">
-        <SparkleIcon className="size-4 animate-pulse" />
+      <div className="flex items-center gap-2 text-[13px] text-fg-muted">
+        <span className="size-1.5 animate-pulse-dot rounded-full bg-accent" aria-hidden />
         Generating…
       </div>
       <div className="space-y-2">
@@ -150,57 +146,36 @@ function StatRow({
 }) {
   const tokSec = tokensPerSecond(stats);
   return (
-    <div className="mt-4 border-t border-hair pt-4">
-      <div className="grid grid-cols-2 gap-2">
-        <StatCard
-          compact
-          label="Throughput"
-          value={
-            <span className="flex items-center gap-1.5 text-accent-text">
-              <ZapIcon className="size-4" />
-              {formatTokSec(tokSec)}
-            </span>
-          }
-        />
-        <StatCard compact label="TTFT" value={stats.ttft_ms == null ? "—" : `${Math.round(stats.ttft_ms)} ms`} sub="first received output" />
-        <StatCard compact label="Total" value={formatDuration(stats.total_duration_ns)} />
-        <StatCard
-          compact
-          label="Tokens"
-          value={`${stats.prompt_eval_count ?? "—"}→${stats.eval_count ?? "—"}`}
-          sub="prompt→response"
-        />
+    <div className="mt-4 flex flex-col gap-2">
+      <div className="stat-strip">
+        <div><span className="stat-k">Throughput</span><span className="stat-v text-[16px]">{formatTokSec(tokSec)}</span></div>
+        <div><span className="stat-k">TTFT</span><span className="stat-v text-[16px]">{stats.ttft_ms == null ? "—" : `${Math.round(stats.ttft_ms)} ms`}</span><span className="stat-sub">first received output</span></div>
+        <div><span className="stat-k">Total</span><span className="stat-v text-[16px]">{formatDuration(stats.total_duration_ns)}</span></div>
+        <div><span className="stat-k">Tokens</span><span className="stat-v text-[16px]">{`${stats.prompt_eval_count ?? "—"}→${stats.eval_count ?? "—"}`}</span><span className="stat-sub">prompt→response</span></div>
       </div>
       {sizeBytes != null && (
-        <div className="mt-2 flex items-baseline justify-between px-1">
-          <span className="label-caps text-[10px]">Model size on disk</span>
-          <span className="mono-metric text-xs text-fg">{formatBytes(sizeBytes)}</span>
-        </div>
+        <div className="meta text-[12px]"><span><span className="meta-k">Model size on disk</span><span className="meta-v">{formatBytes(sizeBytes)}</span></span></div>
       )}
     </div>
   );
 }
 
 const PHASE_META: Record<SlotState["phase"], { label: string; cls: string }> = {
-  idle: { label: "Idle", cls: "text-fg-subtle ring-hair" },
-  queued: { label: "Queued", cls: "text-fg-muted ring-hair" },
-  downloading: { label: "Downloading", cls: "text-accent-text ring-accent/25" },
-  loading: { label: "Loading", cls: "text-accent-text ring-accent/25" },
-  generating: { label: "Generating", cls: "text-accent-text ring-accent/25" },
-  done: { label: "Done", cls: "text-ok ring-ok/30" },
-  failed: { label: "Failed", cls: "text-danger ring-danger/30" },
+  idle: { label: "Idle", cls: "text-fg-subtle" },
+  queued: { label: "Queued", cls: "text-fg-muted" },
+  downloading: { label: "Downloading", cls: "text-accent-text" },
+  loading: { label: "Loading", cls: "text-accent-text" },
+  generating: { label: "Generating", cls: "text-accent-text" },
+  done: { label: "Done", cls: "text-ok" },
+  failed: { label: "Failed", cls: "text-danger" },
 };
 
 function PhaseChip({ phase }: { phase: SlotState["phase"] }) {
   const meta = PHASE_META[phase];
   return (
-    <span
-      className={[
-        "rounded-md bg-inset px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset",
-        meta.cls,
-      ].join(" ")}
-    >
-      {meta.label}
+    <span className={"flex items-center gap-1.5 text-[12px] " + meta.cls}>
+      <span className={"size-1.5 rounded-full bg-current" + (["downloading", "loading", "generating"].includes(phase) ? " animate-pulse-dot" : "")} aria-hidden />
+      <span className="text-fg-muted">{meta.label}</span>
     </span>
   );
 }

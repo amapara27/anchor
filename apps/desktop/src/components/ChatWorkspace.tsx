@@ -13,7 +13,7 @@ import { Select } from "./ui/Select";
 import { Meter } from "./ui/SegmentedBar";
 import { ChatMessage } from "./ChatMessage";
 import { ConfirmDialog } from "./ui/ConfirmDialog";
-import { PencilIcon, PlusIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from "./icons";
+import { ClockIcon, PencilIcon, PlusIcon, SearchIcon, SendIcon, StopIcon, TrashIcon } from "./icons";
 
 /** A solid, widely-installed default (matches the Research Assistant's pick). */
 const DEFAULT_MODEL = "llama3.1:8b";
@@ -161,7 +161,6 @@ export function ChatWorkspace() {
 
   return (
     <div className="relative flex min-w-0 flex-1">
-      <button onClick={() => setShowHistory(v=>!v)} aria-expanded={showHistory} className="absolute bottom-3 right-3 z-10 rounded-lg border border-hair bg-surface px-3 py-1 text-xs">History</button>
       {/* Conversation rail */}
       <aside hidden={!showHistory} className={(showHistory ? "flex " : "hidden ") + "w-[262px] shrink-0 flex-col border-r border-hair bg-chrome"}>
         <div className="flex flex-col gap-2.5 border-b border-hair px-3 py-3.5">
@@ -169,7 +168,7 @@ export function ChatWorkspace() {
             type="button"
             onClick={() => create(model, presetId)}
             disabled={!model}
-            className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-lg bg-accent text-[13px] font-semibold text-accent-fg transition-[filter,transform] duration-150 ease-out hover:brightness-110 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-40"
+            className="flex h-8 cursor-pointer items-center justify-center gap-2 rounded-lg bg-fg text-[13px] font-medium text-canvas transition-[opacity,transform] duration-150 ease-out hover:opacity-90 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-40"
           >
             <PlusIcon className="size-3.5" />
             New chat
@@ -233,9 +232,12 @@ export function ChatWorkspace() {
           profile={profile}
           pickerDisabled={running || loading}
           onRename={(title) => activeConvo && rename(activeConvo.id, title)}
+          historyOpen={showHistory}
+          onToggleHistory={() => setShowHistory(v => !v)}
         />
 
         <MessageList
+          model={model}
           messages={messages}
           running={running}
           loadingModel={loadingModel}
@@ -255,8 +257,7 @@ export function ChatWorkspace() {
             running={running}
             loadingModel={loadingModel}
           />
-          <p className="data mx-auto mt-2.5 flex max-w-[760px] items-center gap-2 text-[10.5px] text-fg-subtle">
-            <span className="size-[5px] rounded-full bg-ok" aria-hidden />
+          <p className="data mx-auto mt-2.5 max-w-[760px] text-[11px] text-fg-subtle">
             Prompts are sent to your configured Ollama server
           </p>
         </div>
@@ -379,7 +380,11 @@ function ThreadHeader({
   profile,
   pickerDisabled,
   onRename,
+  historyOpen,
+  onToggleHistory,
 }: {
+  historyOpen: boolean;
+  onToggleHistory: () => void;
   convo: Conversation | undefined;
   messages: ReturnType<typeof useChat>["messages"];
   model: string;
@@ -488,18 +493,21 @@ function ThreadHeader({
           <Meter fraction={contextTokens / contextLimit} color="var(--accent-text)" className="w-24" />
         </div>
       )}
+      <button type="button" onClick={onToggleHistory} aria-expanded={historyOpen} className={"flex h-8 shrink-0 items-center gap-2 rounded-lg border border-hair px-3 text-[13px] text-fg transition-colors hover:border-hair2 hover:bg-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line " + (historyOpen ? "bg-raised" : "")}><ClockIcon className="size-3.5 text-fg-muted" />History</button>
     </div>
   );
 }
 
 /** Scrolling message list that pins to the bottom as new tokens arrive. */
 function MessageList({
+  model,
   messages,
   running,
   loadingModel,
   error,
   onRegenerate,
 }: {
+  model: string;
   messages: ReturnType<typeof useChat>["messages"];
   running: boolean;
   loadingModel: boolean;
@@ -514,11 +522,9 @@ function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-center">
-        <span className="flex size-12 items-center justify-center rounded-xl border border-hair bg-accent-soft text-accent-text">
-          <SendIcon className="size-5" />
-        </span>
-        <p className="text-sm font-medium text-fg">Try your local model</p>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1.5 px-6 text-center">
+        <p className="text-[15px] font-medium tracking-tight text-fg">Try your local model</p>
+        {model && <p className="data text-[12px] text-fg-muted">{model}</p>}
       </div>
     );
   }
@@ -579,7 +585,7 @@ function Composer({
   }, [value]);
 
   return (
-    <div className="mx-auto max-w-[760px] overflow-hidden rounded-xl border border-hair bg-surface transition-colors duration-150 ease-out focus-within:border-hair2">
+    <div className="mx-auto max-w-[760px] overflow-hidden rounded-card border border-hair bg-surface transition-colors duration-150 ease-out focus-within:border-hair2 focus-within:ring-2 focus-within:ring-accent-line">
       <textarea
         ref={ref}
         value={value}
@@ -597,7 +603,7 @@ function Composer({
       />
       <div className="flex items-center gap-2 px-3 pb-2.5 pt-2">
         <span className="data ml-auto text-[10.5px] text-fg-subtle">
-          {running ? (loadingModel ? "loading model…" : "generating…") : "↩ to send"}
+          {running ? (loadingModel ? "loading model…" : "generating…") : <><kbd className="rounded border border-hair px-1 py-px">↩</kbd> send</>}
         </span>
         {running ? (
           <button
@@ -605,7 +611,7 @@ function Composer({
             onClick={onStop}
             aria-label="Stop generating"
             title="Stop generating — keeps what's been written"
-            className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] border border-hair2 bg-inset text-fg transition-colors duration-150 ease-out hover:border-danger hover:text-danger"
+            className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-control border border-hair2 bg-inset text-fg transition-colors duration-150 ease-out hover:border-danger hover:text-danger"
           >
             <StopIcon className="size-3" />
           </button>
@@ -615,7 +621,7 @@ function Composer({
             onClick={onSend}
             disabled={disabled || !value.trim()}
             aria-label="Send message"
-            className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-[9px] bg-accent text-accent-fg transition-[filter,transform] duration-150 ease-out hover:brightness-110 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+            className="flex size-[30px] shrink-0 cursor-pointer items-center justify-center rounded-control bg-fg text-canvas transition-[opacity,transform] duration-150 ease-out hover:opacity-90 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
           >
             <SendIcon className="size-4" />
           </button>
