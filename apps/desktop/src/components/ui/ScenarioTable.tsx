@@ -39,7 +39,7 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
         {SCENARIOS_BY_COST.map((s) => {
           const row = find(s);
           const tps = row?.run?.decode_tps_median;
-          const ctx = numCtxFor(s);
+          const ctx = row?.run?.num_ctx ?? numCtxFor(s);
           return (
             <button
               key={s.id}

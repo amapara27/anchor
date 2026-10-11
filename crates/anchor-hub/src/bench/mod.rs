@@ -334,7 +334,9 @@ impl Registry {
                     .ok_or_else(|| crate::Error::Ollama("benchmark model is not resident after warmup".into()))?;
                 let actual_ctx = resident.context_length.and_then(|v| u32::try_from(v).ok())
                     .ok_or_else(|| crate::Error::Ollama("Ollama did not report the loaded context".into()))?;
-                if actual_ctx != num_ctx {
+                // Smaller could truncate the scenario. Larger is a per-model floor (vision
+                // models load at least 2048), so record what actually ran instead.
+                if actual_ctx < num_ctx {
                     return Err(crate::Error::Ollama(format!("requested {num_ctx} context, but Ollama loaded {actual_ctx}; benchmark discarded")));
                 }
                 let id = BenchRun::derive_id(
@@ -343,7 +345,7 @@ impl Registry {
                     &digest,
                     SUITE_ID,
                     SUITE_VERSION,
-                    num_ctx,
+                    actual_ctx,
                     "unknown",
                     None,
                     Some((scenario.id, prompts::PROMPT_CATALOG_VERSION)),
@@ -403,7 +405,7 @@ impl Registry {
                     model_name: model.to_string(),
                     model_digest: digest.clone(),
                     quant: quant.clone(),
-                    num_ctx,
+                    num_ctx: actual_ctx,
                     kv_cache_type: "unknown".to_string(),
                     flash_attn: None,
                     ollama_version: ollama_version.clone(),
