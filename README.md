@@ -36,7 +36,7 @@ Built for developers, students, researchers, and small business operators who wa
 
 Download the latest `.dmg` from [Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to Applications. It is signed and notarized, so it opens without a Gatekeeper prompt, and it updates itself from then on.
 
-Open **Models → Add model**, pick a suggested model or browse the Ollama library, inspect its memory estimate, and download it. Select an installed model and choose **Try model** to start a trial at the chosen context. Past trials stay in SQLite and are listed by `anchor chat ls`.
+Open **Models → Add model**, pick a suggested model or browse the Ollama library, inspect its memory estimate, and download it. Select an installed model and choose **Try model** to start a chat at the chosen context. Past chats stay in SQLite and are listed by `anchor chat ls`.
 
 No API keys are required. Inference and saved history work locally after setup when Ollama is configured on this Mac. Model downloads, fresh library data, update checks and external sharing use the network.
 
@@ -55,7 +55,7 @@ Use `curl` rather than a browser — the CLI is a bare binary with no notarizati
 
 ### Try
 
-A quick streaming trial against any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. **New trial** starts a fresh thread; every trial persists in SQLite (readable with `anchor chat ls|show`) and carries its inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
+A quick streaming chat with any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. **New chat** starts a fresh thread; every chat persists in SQLite (readable with `anchor chat ls|show`) and carries its inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/chat_light.png">
@@ -101,6 +101,8 @@ Measure real tokens/sec and memory use for an installed model on your own hardwa
 **Measure** in the model inspector runs just the headline scenario, so a model's row shows a measured speed instead of an estimate in about a minute. Each run records the Ollama version; when Ollama changes, measured rows are flagged stale, and a re-run keeps the previous speed so the inspector shows the change across the upgrade.
 
 One suite, run in full every time: nine scenarios, each a target input length and capped output shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), with pressure observed at scenario boundaries recorded alongside the result. Decode uses Ollama timings; prefill excludes cached tokens and TTFT measures the request to first received output. Server KV cache and Flash Attention settings are recorded as unknown when not exposed.
+
+Each result is stored at the context Ollama actually loaded, not the one requested. Some models have a floor (vision models such as `qwen3.5` load at least 2048), so their smallest scenarios run at that floor; a run is discarded only if Ollama loads *less* than requested, since the scenario could then be truncated. While a run is live, the readout is in chunks/s: streamed pieces of output per second, which usually but not always map to one token each. The stored tok/s comes from Ollama's own token count and timing.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
