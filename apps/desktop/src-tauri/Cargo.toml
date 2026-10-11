@@ -30,6 +30,12 @@ tauri-plugin-updater = "2.10.1"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 tokio = { version = "1", features = ["sync"] }
 
+# Dev-only Dock icon (src/dev_icon.rs). Same versions/features Tauri already builds.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
+
 [features]
 native-e2e = ["dep:tauri-plugin-wdio-webdriver"]
 

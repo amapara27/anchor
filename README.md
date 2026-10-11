@@ -82,6 +82,11 @@ A quick streaming trial against any installed model, with reasoning/thinking out
 
 The question every other feature answers from a different angle: will this model actually run here? First-launch hardware profiling of CPU, RAM, and GPU — Apple Silicon is special-cased via `system_profiler` for accurate unified-memory readings — feeds a memory-fit engine that sizes weights, KV cache, and compute buffer per (model, quantization, context length) and renders one verdict everywhere a model shows up: the catalog, search results, the compare picker, and the chat model picker can never disagree, because they all call the same estimator. Every installed and not-yet-installed model gets a full breakdown — weights / KV cache / compute buffer / OS reserve — before you spend disk space or memory finding out the hard way.
 
+- **One context for every verdict** — pick 2K to 128K in the Models header and every fit column, filter and inspector re-judges at it (capped at each model's own limit).
+- **Per-quant table** — the inspector lists every published quantization of the same model size with its download, estimated RAM and headroom at that context, so you can pick the variant that fits before pulling it.
+- **Predicted vs observed memory** — after a measurement, the inspector shows the estimate next to what Ollama actually allocated at that context.
+- **Use from other apps** — copyable `ollama run`, OpenAI-compatible base URL and a `curl` snippet for any installed model.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/fit_light.png">
   <img src="docs/screenshots/fit.png" alt="Fit">
@@ -92,6 +97,8 @@ The question every other feature answers from a different angle: will this model
 ### Benchmarks
 
 Measure real tokens/sec and memory use for an installed model on your own hardware, with results stored per model over time and a live waveform while a run is in progress.
+
+**Measure** in the model inspector runs just the headline scenario, so a model's row shows a measured speed instead of an estimate in about a minute. Each run records the Ollama version; when Ollama changes, measured rows are flagged stale, and a re-run keeps the previous speed so the inspector shows the change across the upgrade.
 
 One suite, run in full every time: nine scenarios, each a target input length and capped output shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), with pressure observed at scenario boundaries recorded alongside the result. Decode uses Ollama timings; prefill excludes cached tokens and TTFT measures the request to first received output. Server KV cache and Flash Attention settings are recorded as unknown when not exposed.
 
