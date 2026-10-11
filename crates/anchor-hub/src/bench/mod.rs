@@ -13,7 +13,7 @@
 
 mod prompts;
 
-pub use prompts::{RepeatsMode, Scenario, CATALOG, SUITE_ID, SUITE_VERSION};
+pub use prompts::{RepeatsMode, Scenario, CATALOG, HEADLINE_SCENARIO, SUITE_ID, SUITE_VERSION};
 
 use anchor_core::{BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity};
 use serde::Serialize;
@@ -235,25 +235,31 @@ impl Registry {
     /// not an error: the scenarios that already finished were measured at full
     /// rigor and keep their rows, the interrupted one is discarded rather than
     /// stored half-measured, and the model is still unloaded on the way out.
+    ///
+    /// `only` restricts the suite to one scenario id (the app's quick measure);
+    /// its row is identical to what the full suite would store for it.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_benchmark<F>(
         &self,
         model: &str,
         hw: &HwIdentity,
         install_id: &str,
         repeats: RepeatsMode,
+        only: Option<&str>,
         cancel: &std::sync::atomic::AtomicBool,
         on_progress: F,
     ) -> Result<Vec<BenchRun>>
     where
         F: FnMut(BenchProgress) + Send,
     {
-        let result = self.run_benchmark_inner(model, hw, install_id, repeats, cancel, on_progress).await;
+        let result = self.run_benchmark_inner(model, hw, install_id, repeats, only, cancel, on_progress).await;
         let _ = self.unload(model).await;
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_benchmark_inner<F>(
-        &self, model: &str, hw: &HwIdentity, install_id: &str, repeats: RepeatsMode,
+        &self, model: &str, hw: &HwIdentity, install_id: &str, repeats: RepeatsMode, only: Option<&str>,
         cancel: &std::sync::atomic::AtomicBool, mut on_progress: F,
     ) -> Result<Vec<BenchRun>> where F: FnMut(BenchProgress) + Send {
         let digest = ollama::digest_of(&self.host, model)
@@ -263,8 +269,15 @@ impl Registry {
         let quant = ollama::list_local_models(&self.host).await?
             .into_iter().find(|m| m.id == model).and_then(|m| m.quantization);
 
-        let groups = prompts::grouped_by_ctx();
-        let total = CATALOG.len() as u32;
+        let groups: Vec<_> = prompts::grouped_by_ctx()
+            .into_iter()
+            .map(|(ctx, group)| (ctx, group.into_iter().filter(|s| only.is_none_or(|id| s.id == id)).collect::<Vec<_>>()))
+            .filter(|(_, group)| !group.is_empty())
+            .collect();
+        if groups.is_empty() {
+            return Err(crate::Error::Ollama(format!("unknown scenario {}", only.unwrap_or_default())));
+        }
+        let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
         let mut index = 0u32;
         let mut results = Vec::new();
 
@@ -415,6 +428,8 @@ impl Registry {
                     ttft_ms_median: median(ttft),
                     env_start: Some(env_start),
                     env_end: Some(env_end),
+                    prev_decode_tps_median: None,
+                    prev_ollama_version: None,
                     thermal_label: Some(label),
                     notes,
                 };
@@ -502,6 +517,7 @@ mod tests {
                 &hw,
                 "test-install",
                 RepeatsMode::Fast,
+                None,
                 &std::sync::atomic::AtomicBool::new(false),
                 |p| println!("{p:?}"),
             )

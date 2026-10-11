@@ -4,7 +4,7 @@ const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean} = {}) {
+async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean} = {}) {
   await page.addInitScript(({catalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -25,12 +25,13 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
-      runs:[] as any[],chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
+      runs:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
       quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:3,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
       gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
       source:'local',updated_at:Date.now(),match_quality:'exact',thermal_label:'sustained',env_start:null,env_end:null,
-      rating:null,review:null,notes:null,resident_bytes:null,kv_cache_type:"unknown",flash_attn:null,synced_at:null});
+      rating:null,review:null,notes:null,resident_bytes:options.variants?1.2*1024**3:null,kv_cache_type:"unknown",flash_attn:null,synced_at:null,
+      ollama_version:state.version,prev_decode_tps_median:null,prev_ollama_version:null});
     w.__TAURI_INTERNALS__ = {
       transformCallback: (fn: Function) => {callbacks.set(++sequence,fn); return sequence;},
       unregisterCallback: (id: number) => callbacks.delete(id),
@@ -40,17 +41,18 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
         switch(cmd) {
           case 'list_catalog': return catalog;
           case 'list_library': return [{name:'fixture-library',description:'Public download-size fixture',capabilities:[],sizes:['8b'],pulls:1,tag_count:1,updated:'today'}];
-          case 'library_tags': return [{tag:'fixture-library:8b',digest:'build',size:'4.9GB',context:'128K',modality:'text'}];
+          case 'library_tags': return options.variants ? [['8b','q4','4.9GB'],['8b-instruct-q4_K_M','q4','4.9GB'],['8b-instruct-q8_0','q8','8.5GB'],['8b-instruct-fp16','f16','16GB'],['8b-instruct-q3_K_S','q3','3.7GB'],['8b-text-q4_K_M','t4','4.9GB'],['70b','70','43GB']]
+            .map(([tag,digest,size])=>({tag:args.name+':'+tag,digest,size,context:'128K',modality:'text'})) : [{tag:'fixture-library:8b',digest:'build',size:'4.9GB',context:'128K',modality:'text'}];
           case 'tag_arch': return models[0].arch;
           case 'list_models': if(state.offline) throw 'Ollama is not reachable'; return state.models;
           case 'get_hardware_profile': case 'refresh_hardware_profile': return hardware;
-          case 'get_server_status': return {reachable:!state.offline,version:'0.12',host:'http://localhost:11434',local:true,managed:true};
+          case 'get_server_status': return {reachable:!state.offline,version:state.version,host:'http://localhost:11434',local:true,managed:true};
           case 'running_models': return [];
           case 'list_presets': return structuredClone(state.presets);
           case 'save_preset': state.presets=state.presets.filter((p:any)=>p.id!==args.preset.id).concat(args.preset); return;
           case 'set_conversation_preset': { const c=state.conversations.find((c:any)=>c.id===args.id); if(c)c.preset_id=args.presetId; return; }
           case 'list_conversations': return structuredClone(state.conversations);
-          case 'create_conversation': {const c={id:'chat-'+(++sequence),title:'New trial',model:args.model,preset_id:args.presetId,created_ms:Date.now(),updated_ms:Date.now()};state.conversations.unshift(c);state.messages[c.id]=[];return c;}
+          case 'create_conversation': {const c={id:'chat-'+(++sequence),title:'New chat',model:args.model,preset_id:args.presetId,created_ms:Date.now(),updated_ms:Date.now()};state.conversations.unshift(c);state.messages[c.id]=[];return c;}
           case 'conversation_messages': return structuredClone(state.messages[args.id] ?? []);
           case 'run_chat': {
             state.chatStop=false;
@@ -82,6 +84,7 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
           case 'stop_comparison':state.compareStop=true;return;
           case 'bench_runs_for_model': return state.runs.filter((r:any)=>!args.model||r.model_name===args.model);
           case 'bench_history': return state.runs;
+          case 'latest_measurements': return Object.values(Object.fromEntries(state.runs.map((r:any)=>[r.model_name,r])));
           case 'run_benchmark': {
             state.benchStop=false;emit(args.onEvent,{kind:'status',message:'Warming up'});
             if(options.measurements) {emit(args.onEvent,{kind:'sample',chunks_per_sec:12});await sleep(500);}
@@ -202,7 +205,7 @@ for(const width of [800,1000]) test('minimum/default window fits core controls a
   await page.screenshot({path:'test-results/models-'+width+'.png',fullPage:true});
 });
 
-test('selected inspector brings actions into view and New trial starts an empty thread by keyboard', async({page})=>{
+test('selected inspector brings actions into view and New chat starts an empty thread by keyboard', async({page})=>{
   await page.setViewportSize({width:800,height:600});
   await boot(page);
   await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
@@ -216,7 +219,7 @@ test('selected inspector brings actions into view and New trial starts an empty 
   await page.getByRole('textbox',{name:'Message',exact:true}).fill('First trial');
   await page.getByRole('button',{name:'Send message'}).click();
   await expect(page.getByText('A useful local answer.',{exact:true})).toBeVisible();
-  const fresh=page.getByRole('button',{name:'New trial',exact:true});
+  const fresh=page.getByRole('button',{name:'New chat',exact:true});
   await expect(fresh).toBeEnabled();
   await fresh.focus();await page.keyboard.press('Enter');
   await expect(page.getByText('A useful local answer.',{exact:true})).toHaveCount(0);
@@ -334,4 +337,59 @@ test('comparison shows observed TTFT and benchmark distinguishes chunk rate from
   await expect(page.getByText(/Thermal status comes from boundary snapshots/)).toBeVisible();
   await expect(page.getByText('In target',{exact:true})).toBeVisible();
   await expect(page.getByText('Out cap',{exact:true})).toBeVisible();
+});
+
+test('global fit context, per-quant table, quick measure, version flags and copyable commands',async({page})=>{
+  await boot(page,{variants:true});
+  await expect(page.getByRole('button',{name:'Fits at 4K',exact:true})).toBeVisible();
+  await page.getByLabel('Fit context').selectOption('32768');
+  await expect(page.getByRole('button',{name:'Fits at 32K',exact:true})).toBeVisible();
+  await expect(page.getByText('fit @ 32K',{exact:true})).toBeVisible();
+
+  await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
+  const inspector=page.getByRole('region',{name:'Model inspector'});
+  await expect(inspector).toContainText('at 32K');
+  const quants=inspector.getByRole('region',{name:'Quantizations'});
+  // Aliases of one build collapse to a row; other sizes (70b) and the text variant are not this model's quants.
+  const quantRows=quants.getByRole('button',{name:/^Inspect /});
+  await expect(quantRows).toHaveCount(3);
+  await quants.getByRole('button',{name:'Show all 4',exact:true}).click();
+  await expect(quantRows).toHaveCount(4);
+  await expect(quants).toContainText('Q3_K_S');
+  await expect(quants).not.toContainText('text');
+  await expect(quants.getByRole('button',{name:'Inspect llama3.1:8b',exact:true})).toHaveAttribute('aria-current','true');
+  await expect(quants).toContainText('Q8_0');
+  await expect(quants).toContainText('F16');
+  await expect(quants).not.toContainText('43GB');
+  await quants.getByRole('button',{name:'Inspect llama3.1:8b-instruct-fp16',exact:true}).click();
+  await expect(inspector).toContainText('llama3.1:8b-instruct-fp16');
+  await expect(inspector.getByRole('button',{name:/^Download · /})).toBeVisible();
+
+  await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
+  await expect(inspector.getByText('measured',{exact:false})).toHaveCount(0);
+  await inspector.getByRole('button',{name:'Measure',exact:true}).click();
+  await expect(page.getByRole('status',{name:'Activity'})).toContainText('Measuring '+catalog[0].id);
+  const row=page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true});
+  await expect(row).toContainText('32.0 tok/s');
+  await expect(row).toContainText('measured');
+  const call=await page.evaluate(()=>(window as any).__e2e.calls.find((c:any)=>c.cmd==='run_benchmark').args);
+  expect([call.scenario,call.repeats]).toEqual(['balanced','fast']);
+  await expect(inspector).toContainText('GiB predicted');
+  await expect(inspector).toContainText('1.2 GiB observed');
+
+  // A run from an older Ollama is flagged, with the speed change across the last upgrade.
+  await page.evaluate(()=>{const r=(window as any).__e2e.runs.at(-1);Object.assign(r,{ollama_version:'0.11',prev_decode_tps_median:40,prev_ollama_version:'0.10'});window.dispatchEvent(new Event('anchor:measurements'));});
+  await expect(row).toContainText('stale');
+  await expect(inspector).toContainText('Measured on Ollama 0.11 (now 0.12)');
+  await expect(inspector).toContainText('-20% vs Ollama 0.10');
+  await page.screenshot({path:'test-results/features-inspector.png',fullPage:true});
+
+  await inspector.getByRole('button',{name:'Re-measure',exact:true}).click();
+  await inspector.getByRole('button',{name:'Stop',exact:true}).click();
+  await expect(inspector.getByRole('button',{name:'Re-measure',exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).__e2e.runs.length)).toBe(1);
+
+  await inspector.getByText('Use from other apps',{exact:true}).click();
+  await expect(inspector).toContainText('ollama run '+catalog[0].id);
+  await expect(inspector).toContainText('http://localhost:11434/v1/chat/completions');
 });

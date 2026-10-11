@@ -289,7 +289,7 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
     };
 
     let result = registry
-        .run_benchmark(model, &hw, &install_id, repeats.into(), &cancel, &mut on_progress)
+        .run_benchmark(model, &hw, &install_id, repeats.into(), None, &cancel, &mut on_progress)
         .await
         .map(|_| ());
     crate::progress_done();
@@ -531,6 +531,8 @@ mod tests {
             ttft_ms_median: None,
             env_start: None,
             env_end: None,
+            prev_decode_tps_median: None,
+            prev_ollama_version: None,
             thermal_label: thermal.map(str::to_string),
             notes: None,
         };

@@ -22,6 +22,8 @@ use tauri::{AppHandle, Manager, RunEvent};
 
 #[cfg(not(feature = "native-e2e"))]
 mod tray;
+#[cfg(all(dev, target_os = "macos"))]
+mod dev_icon;
 
 /// Owns Anchor's relationship to the Ollama server.
 ///
@@ -728,6 +730,8 @@ async fn run_benchmark(
     app: AppHandle,
     model: String,
     repeats: BenchRepeatsMode,
+    // One scenario id for the app's quick measure; `None` runs the whole suite.
+    scenario: Option<String>,
     on_event: Channel<BenchProgress>,
 ) -> Result<(), String> {
     let state = app.state::<ServerState>();
@@ -759,7 +763,7 @@ async fn run_benchmark(
         let _ = on_event.send(event);
     };
     let result = registry
-        .run_benchmark(&model, &hw, &id, repeats.into(), &state.bench_cancel, on_progress)
+        .run_benchmark(&model, &hw, &id, repeats.into(), scenario.as_deref(), &state.bench_cancel, on_progress)
         .await
         .map(|_| ());
     if let Err(e) = result {
@@ -815,6 +819,23 @@ async fn bench_runs_for_model(
     registry
         .bench_runs_for(&hw, digest.as_deref(), suite_id.as_deref(), prompt_id.as_deref(), num_ctx)
         .map_err(|e| e.to_string())
+}
+
+/// This machine's latest headline-scenario run for each installed model whose
+/// digest still matches — the measured speed shown on model rows. A re-pulled
+/// model has a new digest, so its old number drops out instead of going stale.
+#[tauri::command]
+async fn latest_measurements(app: AppHandle) -> Result<Vec<BenchRun>, String> {
+    let registry = registry(&app)?;
+    let hw = hw_identity(&app)?;
+    let installed = anchor_hub::ollama::installed_digests(&anchor_hub::ollama_host()).await.map_err(|e| e.to_string())?;
+    let runs = registry
+        .bench_runs_for(&hw, None, Some(anchor_hub::bench::SUITE_ID), Some(anchor_hub::bench::HEADLINE_SCENARIO), None)
+        .map_err(|e| e.to_string())?;
+    Ok(runs
+        .into_iter()
+        .filter(|r| r.hw.hw_key == hw.hw_key && installed.iter().any(|(name, d)| *name == r.model_name && *d == r.model_digest))
+        .collect())
 }
 
 /// Recent benchmark runs on this exact machine, newest first — the History
@@ -919,11 +940,16 @@ pub fn run() {
             stop_benchmark,
             restart_app,
             bench_runs_for_model,
-            bench_history
+            bench_history,
+            latest_measurements
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            #[cfg(all(dev, target_os = "macos"))]
+            if matches!(event, RunEvent::Ready | RunEvent::WindowEvent { event: tauri::WindowEvent::Focused(true), .. }) {
+                dev_icon::apply();
+            }
             // On exit, make sure nothing is left resident. If we started the
             // server, killing it unloads everything. If it was already running
             // (not ours to kill), best-effort evict any models we may have loaded

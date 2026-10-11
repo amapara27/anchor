@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { LibraryModel, ModelsTab } from "../types";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
-import { formatBytes } from "../lib/format";
+import { formatBytes, formatContext } from "../lib/format";
 import { hardwareHint } from "../lib/hint";
 import { DEFAULT_CONTEXT } from "../lib/fit";
+import { FIT_CONTEXTS, setFitContext, useFitContext } from "../lib/useFitContext";
+import { refreshMeasurements, useMeasurements } from "../lib/useMeasurements";
+import { useServerStatus } from "../lib/useServerStatus";
 import { ModelDetailAside } from "./ModelDetailAside";
 import { SuggestedModels } from "./SuggestedModels";
 import { BrowsePage } from "./BrowsePage";
@@ -22,6 +25,11 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
 }) {
   const {models, loading, error, downloads, reload, startDownload, removeModel} = useModels();
   const {profile} = useHardwareProfile();
+  const fitCtx = useFitContext();
+  const measurements = useMeasurements();
+  const {status: server} = useServerStatus();
+  // Re-read on install/remove/re-pull: a measurement only counts for the digest it measured.
+  useEffect(() => { refreshMeasurements(); }, [models]);
   const [tab, setTab] = useState<ModelsTab>(initialTab);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<LibraryModel | null>(null);
@@ -50,7 +58,13 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
     setSelected(models.find(m => m.id === id) ?? null);
   };
   const hintFor = (m: LibraryModel) => hardwareHint({ id: m.id, params_b: m.spec.params_b, quant: m.spec.quant,
-    contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT, arch: m.arch, sizeBytes: m.size_bytes }, profile);
+    contextTokens: m.spec.context_tokens || DEFAULT_CONTEXT, arch: m.arch, sizeBytes: m.size_bytes,
+    measuredTps: measurements[m.id]?.decode_tps_median }, profile, fitCtx);
+  // Measured on a different Ollama than the one running now: still shown, but flagged.
+  const staleFor = (m: LibraryModel) => {
+    const v = measurements[m.id]?.ollama_version;
+    return v && server?.version && v !== server.version ? v : null;
+  };
   const rows = installed.filter(m => (!query || (m.name + " " + m.id).toLowerCase().includes(query.toLowerCase())) && (!fitsOnly || hintFor(m).tier === "ok"));
   const active = selected ? models.find(m => m.id === selected.id) ?? selected : null;
   const switchTab = (next: ModelsTab) => { setTab(next); onTabChange(next); setSelected(null); if (next === "compare") setCompared(true); };
@@ -62,24 +76,31 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
           <Meta k="On disk">{formatBytes(installed.reduce((sum,m) => sum + (m.size_bytes ?? 0),0))}</Meta>
           <Meta k="Machine">{profile?.chip ?? "Your Mac"}{profile?.memory_bytes ? " · " + formatBytes(profile.memory_bytes) : ""}</Meta>
         </>}
-        actions={tab !== "compare" && <PrimaryButton onClick={() => switchTab("discover")}><PlusIcon className="size-3.5" />Add model</PrimaryButton>} />
+        actions={tab !== "compare" && <>
+          <label className="flex items-center gap-2 text-[13px] text-fg-muted">Context
+            <select aria-label="Fit context" value={fitCtx} onChange={e => setFitContext(Number(e.target.value))} className="select-native data">
+              {FIT_CONTEXTS.map(n => <option key={n} value={n}>{formatContext(n)}</option>)}
+            </select>
+          </label>
+          <PrimaryButton onClick={() => switchTab("discover")}><PlusIcon className="size-3.5" />Add model</PrimaryButton>
+        </>} />
       <Tabs ariaLabel="Models view" value={tab === "browse" ? "discover" : tab} onChange={switchTab} items={[{key:"installed",label:"Installed",count:installed.length},{key:"discover",label:"Find"},{key:"compare",label:"Compare"}]} />
       <div className={"model-workspace " + (active && tab !== "compare" ? "has-inspector" : "")}><div className="model-content flex min-w-0 flex-col gap-5">
       {tab === "installed" && <div className="flex flex-wrap items-center gap-3">
         <label className="flex h-8 min-w-[180px] flex-1 items-center gap-2 rounded-control border border-hair bg-inset px-3 transition-colors hover:border-hair2 focus-within:border-hair2 focus-within:ring-2 focus-within:ring-accent-line"><SearchIcon className="size-3.5 text-fg-muted" /><input aria-label="Search installed models" placeholder="Search installed models…" value={query} onChange={e => setQuery(e.target.value)} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-fg-subtle" /></label>
-        <div className="button-group"><button aria-pressed={fitsOnly} onClick={() => setFitsOnly(v=>!v)}>Fits at 4K</button></div>
+        <div className="button-group"><button aria-pressed={fitsOnly} onClick={() => setFitsOnly(v=>!v)}>Fits at {formatContext(fitCtx)}</button></div>
         <button aria-label="Refresh installed models" title="Refresh installed models" onClick={reload} className="flex size-8 items-center justify-center rounded-control border border-hair text-fg-muted transition-colors hover:border-hair2 hover:text-fg"><RefreshIcon className="size-3.5" /></button>
       </div>}
       {(error || actionError) && <div role="alert" className="flex items-center gap-3 rounded-lg border border-hair p-3 text-sm"><span className="flex-1">{actionError ?? error}</span><button onClick={() => {setActionError(null); reload();}} className="text-accent-text">Retry</button></div>}
       {tab === "installed" && (loading ? <p role="status">Loading your models…</p> : installed.length === 0 ?
         <div className="py-12"><h2 className="text-lg font-medium">Choose your first local model</h2><p className="mt-2 text-sm text-fg-muted">Find a model for your task and check its memory fit before downloading.</p><PrimaryButton onClick={() => switchTab("discover")} className="mt-4">Find a model</PrimaryButton></div> :
         <div aria-label="Installed model list" className="model-table">
-          <div className="model-columns model-table-header th" aria-hidden="true"><span>model</span><span>size</span><span>quant</span><span>fit @ 4K</span><span>decode</span><span /></div>
-          {rows.map(m => {const hint=hintFor(m); return <button key={m.id} aria-label={"Inspect " + m.name} aria-pressed={active?.id === m.id} onClick={() => select(m.id)} className="model-columns model-row">
+          <div className="model-columns model-table-header th" aria-hidden="true"><span>model</span><span>size</span><span>quant</span><span>fit @ {formatContext(fitCtx)}</span><span>decode</span><span /></div>
+          {rows.map(m => {const hint=hintFor(m); const stale=staleFor(m); return <button key={m.id} aria-label={"Inspect " + m.name} aria-pressed={active?.id === m.id} onClick={() => select(m.id)} className="model-columns model-row">
             <span className="flex min-w-0 items-baseline gap-2.5"><span className="truncate text-[13px] font-medium">{m.name}</span><span className="data truncate text-[11px] text-fg-subtle">{m.id}</span></span>
             <span className="data text-[12px] text-fg-muted">{formatBytes(m.size_bytes)}</span><span className="data text-[12px] text-fg-muted">{m.spec.quant}</span>
             <span className={"flex items-center gap-1.5 text-[12px] " + hint.tone}><span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden />{hint.label}</span>
-            <span className="flex items-baseline gap-1.5 whitespace-nowrap text-fg-muted" title={hint.tps ? (hint.tps.source === "measured" ? "Measured" : "Estimated") : "Speed unknown"}><span className="data text-[12px] text-fg">{hint.tps ? hint.tpsLabel : "—"}</span><span className="text-[11px] text-fg-subtle">{hint.tps ? hint.tps.source === "measured" ? "measured" : "est." : ""}</span></span>
+            <span className="flex items-baseline gap-1.5 whitespace-nowrap text-fg-muted" title={hint.tps ? (hint.tps.source === "measured" ? stale ? `Measured on Ollama ${stale}; now ${server?.version}` : "Measured on this Mac" : "Estimated") : "Speed unknown"}><span className="data text-[12px] text-fg">{hint.tps ? hint.tpsLabel : "—"}</span><span className={"text-[11px] " + (stale ? "text-warn" : "text-fg-subtle")}>{hint.tps ? hint.tps.source === "measured" ? stale ? "stale" : "measured" : "est." : ""}</span></span>
             <ChevronRightIcon className="size-3.5 text-fg-subtle" />
           </button>})}
           {rows.length === 0 && <p className="border-t border-hair px-4 py-8 text-sm text-fg-muted">No models match these filters.</p>}
@@ -91,7 +112,9 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
       {compared && <div hidden={tab !== "compare"}><ModelComparison onBusy={onCompareBusy} /></div>}
       </div>
       {active && tab !== "compare" && <section ref={inspectorRef} tabIndex={-1} aria-label="Model inspector" className="model-inspector">
-        <ModelDetailAside key={active.id} onClose={closeInspector} model={active} download={downloads[active.id]} totalMemoryBytes={profile?.memory_bytes ?? null} chip={profile?.chip ?? null}
+        <ModelDetailAside key={active.id} onClose={closeInspector} model={active} context={fitCtx} measured={measurements[active.id]}
+          ollamaVersion={server?.version ?? null} host={server?.host || "http://localhost:11434"} hostLocal={server?.local ?? true}
+          onSelectTag={setSelected} download={downloads[active.id]} totalMemoryBytes={profile?.memory_bytes ?? null} chip={profile?.chip ?? null}
           onDownload={() => startDownload(active.id)} onRemove={() => setPendingRemove(true)}
           onOpenInChat={context => onTry(active.id, context).catch(e=>{setActionError(String(e));})} onBenchmark={() => onBenchmark(active.id)} />
       </section>}

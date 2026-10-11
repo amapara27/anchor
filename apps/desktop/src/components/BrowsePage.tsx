@@ -4,9 +4,9 @@ import { useLibrary } from "../lib/useLibrary";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useTagArch } from "../lib/useTagArch";
-import { hardwareHint, type HardwareHint } from "../lib/hint";
-import { DEFAULT_CONTEXT } from "../lib/fit";
-import { parseContext, parseSize, parseTagParams, parseTagQuant } from "../lib/format";
+import type { HardwareHint } from "../lib/hint";
+import { tagFit, tagToLibraryModel } from "../lib/tagFit";
+import { useFitContext } from "../lib/useFitContext";
 import { PageHeader, GhostButton } from "./PageHeader";
 import { ProgressTrack } from "./DownloadProgressBar";
 import { CheckIcon, ChevronDownIcon, DownloadIcon, RefreshIcon, SearchIcon, WarningIcon, XIcon } from "./icons";
@@ -259,86 +259,6 @@ export function BrowsePage({
   );
 }
 
-/**
- * Whether one published tag fits this Mac.
- *
- * The listing gives size and context as display strings and no parameter count
- * at all, so everything here is parsed back out of what the page shows. Judged
- * at Ollama's default context, like every other fit surface — the question on
- * this screen is "can I run this at all", not "at what window".
- *
- * `arch` is present only for tags Anchor already has GGUF metadata for: the
- * curated catalog and anything installed. Everything else gets the labelled
- * parameter-count estimate, where weights dominate the answer anyway — a 70B is
- * out of reach on 16 GB whatever its KV cache does.
- */
-function tagFit(
-  t: { tag: string; size: string; context: string },
-  arch: ArchMeta | null,
-  hardware: { memory_bytes?: number | null } | null,
-): HardwareHint | null {
-  const params_b = parseTagParams(t.tag);
-  const sizeBytes = parseSize(t.size);
-  // Without a parameter count there is no fallback term at all, and without a
-  // size there is no weights term — either way, say nothing rather than guess.
-  if (!params_b || !sizeBytes) return null;
-  return hardwareHint(
-    {
-      id: t.tag,
-      params_b,
-      // Weights come from the real size; the quant only feeds the speed estimate.
-      // Untagged builds are Ollama defaults, which are overwhelmingly Q4.
-      quant: parseTagQuant(t.tag) ?? "Q4_K_M",
-      contextTokens: parseContext(t.context) ?? DEFAULT_CONTEXT,
-      arch,
-      sizeBytes,
-    },
-    hardware,
-  );
-}
-
-/**
- * A synthetic LibraryModel for a browsable tag, so the shared detail aside can
- * render it exactly like an installed/catalog row. Browse tags aren't catalog
- * entries — there's nothing to look up by id in `useModels()`'s list — so this
- * builds the same shape `tagFit` above already derives its verdict from.
- */
-function tagToLibraryModel(
-  entry: LibraryEntry,
-  t: { tag: string; size: string; context: string },
-  arch: ArchMeta | null,
-  installed: boolean,
-): LibraryModel {
-  const params_b = parseTagParams(t.tag) ?? 0;
-  const sizeBytes = parseSize(t.size);
-  const contextTokens = parseContext(t.context) ?? DEFAULT_CONTEXT;
-  const quant = parseTagQuant(t.tag);
-  return {
-    id: t.tag,
-    name: t.tag,
-    family: entry.name,
-    size_bytes: sizeBytes,
-    status: installed ? "installed" : "available",
-    parameter_size: null,
-    quantization: quant,
-    context_tokens: contextTokens,
-    modified_at: null,
-    publisher: null,
-    arch,
-    spec: {
-      params_b,
-      quant: quant ?? "unknown",
-      context_tokens: contextTokens,
-      download_bytes: sizeBytes ?? 0,
-      blurb: entry.description,
-      use_cases: [],
-      publisher: "",
-      capabilities: [],
-    },
-    tags: [],
-    note: "",
-  };
-}
 
 /**
  * The fit verdict for a tag row, sharing its cell with the modality label.
@@ -487,7 +407,7 @@ function TagRow({
 }) {
   const download = downloads[t.tag];
   const have = installed.has(t.tag);
-  const fit = tagFit(t, archFor(t.tag), hardware);
+  const fit = tagFit(t, archFor(t.tag), hardware, useFitContext());
   return (
     <div
       onClick={() => onSelect(tagToLibraryModel(entry, t, archFor(t.tag), have))}

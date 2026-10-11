@@ -74,6 +74,11 @@ pub async fn version(host: &str) -> Result<String> {
 
 /// Content digest for an installed model, or `None` if it isn't installed.
 pub async fn digest_of(host: &str, id: &str) -> Result<Option<String>> {
+    Ok(installed_digests(host).await?.into_iter().find(|(name, _)| name == id).map(|(_, d)| d))
+}
+
+/// `(name, digest)` for every installed model that reports a digest.
+pub async fn installed_digests(host: &str) -> Result<Vec<(String, String)>> {
     let url = format!("{host}/api/tags");
     let resp: TagsResponse = request_client()?
         .get(&url)
@@ -82,11 +87,7 @@ pub async fn digest_of(host: &str, id: &str) -> Result<Option<String>> {
         .error_for_status()?
         .json()
         .await?;
-    Ok(resp
-        .models
-        .into_iter()
-        .find(|m| m.name == id)
-        .and_then(|m| m.digest))
+    Ok(resp.models.into_iter().filter_map(|m| Some((m.name, m.digest?))).collect())
 }
 
 /// A reqwest client with a total timeout, for the non-streaming endpoints.

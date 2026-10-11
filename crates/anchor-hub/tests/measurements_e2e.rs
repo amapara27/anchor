@@ -48,7 +48,7 @@ impl Fixture {
                 let mode = server_mode.load(Ordering::Relaxed);
                 let response = match route {
                     "/api/tags" => json!({"models":[{"name":"fixture:latest","digest":"build-1","size":16_000_000_000u64,"details":{"family":"llama","parameter_size":"8B","quantization_level":"F16"}}]}).to_string(),
-                    "/api/version" => json!({"version":"e2e"}).to_string(),
+                    "/api/version" => json!({"version":if mode == 8 {"e2e-2"} else {"e2e"}}).to_string(),
                     "/api/show" => json!({"model_info":{"general.architecture":"llama","llama.context_length":131072,"llama.block_count":16,"llama.attention.head_count_kv":8,"llama.attention.key_length":64,"llama.attention.value_length":64}}).to_string(),
                     "/api/ps" => json!({"models":context.map(|ctx| vec![json!({"name":"fixture:latest","size":3_000_000_000u64,"context_length":if mode == 3 {512} else {ctx}})]).unwrap_or_default()}).to_string(),
                     "/api/generate" | "/api/chat" => {
@@ -122,7 +122,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     let hw = HwIdentity {hw_key:"fixture-mac".into(),chip_key:"fixture".into(),chip:"fixture".into(),cpu_cores:None,gpu_cores:None,memory_gb:Some(16),os_version:None};
     let cancel = AtomicBool::new(false);
     let mut done = false;
-    let runs = registry.run_benchmark("fixture:latest", &hw, "e2e", RepeatsMode::Fast, &cancel, |event| {
+    let runs = registry.run_benchmark("fixture:latest", &hw, "e2e", RepeatsMode::Fast, None, &cancel, |event| {
         if let BenchProgress::Done {runs} = event { assert_eq!(runs.len(), 9); done = true; }
     }).await.unwrap();
     assert!(done); assert_eq!(runs.len(), 9);
@@ -147,7 +147,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     let stored = db::bench_history(&conn, &hw.hw_key, None, 50).unwrap();
     assert_eq!(stored.len(), 9); assert_eq!(stored[0].prefill_tps_median, Some(1000.0));
     // Build the exact pre-migration columns with old history, then reopen through Registry.
-    conn.execute_batch("ALTER TABLE bench_runs DROP COLUMN observed_flash_attn; ALTER TABLE bench_runs DROP COLUMN resident_bytes; ALTER TABLE bench_samples DROP COLUMN prompt_eval_cached_count; UPDATE bench_runs SET suite_version=2,kv_cache_type='f16',ttft_ms_median=10,peak_rss_bytes=3000000000; PRAGMA user_version=9;").unwrap();
+    conn.execute_batch("ALTER TABLE bench_runs DROP COLUMN observed_flash_attn; ALTER TABLE bench_runs DROP COLUMN resident_bytes; ALTER TABLE bench_samples DROP COLUMN prompt_eval_cached_count; ALTER TABLE bench_runs DROP COLUMN prev_decode_tps_median; ALTER TABLE bench_runs DROP COLUMN prev_ollama_version; UPDATE bench_runs SET suite_version=2,kv_cache_type='f16',ttft_ms_median=10,peak_rss_bytes=3000000000; PRAGMA user_version=9;").unwrap();
     drop(conn);
     let upgraded = fixture.registry("measurements.db");
     let conn = rusqlite::Connection::open(fixture.scratch.join("measurements.db")).unwrap();
@@ -163,20 +163,20 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     for (mode, message) in [(1,"completion frame"),(2,"decode measurement"),(3,"loaded 512"),(4,"malformed response"),(6,"cached token count")] {
         fixture.mode.store(mode, Ordering::Relaxed);
         let registry = fixture.registry(&format!("invalid-{mode}.db"));
-        let error = registry.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,&cancel, |_|{}).await.unwrap_err();
+        let error = registry.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,None, &cancel, |_|{}).await.unwrap_err();
         assert!(error.to_string().contains(message), "{error}");
         let conn = rusqlite::Connection::open(fixture.scratch.join(format!("invalid-{mode}.db"))).unwrap();
         assert!(db::bench_history(&conn,&hw.hw_key,None,50).unwrap().is_empty());
         assert!(anchor_hub::status::running(&registry).await.unwrap().is_empty());
     }
     fixture.mode.store(5, Ordering::Relaxed);
-    let fully_cached = fixture.registry("cached.db").run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,&cancel, |_|{}).await.unwrap();
+    let fully_cached = fixture.registry("cached.db").run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,None, &cancel, |_|{}).await.unwrap();
     assert_eq!(fully_cached.len(), 9);
     assert!(fully_cached.iter().all(|r| r.prefill_tps_median.is_none() && r.decode_tps_median.is_some()));
     fixture.mode.store(7, Ordering::Relaxed);
     let stream_cancel = AtomicBool::new(false);
     let mut chunks = Vec::new();
-    let streamed = fixture.registry("streamed.db").run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,&stream_cancel, |event| match event {
+    let streamed = fixture.registry("streamed.db").run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,None, &stream_cancel, |event| match event {
         BenchProgress::Sample {chunks_per_sec} => chunks.push(chunks_per_sec),
         BenchProgress::ScenarioDone {..} => stream_cancel.store(true, Ordering::Relaxed),
         _ => {}
@@ -185,6 +185,23 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert!(!chunks.is_empty());
     assert!(chunks.iter().all(|v| v.is_finite() && *v > 0.0));
     assert!((streamed[0].decode_tps_median.unwrap() - 21.0).abs() < 1e-6);
+    // Quick measure is one scenario; a re-run under a newer Ollama keeps the old speed as the baseline.
+    let quick = fixture.registry("quick.db");
+    let headline = Some(anchor_hub::bench::HEADLINE_SCENARIO);
+    let first = quick.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,headline,&cancel,|_|{}).await.unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].prompt_id.as_deref(), headline);
+    assert_eq!(first[0].ollama_version.as_deref(), Some("e2e"));
+    fixture.mode.store(8, Ordering::Relaxed);
+    quick.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,headline,&cancel,|_|{}).await.unwrap();
+    let conn = rusqlite::Connection::open(fixture.scratch.join("quick.db")).unwrap();
+    let stored = db::bench_history(&conn,&hw.hw_key,None,50).unwrap();
+    assert_eq!(stored.len(), 1, "same scenario, same build: one row, upserted");
+    assert_eq!(stored[0].ollama_version.as_deref(), Some("e2e-2"));
+    assert_eq!(stored[0].prev_ollama_version.as_deref(), Some("e2e"));
+    assert_eq!(stored[0].prev_decode_tps_median, first[0].decode_tps_median);
+    drop(conn);
+    assert!(quick.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,Some("nope"),&cancel,|_|{}).await.unwrap_err().to_string().contains("unknown scenario"));
     fixture.mode.store(0, Ordering::Relaxed);
     let (_, stats) = ollama::generate(&fixture.host,&GenerateRequest::for_comparison("fixture:latest","compare"),&cancel, |_|{}).await.unwrap();
     assert!(stats.ttft_ms.unwrap() >= 70.0); assert_eq!(stats.prompt_eval_cached_count, Some(90));

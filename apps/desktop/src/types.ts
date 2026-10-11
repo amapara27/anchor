@@ -519,6 +519,9 @@ export interface BenchRun {
   decode_tps_median: number | null;
   load_ms: number | null;
   resident_bytes: number | null;
+  /** Decode median and Ollama version from before a re-run under a different Ollama version. */
+  prev_decode_tps_median?: number | null;
+  prev_ollama_version?: string | null;
   repeats: number;
   install_id: string;
   rating: number | null;

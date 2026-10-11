@@ -19,6 +19,9 @@ pub const SUITE_ID: &str = "anchor-scenarios";
 pub const SUITE_VERSION: u32 = 3;
 /// Bump when a scenario's prompt *text* changes without changing its shape.
 pub const PROMPT_CATALOG_VERSION: u32 = 1;
+/// The scenario model rows quote and the app's quick measure runs. Mirrors
+/// the frontend's `HEADLINE_SCENARIO` in `lib/scenarios.ts`.
+pub const HEADLINE_SCENARIO: &str = "balanced";
 
 /// Headroom over prompt + generation before rounding up to a power of two, so
 /// a token-estimate that runs slightly long can't overflow the context.

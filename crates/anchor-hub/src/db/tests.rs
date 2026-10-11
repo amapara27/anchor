@@ -153,6 +153,8 @@ fn bench(id: &str, hw: HwIdentity, tps: f64) -> BenchRun {
         ttft_ms_median: None,
         env_start: None,
         env_end: None,
+        prev_decode_tps_median: None,
+        prev_ollama_version: None,
         thermal_label: None,
         notes: None,
     }

@@ -54,3 +54,30 @@ export function useLibrary() {
 
   return { entries, status, error, tags, loadingTags, reload: load, loadTags };
 }
+
+// Module-scope so the inspector's quant table doesn't refetch on every selection.
+// A failed fetch is evicted, so reopening retries.
+const tagCache = new Map<string, Promise<LibraryTag[]>>();
+
+/** One library model's published tags, without loading the whole library listing. */
+export function useLibraryTags(name: string | null) {
+  const [state, setState] = useState<{ name: string | null; tags: LibraryTag[] | null; error: boolean }>({
+    name: null, tags: null, error: false,
+  });
+  useEffect(() => {
+    if (!name) return;
+    let live = true;
+    let request = tagCache.get(name);
+    if (!request) {
+      request = invoke<LibraryTag[]>("library_tags", { name });
+      tagCache.set(name, request);
+      request.catch(() => tagCache.delete(name));
+    }
+    request.then(
+      (tags) => live && setState({ name, tags, error: false }),
+      () => live && setState({ name, tags: null, error: true }),
+    );
+    return () => { live = false; };
+  }, [name]);
+  return state.name === name ? state : { name, tags: null, error: false };
+}

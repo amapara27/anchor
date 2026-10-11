@@ -51,6 +51,8 @@ export interface HintModel {
   arch?: ArchMeta | null;
   /** Real on-disk size, preferred over estimating weights from params × bpw. */
   sizeBytes?: number | null;
+  /** Decode tok/s measured on this Mac (headline scenario); replaces the estimate. */
+  measuredTps?: number | null;
 }
 
 /**
@@ -70,7 +72,9 @@ export function hardwareHint(
     { memory_bytes: profile?.memory_bytes },
     { arch: m.arch, size_bytes: m.sizeBytes },
   );
-  const tps = resolveTokPerSec(profile?.chip ?? null, m.id, m.params_b, m.quant as QuantId, m.sizeBytes);
+  const tps: TokPerSec | null = m.measuredTps
+    ? { value: m.measuredTps, source: "measured" }
+    : resolveTokPerSec(profile?.chip ?? null, m.id, m.params_b, m.quant as QuantId, m.sizeBytes);
   const { label, tone } = TIER[fit.tier];
   // Gate on the tier, not the sign: with host memory unknown `availableGB` is 0,
   // so headroom is wildly negative and would read as a bogus shortfall.

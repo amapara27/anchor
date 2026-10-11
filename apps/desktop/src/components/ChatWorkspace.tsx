@@ -188,7 +188,7 @@ export function ChatWorkspace() {
   );
 }
 
-/** Title, model + preset pills, the live context meter, and New trial. */
+/** Title, model + preset pills, the live context meter, and New chat. */
 function ThreadHeader({
   convo,
   messages,
@@ -240,7 +240,7 @@ function ThreadHeader({
     <div className="chat-toolbar shrink-0">
       <div className="flex min-w-[160px] flex-1 flex-col gap-0.5">
         <span className="max-w-[460px] truncate text-base font-semibold tracking-tight text-fg">
-          {convo?.title ?? "New trial"}
+          {convo?.title ?? "New chat"}
         </span>
         <span className="data text-[10.5px] text-fg-subtle">
           {turns} {turns === 1 ? "turn" : "turns"}
@@ -278,7 +278,7 @@ function ThreadHeader({
           <Meter fraction={contextTokens / contextLimit} color="var(--accent-text)" className="w-24" />
         </div>
       )}
-      <button type="button" onClick={onNewTrial} disabled={!model || pickerDisabled} className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-hair px-3 text-[13px] text-fg transition-colors hover:border-hair2 hover:bg-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line disabled:pointer-events-none disabled:opacity-40"><PlusIcon className="size-3.5 text-fg-muted" />New trial</button>
+      <button type="button" onClick={onNewTrial} disabled={!model || pickerDisabled} className="flex h-8 shrink-0 items-center gap-2 rounded-lg border border-hair px-3 text-[13px] text-fg transition-colors hover:border-hair2 hover:bg-inset focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-line disabled:pointer-events-none disabled:opacity-40"><PlusIcon className="size-3.5 text-fg-muted" />New chat</button>
     </div>
   );
 }

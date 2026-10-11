@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -309,6 +309,12 @@ const V10: &str = "
     ALTER TABLE bench_samples ADD COLUMN prompt_eval_cached_count INTEGER;
 ";
 
+/// Keep the previous decode speed when a re-run lands under a different Ollama version.
+const V11: &str = "
+    ALTER TABLE bench_runs ADD COLUMN prev_decode_tps_median REAL;
+    ALTER TABLE bench_runs ADD COLUMN prev_ollama_version TEXT;
+";
+
 /// Reads cached architecture metadata for `tag`, if it was recorded against
 /// this exact `digest`.
 ///
@@ -383,6 +389,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 10 {
         tx.execute_batch(V10)?;
+    }
+    if version < 11 {
+        tx.execute_batch(V11)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -481,6 +490,13 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
             ?31, ?32, ?33, ?34, ?35, ?36, ?37, FALSE
          )
          ON CONFLICT(id) DO UPDATE SET
+            -- Read before the decode/version columns below are replaced: SQLite's
+            -- SET expressions all see the old row, so order doesn't matter.
+            prev_decode_tps_median = CASE WHEN bench_runs.ollama_version IS NOT excluded.ollama_version
+                                          THEN bench_runs.decode_tps_median ELSE bench_runs.prev_decode_tps_median END,
+            prev_ollama_version    = CASE WHEN bench_runs.ollama_version IS NOT excluded.ollama_version
+                                          THEN bench_runs.ollama_version ELSE bench_runs.prev_ollama_version END,
+            ollama_version     = excluded.ollama_version,
             prefill_tps_median = excluded.prefill_tps_median,
             decode_tps_median  = excluded.decode_tps_median,
             load_ms            = excluded.load_ms,
@@ -577,7 +593,8 @@ const BENCH_COLUMNS: &str = "id, hw_key, chip_key, chip, cpu_cores, gpu_cores, m
      ollama_version, suite_id, suite_version,
      prefill_tps_median, decode_tps_median, load_ms, resident_bytes, repeats,
      install_id, rating, review, visible, created_at, updated_at, source, synced_at,
-     prompt_id, prompt_version, ttft_ms_median, thermal_label, notes, env_start_json, env_end_json";
+     prompt_id, prompt_version, ttft_ms_median, thermal_label, notes, env_start_json, env_end_json,
+     prev_decode_tps_median, prev_ollama_version";
 
 /// Benchmark results from machines resembling `hw`, best match first.
 ///
@@ -641,7 +658,7 @@ pub fn bench_runs_for(
         rusqlite::params![hw.hw_key, hw.chip_key, hw.memory_gb, model_digest, suite_id, prompt_id, num_ctx, crate::bench::SUITE_VERSION],
         |row| {
             let mut run = row_to_bench(row)?;
-            run.match_quality = Some(MatchQuality::from_tier(row.get::<_, i64>(37)?));
+            run.match_quality = Some(MatchQuality::from_tier(row.get::<_, i64>(39)?));
             Ok(run)
         },
     )?;
@@ -760,6 +777,8 @@ fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
         notes: row.get(34)?,
         env_start: env_from_json(row.get::<_, Option<String>>(35)?.as_deref()),
         env_end: env_from_json(row.get::<_, Option<String>>(36)?.as_deref()),
+        prev_decode_tps_median: row.get(37)?,
+        prev_ollama_version: row.get(38)?,
     })
 }
 

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { BenchProgress, BenchRepeatsMode, BenchRun, MatchQuality } from "../types";
 import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
+import { MEASUREMENTS_EVENT } from "./useMeasurements";
 import { recordUse } from "./lastUsed";
 
 /** Results grouped by how well the measuring machine matches this one. */
@@ -190,6 +191,7 @@ export function useBenchmarks(modelId: string | null) {
             setRunning(false);
             setRunStartedAt(null);
             setVersion((v) => v + 1);
+            window.dispatchEvent(new Event(MEASUREMENTS_EVENT));
             break;
           case "failed":
             setProgress(null);

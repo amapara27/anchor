@@ -382,6 +382,12 @@ pub struct BenchRun {
     pub ttft_ms_median: Option<f64>,
     pub env_start: Option<EnvTelemetry>,
     pub env_end: Option<EnvTelemetry>,
+    /// Decode median and Ollama version this row held before a re-run under a
+    /// different Ollama version replaced them — the baseline for a regression delta.
+    #[serde(default)]
+    pub prev_decode_tps_median: Option<f64>,
+    #[serde(default)]
+    pub prev_ollama_version: Option<String>,
     /// `"nominal"` | `"pressure"` | `"unknown"`, observed at scenario boundaries.
     pub thermal_label: Option<String>,
     /// Free-text anomaly notes. Auto-populated where derivable (thermal,

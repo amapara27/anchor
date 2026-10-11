@@ -203,8 +203,10 @@ pub fn parse_tags(html: &str) -> Vec<LibraryTag> {
             continue;
         }
         // Size and context are the two `col-span-2` paragraphs, in that order.
+        // Match the class alone: the site has emitted `<p  class=` (two spaces)
+        // for size, which silently shifted context into the size column.
         let mut columns = row
-            .split("<p class=\"col-span-2 text-neutral-500 text-[13px]\">")
+            .split("class=\"col-span-2 text-neutral-500 text-[13px]\">")
             .skip(1)
             .filter_map(|c| c.split("</p>").next().map(clean));
         out.push(LibraryTag {

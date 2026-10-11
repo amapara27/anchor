@@ -14,6 +14,7 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { ChatIcon, CompareIcon, LayersIcon, SettingsIcon, StorageIcon, ZapIcon } from "./components/icons";
 import { useHardwareProfile } from "./lib/useHardwareProfile";
 import { formatBytes } from "./lib/format";
+import { useQuickMeasure } from "./lib/useQuickMeasure";
 
 export default function App() {
   return <ModelsProvider><ChatProvider><Workspace /></ChatProvider></ModelsProvider>;
@@ -27,6 +28,7 @@ function Workspace() {
   const [modelsTab, setModelsTab] = useState<ModelsTab>("installed");
   const [comparisonBusy, setComparisonBusy] = useState(false);
   const [benchmarkBusy, setBenchmarkBusy] = useState(false);
+  const quick = useQuickMeasure();
   const [jobError, setJobError] = useState("");
   const stopJob = (command: string) => { void invoke(command).catch(e=>setJobError(String(e))); };
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -51,7 +53,7 @@ function Workspace() {
   const tryModel = async (id: string, context: number) => {
     const presets = await invoke<Preset[]>("list_presets");
     const defaults = presets.find(p=>p.id === "default");
-    const preset = {...defaults, id: "trial-context-" + context, name: "Trial · " + context / 1024 + "K", system: defaults?.system ?? null, temperature: defaults?.temperature ?? null, top_p: defaults?.top_p ?? null, model: null, num_ctx: context, created_ms: Date.now()};
+    const preset = {...defaults, id: "trial-context-" + context, name: context / 1024 + "K context", system: defaults?.system ?? null, temperature: defaults?.temperature ?? null, top_p: defaults?.top_p ?? null, model: null, num_ctx: context, created_ms: Date.now()};
     await invoke("save_preset", {preset});
     window.dispatchEvent(new Event("anchor:presets"));
     await create(id, preset.id);
@@ -90,14 +92,14 @@ function Workspace() {
        </div></div>}
     </main>)}
     </div>
-    {(Object.keys(downloads).length > 0 || runningIds.size > 0 || comparisonBusy || benchmarkBusy || jobError) && <div role="status" aria-label="Activity" className="flex shrink-0 flex-wrap gap-4 border-t border-hair bg-chrome px-5 py-2 text-xs">
+    {(Object.keys(downloads).length > 0 || runningIds.size > 0 || comparisonBusy || benchmarkBusy || quick.running || jobError) && <div role="status" aria-label="Activity" className="flex shrink-0 flex-wrap gap-4 border-t border-hair bg-chrome px-5 py-2 text-xs">
       {comparisonBusy && <span>Comparison running <button onClick={() => stopJob("stop_comparison")} className="text-accent-text">Stop comparison</button></span>}
-      {benchmarkBusy && <span>Benchmark running <button onClick={() => stopJob("stop_benchmark")} className="text-accent-text">Stop benchmark</button></span>}
+      {(benchmarkBusy || quick.running) && <span>{quick.running && !benchmarkBusy ? `Measuring ${quick.running}` : "Benchmark running"} <button onClick={() => stopJob("stop_benchmark")} className="text-accent-text">Stop benchmark</button></span>}
       {jobError && <span role="alert">{jobError}<button onClick={()=>setJobError("")}>Dismiss</button></span>}
       {Object.values(downloads).map(d => <span key={d.modelId} className="flex items-center gap-2">{d.modelId}: {d.error ?? d.status}
         {d.status === "downloading" && <button onClick={() => cancelDownload(d.modelId)} className="text-accent-text">Cancel download</button>}</span>)}
       {Array.from(runningIds).map(id => <span key={id} className="flex items-center gap-2">Trying {conversations.find(c => c.id === id)?.model}
-        <button onClick={() => stop(id)} className="text-accent-text">Stop trial</button></span>)}
+        <button onClick={() => stop(id)} className="text-accent-text">Stop</button></span>)}
     </div>}
     <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} onNavigate={navigate} onJumpToModel={id => {
       navigate("models", "installed"); setOpenModel({ id, nonce: Date.now() });
