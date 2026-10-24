@@ -25,9 +25,9 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
-      runs:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
+      runs:[] as any[],sessions:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
-      quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:3,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
+      quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:4,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
       gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
       source:'local',updated_at:Date.now(),match_quality:'exact',thermal_label:'sustained',env_start:null,env_end:null,
       rating:null,review:null,notes:null,resident_bytes:options.variants?1.2*1024**3:null,kv_cache_type:"unknown",flash_attn:null,synced_at:null,
@@ -84,12 +84,17 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
           case 'stop_comparison':state.compareStop=true;return;
           case 'bench_runs_for_model': return state.runs.filter((r:any)=>!args.model||r.model_name===args.model);
           case 'bench_history': return state.runs;
+          case 'bench_sessions': return state.sessions;
+          case 'export_bench_evidence': if(!args.includeContent) throw 'content consent required'; return '{"session":{"formula_version":1},"raw_counter":9007199254740993}';
+          case 'plugin:dialog|save': return '/fixture/evidence.json';
+          case 'plugin:fs|write_file': return;
           case 'latest_measurements': return Object.values(Object.fromEntries(state.runs.map((r:any)=>[r.model_name,r])));
           case 'run_benchmark': {
             state.benchStop=false;emit(args.onEvent,{kind:'status',message:'Warming up'});
             if(options.measurements) {emit(args.onEvent,{kind:'sample',chunks_per_sec:12});await sleep(500);}
             await sleep(700);
             const runs=state.benchStop?[]:[runFor(args.model)];state.runs.push(...runs);
+            state.sessions.unshift({id:'session-'+Date.now(),model_name:args.model,hw_key:'test',created_at:Date.now(),outcome:state.benchStop?'cancelled':'completed',error:null,planned_attempts:2,recorded_attempts:state.benchStop?1:2,formula_version:1});
             if(options.measurements && runs.length) {emit(args.onEvent,{kind:"scenario_started",scenario_id:"balanced",num_ctx:2048,index:1,total:9});emit(args.onEvent,{kind:"scenario_done",run:runs[0],index:1,total:9});}
             emit(args.onEvent,{kind:'done',runs});return runs;
           }
@@ -333,7 +338,7 @@ test('comparison shows observed TTFT and benchmark distinguishes chunk rate from
   const balanced=page.getByRole('button').filter({hasText:'balanced'}).filter({hasText:'1000'});
   await expect(balanced).toContainText('21.0');
   await page.getByText('Method',{exact:true}).click();
-  await expect(page.getByText(/Prefill counts uncached tokens/)).toBeVisible();
+  await expect(page.getByText(/Prefill requires a reported cached-token count/)).toBeVisible();
   await expect(page.getByText(/Thermal status comes from boundary snapshots/)).toBeVisible();
   await expect(page.getByText('In target',{exact:true})).toBeVisible();
   await expect(page.getByText('Out cap',{exact:true})).toBeVisible();
@@ -392,4 +397,30 @@ test('global fit context, per-quant table, quick measure, version flags and copy
   await inspector.getByText('Use from other apps',{exact:true}).click();
   await expect(inspector).toContainText('ollama run '+catalog[0].id);
   await expect(inspector).toContainText('http://localhost:11434/v1/chat/completions');
+});
+
+test('execution evidence retains cancelled sessions and exports JSON with explicit content consent', async ({page}) => {
+  await boot(page);
+  await nav(page, 'Benchmarks').click();
+  await page.getByRole('button', {name:'Run suite',exact:true}).click();
+  await page.getByRole('button', {name:'Stop',exact:true}).click();
+  await expect(page.getByRole('button', {name:'Run suite',exact:true})).toBeEnabled();
+  await page.getByText('Run history', {exact:false}).first().click();
+  const evidence = page.getByRole('region', {name:'Execution evidence'});
+  await expect(evidence).toContainText('cancelled');
+  const exportButton = evidence.getByRole('button', {name:/Export JSON/}).first();
+  await expect(exportButton).toBeDisabled();
+  await evidence.getByRole('checkbox', {name:'Include prompts and output in exports'}).check();
+  await exportButton.click();
+  await expect.poll(() => page.evaluate(() => (window as any).__e2e.calls.some((c:any) => c.cmd==='plugin:fs|write_file'))).toBe(true);
+  const exportCall = await page.evaluate(() => (window as any).__e2e.calls.find((c:any) => c.cmd==='export_bench_evidence'));
+  expect(exportCall.args.includeContent).toBe(true);
+  expect(exportCall.args.id).toMatch(/^session-/);
+  for (const width of [800, 1440]) {
+    await page.setViewportSize({width,height:900});
+    await expect(evidence).toBeVisible();
+    await expect(evidence.getByRole('checkbox')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await evidence.screenshot({path:`test-results/evidence-${width}.png`});
+  }
 });

@@ -182,7 +182,7 @@ pub struct PullProgress {
 }
 
 /// Parameters for a streaming `POST /api/generate` call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct GenerateRequest {
     /// Model id (Ollama name, e.g. `"llama3.1:8b"`).
     pub model: String,
@@ -309,7 +309,7 @@ impl GenerateChunk {
 /// Raw nanosecond durations and token counts — the frontend formats them (e.g.
 /// tok/sec = `eval_count / (eval_duration_ns / 1e9)`). Mirrored on the frontend
 /// as `GenerationStats` in `types.ts`.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
 pub struct GenerationStats {
     /// Total wall time for the request, in nanoseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -625,11 +625,28 @@ pub async fn generate<F>(
     host: &str,
     req: &GenerateRequest,
     cancel: &std::sync::atomic::AtomicBool,
-    mut on_token: F,
+    on_token: F,
 ) -> Result<(String, GenerationStats)>
 where
     F: FnMut(&str) + Send,
 {
+    generate_inner(host, req, cancel, on_token, None).await
+}
+
+pub(crate) async fn generate_recorded<F>(
+    host: &str, req: &GenerateRequest, cancel: &std::sync::atomic::AtomicBool,
+    on_token: F, events: &mut Vec<crate::bench::evidence::RawEvent>,
+) -> Result<(String, GenerationStats)>
+where F: FnMut(&str) + Send {
+    generate_inner(host, req, cancel, on_token, Some(events)).await
+}
+
+async fn generate_inner<F>(
+    host: &str, req: &GenerateRequest, cancel: &std::sync::atomic::AtomicBool,
+    mut on_token: F, mut events: Option<&mut Vec<crate::bench::evidence::RawEvent>>,
+) -> Result<(String, GenerationStats)>
+where F: FnMut(&str) + Send {
+    use crate::bench::evidence::{EventKind, RawEvent};
     let url = format!("{host}/api/generate");
     // Like a pull, a generation has no useful total deadline (it depends on the
     // answer length); bound the connect and the idle gap between reads instead.
@@ -665,55 +682,69 @@ where
     }
 
     let started = std::time::Instant::now();
-    let resp = send_cancellable(client.post(&url).json(&body), cancel)
-        .await?
-        .error_for_status()?;
+    if let Some(events) = events.as_deref_mut() { events.push(RawEvent { at_ns: 0, kind: EventKind::Dispatch }); }
+    let outcome = async {
+        let resp = send_cancellable(client.post(&url).json(&body), cancel)
+            .await?
+            .error_for_status()?;
 
-    let mut text = String::new();
-    // Reasoning text, kept only as a fallback for a model that thinks anyway.
-    let mut thinking = String::new();
-    let mut stats = GenerationStats::default();
-    let mut first_output_ms = None;
-    let mut completed = false;
+        let mut text = String::new();
+        // Reasoning text, kept only as a fallback for a model that thinks anyway.
+        let mut thinking = String::new();
+        let mut stats = GenerationStats::default();
+        let mut first_output_ms = None;
+        let mut completed = false;
 
-    for_each_ndjson_line(resp.bytes_stream(), MAX_GENERATE_LINE_BYTES, cancel, |line| {
-        // Fold one parsed frame into text/thinking/stats; an error frame bails.
-        let frame = serde_json::from_slice::<GenerateChunk>(line)?;
-        {
-            if first_output_ms.is_none() && (!frame.response.is_empty() || !frame.thinking.is_empty()) {
-                first_output_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+        for_each_ndjson_line(resp.bytes_stream(), MAX_GENERATE_LINE_BYTES, cancel, |line| {
+            if let Some(events) = events.as_deref_mut() {
+                events.push(RawEvent { at_ns: started.elapsed().as_nanos() as u64, kind: EventKind::Frame { bytes: line.to_vec() } });
             }
-            if let Some(err) = frame.error {
-                return Err(Error::Ollama(err));
+            if completed { return Err(Error::Ollama("frame after completion frame".into())); }
+            // Fold one parsed frame into text/thinking/stats; an error frame bails.
+            let frame = serde_json::from_slice::<GenerateChunk>(line)?;
+            {
+                if first_output_ms.is_none() && (!frame.response.is_empty() || !frame.thinking.is_empty()) {
+                    first_output_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
+                }
+                if let Some(err) = frame.error {
+                    return Err(Error::Ollama(err));
+                }
+                if !frame.response.is_empty() {
+                    on_token(&frame.response);
+                    text.push_str(&frame.response);
+                }
+                if !frame.thinking.is_empty() {
+                    thinking.push_str(&frame.thinking);
+                }
+                if frame.done {
+                    completed = true;
+                    stats = frame.into_stats();
+                    stats.ttft_ms = first_output_ms;
+                }
             }
-            if !frame.response.is_empty() {
-                on_token(&frame.response);
-                text.push_str(&frame.response);
-            }
-            if !frame.thinking.is_empty() {
-                thinking.push_str(&frame.thinking);
-            }
-            if frame.done {
-                completed = true;
-                stats = frame.into_stats();
-                stats.ttft_ms = first_output_ms;
-            }
+            Ok(())
+        })
+        .await?;
+
+        if let Some(events) = events.as_deref_mut() {
+            events.push(RawEvent { at_ns: started.elapsed().as_nanos() as u64, kind: EventKind::TransportClosed });
         }
-        Ok(())
-    })
-    .await?;
+        if !completed {
+            return Err(Error::Ollama("generation ended without a completion frame".into()));
+        }
 
-    if !completed {
-        return Err(Error::Ollama("generation ended without a completion frame".into()));
+        // A thinking model can ignore `think: false` and spend its whole budget on
+        // reasoning, leaving `response` empty — fall back to the reasoning so the
+        // caller never gets a blank answer when the model clearly produced output.
+        if text.is_empty() && !thinking.is_empty() {
+            text = thinking;
+        }
+        Ok((text, stats))
+    }.await;
+    if let Some(events) = events.as_deref_mut() {
+        events.push(RawEvent { at_ns: started.elapsed().as_nanos() as u64, kind: EventKind::Outcome });
     }
-
-    // A thinking model can ignore `think: false` and spend its whole budget on
-    // reasoning, leaving `response` empty — fall back to the reasoning so the
-    // caller never gets a blank answer when the model clearly produced output.
-    if text.is_empty() && !thinking.is_empty() {
-        text = thinking;
-    }
-    Ok((text, stats))
+    outcome
 }
 
 /// One turn in a chat conversation. Mirrors Ollama's `/api/chat` message shape
@@ -935,7 +966,9 @@ pub async fn delete(host: &str, id: &str) -> Result<()> {
 // `Error` needs `From<reqwest::Error>`; declared in lib.rs via thiserror.
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
-        Error::Http(e.to_string())
+        let timed_out = e.is_timeout();
+        let message = e.without_url().to_string();
+        if timed_out { Error::Timeout(message) } else { Error::Http(message) }
     }
 }
 

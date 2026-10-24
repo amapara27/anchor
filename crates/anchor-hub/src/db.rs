@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -315,6 +315,28 @@ const V11: &str = "
     ALTER TABLE bench_runs ADD COLUMN prev_ollama_version TEXT;
 ";
 
+/// Append-only evidence identities; finalization never replaces a previous session.
+const V12: &str = "
+    CREATE TABLE IF NOT EXISTS benchmark_sessions (
+        id TEXT PRIMARY KEY,
+        config_json TEXT NOT NULL,
+        record_version INTEGER NOT NULL,
+        formula_version INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        finished_at INTEGER,
+        outcome_json TEXT NOT NULL,
+        error TEXT
+    );
+    CREATE TABLE IF NOT EXISTS benchmark_attempts (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES benchmark_sessions(id),
+        plan_index INTEGER NOT NULL,
+        record_json TEXT NOT NULL,
+        finished BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE(session_id, plan_index)
+    );
+";
+
 /// Reads cached architecture metadata for `tag`, if it was recorded against
 /// this exact `digest`.
 ///
@@ -392,6 +414,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 11 {
         tx.execute_batch(V11)?;
+    }
+    if version < 12 {
+        tx.execute_batch(V12)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -483,11 +508,11 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
             prefill_tps_median, decode_tps_median, load_ms, resident_bytes, repeats,
             install_id, rating, review, visible, created_at, updated_at, source, synced_at,
             prompt_id, prompt_version, ttft_ms_median, thermal_label, notes,
-            env_start_json, env_end_json, flash_attn
+            env_start_json, env_end_json, flash_attn, prev_decode_tps_median, prev_ollama_version
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
             ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30,
-            ?31, ?32, ?33, ?34, ?35, ?36, ?37, FALSE
+            ?31, ?32, ?33, ?34, ?35, ?36, ?37, FALSE, ?38, ?39
          )
          ON CONFLICT(id) DO UPDATE SET
             -- Read before the decode/version columns below are replaced: SQLite's
@@ -550,6 +575,8 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
             r.notes,
             env_to_json(r.env_start.as_ref()),
             env_to_json(r.env_end.as_ref()),
+            r.prev_decode_tps_median,
+            r.prev_ollama_version,
         ],
     )?;
 
@@ -696,7 +723,7 @@ pub fn bench_history(
 /// (warmup first).
 pub fn bench_samples_for(conn: &Connection, bench_run_id: &str) -> Result<Vec<BenchSample>> {
     let mut stmt = conn.prepare(
-        "SELECT id, bench_run_id, repeat_index, is_warmup, CASE WHEN (SELECT suite_id = 'anchor-scenarios' AND suite_version >= 3 FROM bench_runs WHERE id = bench_run_id) THEN prefill_tps END, decode_tps, CASE WHEN (SELECT suite_id = 'anchor-scenarios' AND suite_version >= 3 FROM bench_runs WHERE id = bench_run_id) THEN ttft_ms END,
+        "SELECT id, bench_run_id, repeat_index, is_warmup, CASE WHEN (SELECT suite_id = 'anchor-scenarios' AND suite_version >= 4 FROM bench_runs WHERE id = bench_run_id) THEN prefill_tps END, decode_tps, CASE WHEN (SELECT suite_id = 'anchor-scenarios' AND suite_version >= 3 FROM bench_runs WHERE id = bench_run_id) THEN ttft_ms END,
                 prompt_eval_count, prompt_eval_duration_ns, eval_count, eval_duration_ns,
                 total_duration_ns, load_duration_ns, wall_start_ms, created_at, prompt_eval_cached_count
            FROM bench_samples WHERE bench_run_id = ?1 ORDER BY repeat_index",
@@ -723,6 +750,12 @@ pub fn bench_samples_for(conn: &Connection, bench_run_id: &str) -> Result<Vec<Be
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+pub(crate) fn bench_session_results(conn: &Connection, session_id: &str) -> Result<Vec<BenchRun>> {
+    let mut stmt = conn.prepare(&format!("SELECT {BENCH_COLUMNS} FROM bench_runs WHERE id >= ?1 AND id < ?2 ORDER BY created_at, id"))?;
+    let rows = stmt.query_map(rusqlite::params![format!("{session_id}:"), format!("{session_id};")], row_to_bench)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
 }
 
 /// Updates a run's free-text notes, e.g. after the user edits an
@@ -756,7 +789,7 @@ fn row_to_bench(row: &rusqlite::Row<'_>) -> rusqlite::Result<BenchRun> {
         ollama_version: row.get(14)?,
         suite_id,
         suite_version,
-        prefill_tps_median: if row.get::<_, u32>(16)? < 3 { None } else { row.get(17)? },
+        prefill_tps_median: if row.get::<_, u32>(16)? < 4 { None } else { row.get(17)? },
         decode_tps_median: row.get(18)?,
         load_ms: row.get(19)?,
         resident_bytes: row.get(20)?,

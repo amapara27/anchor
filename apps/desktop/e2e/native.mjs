@@ -28,7 +28,7 @@ const server=createServer(async(req,res)=>{
     res.setHeader('content-type','application/x-ndjson');
     const chat=req.url==='/api/chat';
     if(!chat && body.keep_alive===0 && body.prompt===''){resident=null;return json({done:true});}
-    resident={name:body.model,size:2*1024**3,context_length:body.options?.num_ctx??4096};
+    resident={name:body.model,digest:models.find(m=>m.name===body.model)?.digest,size:2*1024**3,context_length:body.options?.num_ctx??4096};
     const text='Native fixture answer for '+body.model;
     res.write(JSON.stringify(chat?{message:{role:'assistant',content:text},done:false}:{response:text,done:false})+'\n');
     // Delayed completion is necessary to exercise actual cancellation/navigation.
@@ -94,6 +94,17 @@ try{
   await wait(()=>execute("return Array.from(document.querySelectorAll('button')).some(e=>e.textContent.trim()==='Run suite'&&e.getClientRects().length)"),'full nine-scenario Rust suite',60000);
   const counts=execFileSync('sqlite3',[path.join(scratch,'registry.db'),"SELECT (SELECT COUNT(*) FROM conversations),(SELECT COUNT(*) FROM messages),(SELECT COUNT(*) FROM bench_runs WHERE suite_id='anchor-scenarios');"],{encoding:'utf8'}).trim().split('|').map(Number);
   assert.equal(counts[0],1);assert.equal(counts[1],2);assert.equal(counts[2],9);
+  const sessions=await execute("return window.__TAURI_INTERNALS__.invoke('bench_sessions',{limit:10});");
+  assert(sessions.some(s=>s.outcome==='cancelled'),'cancelled execution retains a session');
+  const complete=sessions.find(s=>s.outcome==='completed');assert(complete);
+  const consent=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(complete.id)},includeContent:false}).then(()=>false,()=>true);`);
+  assert.equal(consent,true,'content export requires explicit consent');
+  const raw=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(complete.id)},includeContent:true});`);
+  assert.equal(typeof raw,'string','integer counters stay in Rust-serialized JSON');
+  const evidence=JSON.parse(raw);assert.equal(evidence.results.length,9);
+  assert(evidence.session.config.attempts.some(a=>a.is_warmup));
+  assert(evidence.attempts.every(a=>a.events.some(e=>e.kind==='frame')));
+  assert(evidence.derived.scenarios.every(s=>s.complete));
   // SQLite queries above verify persisted data beyond the component state.
   await request('DELETE','/session/'+session);session=null;child.kill('SIGTERM');
   success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, SQLite persistence.');

@@ -53,8 +53,7 @@ pub enum Cmd {
     },
     /// The raw per-repeat samples behind a stored run's medians.
     ///
-    /// Run ids are deterministic composites (install + machine + model digest +
-    /// configuration), far too long to copy off a table — so by default this
+    /// By default this
     /// picks the newest run matching the filters. `--json` on the other
     /// commands carries the full id when a script needs one.
     Samples {
@@ -71,6 +70,20 @@ pub enum Cmd {
     },
     /// The scenarios the suite measures, and the shape of each.
     Scenarios,
+    /// All execution outcomes, including failed and cancelled sessions.
+    Sessions {
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Export reproducible evidence as JSON, including prompts and raw output.
+    Export {
+        /// Session id from `bench sessions`, or a successful run id.
+        id: String,
+        #[arg(long, required = true)]
+        include_content: bool,
+    },
+    /// Recalculate metrics from an evidence JSON file, without a runtime or database.
+    Replay { path: std::path::PathBuf },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -90,6 +103,27 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             ctx,
         } => top(model.as_deref(), Some(&suite), scenario.as_deref(), ctx, json).await,
         Cmd::Scenarios => scenarios(json),
+        Cmd::Sessions { limit } => {
+            let sessions = registry()?.bench_sessions(limit).map_err(|e| e.to_string())?;
+            let rows: Vec<_> = sessions.iter().map(|s| serde_json::json!({
+                "id": s.id, "model": s.config.model_name, "outcome": s.outcome, "error": s.error,
+                "created_at": s.created_at, "finished_at": s.finished_at,
+                "planned_attempts": s.config.attempts.len(), "formula_version": s.formula_version,
+            })).collect();
+            if json { return print_json(&rows); }
+            for row in rows {
+                println!("{}  {:<26} {}", row["id"].as_str().unwrap(), row["model"].as_str().unwrap(), row["outcome"].as_str().unwrap());
+            }
+            Ok(())
+        }
+        Cmd::Export { id, include_content: _ } => {
+            print_json(&registry()?.bench_evidence(&id).map_err(|e| e.to_string())?)
+        }
+        Cmd::Replay { path } => {
+            let raw = std::fs::read(path).map_err(|e| e.to_string())?;
+            let export: anchor_hub::bench::evidence::EvidenceExport = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+            print_json(&export.recalculate().map_err(|e| e.to_string())?)
+        }
         Cmd::Samples {
             run_id,
             model,
@@ -109,8 +143,7 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             if samples.is_empty() {
                 return Err(format!("no samples for {run_id}"));
             }
-            // The suite's warmup is per context tier, not per scenario, so it
-            // is never stored as a sample — every row here is a measured repeat.
+            // Context-tier warmups and unsuccessful attempts live in session evidence.
             println!("{:>6} {:>12} {:>12} {:>10}", "REPEAT", "PREFILL t/s", "DECODE t/s", "TTFT ms");
             for s in &samples {
                 println!(
@@ -200,8 +233,8 @@ const WAVEFORM_WIDTH: usize = 24;
 ///
 /// A killed `anchor bench` strands the weights in Ollama — the process dies
 /// before the run can unload them, and the next thing to need that RAM finds it
-/// taken. Stopping cleanly keeps the scenarios already measured, discards the
-/// interrupted one, and still unloads. A second Ctrl-C exits immediately, since
+/// taken. Stopping cleanly keeps completed results and interrupted evidence,
+/// and still unloads. A second Ctrl-C exits immediately, since
 /// installing a handler otherwise takes the escape hatch away.
 fn watch_for_interrupt() -> Arc<AtomicBool> {
     let cancel = Arc::new(AtomicBool::new(false));
@@ -264,12 +297,12 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
             // Committed with a newline: finished scenarios scroll up as a log
             // while the animated line keeps redrawing beneath them.
             crate::progress_done();
-            println!(
+            if !json { println!(
                 "  ✓ {:<10} {:>7} ctx  {:>12}",
                 run.prompt_id.as_deref().unwrap_or("—"),
                 run.num_ctx,
                 rate,
-            );
+            ); }
             let _ = (index, total);
             finished.push(*run);
         }

@@ -12,11 +12,13 @@
 //! first received output chunk.
 
 mod prompts;
+pub mod evidence;
 
 pub use prompts::{RepeatsMode, Scenario, CATALOG, HEADLINE_SCENARIO, SUITE_ID, SUITE_VERSION};
 
 use anchor_core::{BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity};
 use serde::Serialize;
+use evidence::{BenchSession, Outcome, PlannedAttempt, SessionConfig};
 
 use crate::{ollama, status, GenerateRequest, GenerationStats, Registry, Result};
 
@@ -106,7 +108,7 @@ fn ttft_ms(stats: &GenerationStats) -> Option<f64> {
 }
 
 fn prefill_tps(stats: &GenerationStats) -> Option<f64> {
-    let uncached = stats.prompt_eval_count?.checked_sub(stats.prompt_eval_cached_count.unwrap_or(0))?;
+    let uncached = stats.prompt_eval_count?.checked_sub(stats.prompt_eval_cached_count?)?;
     (uncached > 0).then(|| tps(Some(uncached), stats.prompt_eval_duration_ns)).flatten()
 }
 
@@ -227,14 +229,14 @@ impl Registry {
     /// Scenarios are grouped by derived `num_ctx` and run in ascending order so
     /// the model reloads once per distinct context size, not once per scenario
     /// — Ollama reloads on a `num_ctx` change, not on a prompt change. Each
-    /// context group gets one discarded warmup to establish its allocation
+    /// context group gets one retained warmup to establish its allocation
     /// and warm the runtime before collecting measurements.
     ///
     /// Setting `cancel` ends the suite at the next scenario boundary, or mid
     /// generation via [`ollama::generate`]. A stop is a normal terminal state,
     /// not an error: the scenarios that already finished were measured at full
-    /// rigor and keep their rows, the interrupted one is discarded rather than
-    /// stored half-measured, and the model is still unloaded on the way out.
+    /// rigor and keep their rows. Interrupted attempts remain in session evidence
+    /// and never become leaderboard results. The model is unloaded on the way out.
     ///
     /// `only` restricts the suite to one scenario id (the app's quick measure);
     /// its row is identical to what the full suite would store for it.
@@ -277,177 +279,179 @@ impl Registry {
         if groups.is_empty() {
             return Err(crate::Error::Ollama(format!("unknown scenario {}", only.unwrap_or_default())));
         }
-        let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
-        let mut index = 0u32;
-        let mut results = Vec::new();
-
-        'suite: for (num_ctx, scenarios) in groups {
-            on_progress(BenchProgress::Status {
-                message: format!("unloading model before {num_ctx} context"),
+        let mut plan = Vec::new();
+        for (ctx, scenarios) in &groups {
+            plan.push(PlannedAttempt {
+                scenario_id: scenarios[0].id.into(), repeat_index: 0, is_warmup: true, prompt_tokens_target: None,
+                request: GenerateRequest::for_benchmark(model, "Warm up the runtime. Briefly describe a lighthouse.", 64, *ctx),
             });
-            let _ = self.unload(model).await;
-
-            on_progress(BenchProgress::Status {
-                message: format!("warming up at {num_ctx} context"),
-            });
-            let warmup_predict = scenarios[0].gen_tokens.min(64) as u64;
-            let warmup_request =
-                GenerateRequest::for_benchmark(model, scenarios[0].text(), warmup_predict, num_ctx);
-            let mut sampler = LiveSampler::new();
-            let warmup = match ollama::generate(&self.host, &warmup_request, cancel, |_tok| {
-                if let Some(tps) = sampler.on_token() {
-                    on_progress(BenchProgress::Sample { chunks_per_sec: tps });
-                }
-            })
-            .await
-            {
-                Ok((_, warmup)) => warmup,
-                Err(crate::Error::Cancelled) => break 'suite,
-                Err(e) => return Err(e),
-            };
-            // Every scenario in this group loaded under this warmup, so they
-            // all report its load cost rather than leaving the column empty.
-            let load_ms = warmup.load_duration_ns.map(|ns| ns / 1_000_000);
-
             for scenario in scenarios {
-                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                    break 'suite;
+                for i in 1..=prompts::repeats_for(scenario, repeats) {
+                    plan.push(PlannedAttempt {
+                        scenario_id: scenario.id.into(), repeat_index: i, is_warmup: false,
+                        prompt_tokens_target: Some(scenario.prompt_tokens),
+                        request: GenerateRequest::for_benchmark(model, scenario.text(), scenario.gen_tokens as u64, *ctx),
+                    });
                 }
-                index += 1;
-                on_progress(BenchProgress::ScenarioStarted {
-                    scenario_id: scenario.id.to_string(),
-                    num_ctx,
-                    index,
-                    total,
-                });
-
-                let env_start = capture_env(self, model).await;
-                let repeat_count = prompts::repeats_for(scenario, repeats);
-                let request = GenerateRequest::for_benchmark(
-                    model,
-                    scenario.text(),
-                    scenario.gen_tokens as u64,
-                    num_ctx,
-                );
-                let resident = status::running(self).await?
-                    .into_iter().find(|r| r.name == model)
-                    .ok_or_else(|| crate::Error::Ollama("benchmark model is not resident after warmup".into()))?;
-                let actual_ctx = resident.context_length.and_then(|v| u32::try_from(v).ok())
-                    .ok_or_else(|| crate::Error::Ollama("Ollama did not report the loaded context".into()))?;
-                // Smaller could truncate the scenario. Larger is a per-model floor (vision
-                // models load at least 2048), so record what actually ran instead.
-                if actual_ctx < num_ctx {
-                    return Err(crate::Error::Ollama(format!("requested {num_ctx} context, but Ollama loaded {actual_ctx}; benchmark discarded")));
-                }
-                let id = BenchRun::derive_id(
-                    install_id,
-                    &hw.hw_key,
-                    &digest,
-                    SUITE_ID,
-                    SUITE_VERSION,
-                    actual_ctx,
-                    "unknown",
-                    None,
-                    Some((scenario.id, prompts::PROMPT_CATALOG_VERSION)),
-                );
-
-                let mut samples = Vec::new();
-                let mut decode = Vec::new();
-                let mut prefill = Vec::new();
-                let mut ttft = Vec::new();
-                for i in 1..=repeat_count {
-                    let mut sampler = LiveSampler::new();
-                    let wall_start = now_ms();
-                    let stats = match ollama::generate(&self.host, &request, cancel, |_tok| {
-                        if let Some(tps) = sampler.on_token() {
-                            on_progress(BenchProgress::Sample { chunks_per_sec: tps });
-                        }
-                    })
-                    .await
-                    {
-                        Ok((_, stats)) => stats,
-                        // Dropping out here skips this scenario's upsert, so a
-                        // partly-measured row never reaches the leaderboard.
-                        Err(crate::Error::Cancelled) => break 'suite,
-                        Err(e) => return Err(e),
-                    };
-                    if stats.prompt_eval_cached_count.zip(stats.prompt_eval_count).is_some_and(|(cached, total)| cached > total) {
-                        return Err(crate::Error::Ollama("cached token count exceeds prompt token count".into()));
-                    }
-                    if stats.eval_count.is_none_or(|v| v == 0) || stats.eval_duration_ns.is_none_or(|v| v == 0) {
-                        return Err(crate::Error::Ollama("benchmark generation has no valid decode measurement".into()));
-                    }
-                    if let Some(d) = tps(stats.eval_count, stats.eval_duration_ns) {
-                        decode.push(d);
-                        on_progress(BenchProgress::Run { index: i, total: repeat_count, decode_tps: d });
-                    }
-                    if let Some(p) = prefill_tps(&stats) {
-                        prefill.push(p);
-                    }
-                    if let Some(t) = ttft_ms(&stats) {
-                        ttft.push(t);
-                    }
-                    samples.push(sample_from(&id, i, false, wall_start, &stats));
-                }
-
-                let env_end = capture_env(self, model).await;
-                let label = thermal_label(&env_start, &env_end);
-                let notes = auto_notes(&label, &env_start);
-                let resident_bytes = status::running(self)
-                    .await
-                    .ok()
-                    .and_then(|rs| rs.into_iter().find(|r| r.name == model).and_then(|r| r.size));
-
-                let now = now_ms();
-                let run = BenchRun {
-                    id,
-                    hw: hw.clone(),
-                    model_name: model.to_string(),
-                    model_digest: digest.clone(),
-                    quant: quant.clone(),
-                    num_ctx: actual_ctx,
-                    kv_cache_type: "unknown".to_string(),
-                    flash_attn: None,
-                    ollama_version: ollama_version.clone(),
-                    suite_id: SUITE_ID.to_string(),
-                    suite_version: SUITE_VERSION,
-                    prefill_tps_median: median(prefill),
-                    decode_tps_median: median(decode),
-                    load_ms,
-                    resident_bytes,
-                    repeats: repeat_count,
-                    install_id: install_id.to_string(),
-                    rating: None,
-                    review: None,
-                    visible: true,
-                    created_at: now,
-                    updated_at: now,
-                    source: BenchSource::Local,
-                    synced_at: None,
-                    match_quality: None,
-                    prompt_id: Some(scenario.id.to_string()),
-                    prompt_version: Some(prompts::PROMPT_CATALOG_VERSION),
-                    ttft_ms_median: median(ttft),
-                    env_start: Some(env_start),
-                    env_end: Some(env_end),
-                    prev_decode_tps_median: None,
-                    prev_ollama_version: None,
-                    thermal_label: Some(label),
-                    notes,
-                };
-
-                crate::db::upsert_bench_with_samples(&mut self.connect()?, &run, &samples)?;
-                on_progress(BenchProgress::ScenarioDone {
-                    run: Box::new(run.clone()),
-                    index,
-                    total,
-                });
-                results.push(run);
             }
         }
-
+        let session = self.begin_bench_session(SessionConfig {
+            protocol: "ollama_http_serving".into(), suite_id: SUITE_ID.into(), suite_version: SUITE_VERSION,
+            prompt_version: prompts::PROMPT_CATALOG_VERSION, hw: hw.clone(), install_id: install_id.into(),
+            model_name: model.into(), model_digest: digest.clone(), quant: quant.clone(), runtime_version: ollama_version.clone(),
+            server_is_local: crate::is_local_host(&self.host), concurrency: 1,
+            connection_policy: "new HTTP client per attempt; connection setup included".into(),
+            cache_policy: "unverified; distinct warmup prompt; runtime counters retained".into(),
+            counter_calibration: "unverified engine diagnostics".into(), attempts: plan,
+        })?;
+        let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
+        let mut index = 0u32;
+        let mut plan_index = 0;
+        let mut results = Vec::new();
+        let collection: Result<()> = async {
+            'suite: for (num_ctx, scenarios) in groups {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) { break 'suite; }
+                on_progress(BenchProgress::Status { message: format!("unloading model before {num_ctx} context") });
+                self.unload(model).await?;
+                on_progress(BenchProgress::Status { message: format!("warming up at {num_ctx} context") });
+                let warmup = match self.benchmark_attempt(&session, plan_index, cancel, &mut on_progress).await {
+                    Ok((_, metrics)) => metrics,
+                    Err(crate::Error::Cancelled) => break 'suite,
+                    Err(e) => return Err(e),
+                };
+                plan_index += 1;
+                let load_ms = warmup.counters.load_duration_ns.map(|ns| ns / 1_000_000);
+                for scenario in scenarios {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) { break 'suite; }
+                    index += 1;
+                    on_progress(BenchProgress::ScenarioStarted { scenario_id: scenario.id.into(), num_ctx, index, total });
+                    let repeat_count = prompts::repeats_for(scenario, repeats);
+                    let id = format!("{}:{}", session.id, scenario.id);
+                    let mut samples = Vec::new();
+                    let mut attempts = Vec::new();
+                    for i in 1..=repeat_count {
+                        let (attempt, metrics) = match self.benchmark_attempt(&session, plan_index, cancel, &mut on_progress).await {
+                            Ok(value) => value,
+                            Err(crate::Error::Cancelled) => break 'suite,
+                            Err(e) => return Err(e),
+                        };
+                        plan_index += 1;
+                        if attempts.first().is_some_and(|a: &evidence::Attempt| a.observed_context != attempt.observed_context) {
+                            return Err(crate::Error::Ollama("loaded context changed between repeats".into()));
+                        }
+                        if let Some(d) = metrics.decode_tps.value {
+                            on_progress(BenchProgress::Run { index: i, total: repeat_count, decode_tps: d });
+                        }
+                        samples.push(sample_from(&id, i, false, attempt.wall_start_ms, &metrics.counters));
+                        attempts.push(attempt);
+                    }
+                    let actual_ctx = attempts[0].observed_context.unwrap();
+                    let env_start = attempts.first().and_then(|a| a.env_start.clone()).unwrap_or_default();
+                    let env_end = attempts.last().and_then(|a| a.env_end.clone()).unwrap_or_default();
+                    let label = thermal_label(&env_start, &env_end);
+                    let notes = auto_notes(&label, &env_start);
+                    let resident_bytes = attempts.last().and_then(|a| a.resident_bytes);
+                    // Replay is also the source of the values stored for UI and CLI readers.
+                    let replay = self.bench_evidence(&session.id)?.derived;
+                    let summary = replay.scenarios.iter().find(|s| s.scenario_id == scenario.id).unwrap();
+                    let previous = self.bench_history(hw, Some(&digest), 200)?.into_iter().find(|r|
+                        r.prompt_id.as_deref() == Some(scenario.id) && r.num_ctx == actual_ctx && r.suite_version == SUITE_VERSION);
+                    let (prev_decode, prev_version) = match previous {
+                        Some(r) if r.ollama_version != ollama_version => (r.decode_tps_median, r.ollama_version),
+                        Some(r) => (r.prev_decode_tps_median, r.prev_ollama_version),
+                        None => (None, None),
+                    };
+                    let now = now_ms();
+                    let run = BenchRun {
+                        id, hw: hw.clone(), model_name: model.into(), model_digest: digest.clone(), quant: quant.clone(),
+                        num_ctx: actual_ctx, kv_cache_type: "unknown".into(), flash_attn: None, ollama_version: ollama_version.clone(),
+                        suite_id: SUITE_ID.into(), suite_version: SUITE_VERSION,
+                        prefill_tps_median: summary.prefill_tps_median, decode_tps_median: summary.decode_tps_median,
+                        load_ms, resident_bytes, repeats: repeat_count, install_id: install_id.into(),
+                        rating: None, review: None, visible: true, created_at: now, updated_at: now,
+                        source: BenchSource::Local, synced_at: None, match_quality: None,
+                        prompt_id: Some(scenario.id.into()), prompt_version: Some(prompts::PROMPT_CATALOG_VERSION),
+                        ttft_ms_median: summary.ttft_ms_median, env_start: Some(env_start), env_end: Some(env_end),
+                        prev_decode_tps_median: prev_decode, prev_ollama_version: prev_version, thermal_label: Some(label), notes,
+                    };
+                    crate::db::upsert_bench_with_samples(&mut self.connect()?, &run, &samples)?;
+                    on_progress(BenchProgress::ScenarioDone { run: Box::new(run.clone()), index, total });
+                    results.push(run);
+                }
+            }
+            Ok(())
+        }.await;
+        let outcome = match &collection {
+            Err(crate::Error::Timeout(_)) => Outcome::TimedOut,
+            Err(_) => Outcome::Failed,
+            Ok(_) if results.len() != total as usize => Outcome::Cancelled,
+            Ok(_) => Outcome::Completed,
+        };
+        self.finish_bench_session(&session.id, outcome, collection.as_ref().err().map(|e| e.to_string()).as_deref())?;
+        collection?;
         on_progress(BenchProgress::Done { runs: results.clone() });
         Ok(results)
+    }
+
+    async fn benchmark_attempt<F>(
+        &self, session: &BenchSession, plan_index: usize, cancel: &std::sync::atomic::AtomicBool, on_progress: &mut F,
+    ) -> Result<(evidence::Attempt, evidence::AttemptMetrics)> where F: FnMut(BenchProgress) + Send {
+        let plan = &session.config.attempts[plan_index];
+        let mut attempt = self.begin_bench_attempt(session, plan_index)?;
+        attempt.env_start = Some(capture_env(self, &plan.request.model).await);
+        attempt.wall_start_ms = now_ms();
+        let mut sampler = LiveSampler::new();
+        let generation = ollama::generate_recorded(&self.host, &plan.request, cancel, |_| {
+            if let Some(tps) = sampler.on_token() { on_progress(BenchProgress::Sample { chunks_per_sec: tps }); }
+        }, &mut attempt.events).await;
+        attempt.outcome = match &generation {
+            Ok(_) => Outcome::Completed,
+            Err(crate::Error::Cancelled) => Outcome::Cancelled,
+            Err(crate::Error::Timeout(_)) => Outcome::TimedOut,
+            Err(crate::Error::Json(_)) => Outcome::Invalid,
+            Err(_) => Outcome::Failed,
+        };
+        let mut failure = generation.err();
+        let resident = status::running(self).await;
+        if let Ok(resident) = &resident {
+            if let Some(model) = resident.iter().find(|r| r.name == plan.request.model) {
+                attempt.observed_context = model.context_length.and_then(|n| u32::try_from(n).ok());
+                attempt.observed_digest = model.digest.clone();
+                attempt.resident_bytes = model.size;
+            }
+        }
+        attempt.env_end = Some(capture_env(self, &plan.request.model).await);
+        if failure.is_none() {
+            let context_error = match attempt.observed_context {
+                None => Some("Ollama did not report the loaded context".to_string()),
+                Some(ctx) if plan.request.num_ctx.is_some_and(|requested| ctx < requested) =>
+                    Some(format!("requested {} context, but Ollama loaded {ctx}", plan.request.num_ctx.unwrap())),
+                _ => None,
+            };
+            let metrics = evidence::recalculate(&attempt, session.formula_version)?;
+            let identity_error = match attempt.observed_digest.as_deref() {
+                None => Some("Ollama did not report the loaded digest".to_string()),
+                Some(digest) if digest.trim_start_matches("sha256:") != session.config.model_digest.trim_start_matches("sha256:") =>
+                    Some("loaded model digest differs from the frozen session identity".to_string()),
+                _ => None,
+            };
+            let validation = if metrics.counters.prompt_eval_cached_count.zip(metrics.counters.prompt_eval_count).is_some_and(|(cached, total)| cached > total) {
+                Some("cached token count exceeds prompt token count".to_string())
+            } else if !metrics.validation_errors.is_empty() {
+                Some(metrics.validation_errors.join("; "))
+            } else if !plan.is_warmup && (metrics.counters.eval_count.is_none_or(|n| n == 0) || metrics.decode_tps.value.is_none()) {
+                Some("benchmark generation has no valid decode measurement".to_string())
+            } else { None };
+            if let Some(error) = context_error.or(identity_error).or(validation) {
+                attempt.outcome = Outcome::Invalid;
+                failure = Some(crate::Error::Ollama(error));
+            }
+        }
+        attempt.error = failure.as_ref().map(ToString::to_string);
+        self.finish_bench_attempt(&attempt)?;
+        if let Some(error) = failure { return Err(error); }
+        let metrics = evidence::recalculate(&attempt, session.formula_version)?;
+        Ok((attempt, metrics))
     }
 }
 

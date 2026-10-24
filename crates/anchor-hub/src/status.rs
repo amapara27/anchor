@@ -25,6 +25,8 @@ struct PsResponse {
 #[derive(Debug, Deserialize)]
 struct PsEntry {
     name: String,
+    #[serde(default)]
+    digest: Option<String>,
     /// Bytes of the model currently held in VRAM/RAM, when reported.
     #[serde(default)]
     size_vram: Option<u64>,
@@ -45,6 +47,7 @@ struct PsEntry {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RunningModel {
     pub name: String,
+    pub digest: Option<String>,
     pub size_vram: Option<u64>,
     /// Total resident bytes (weights + KV + compute buffers), when reported.
     pub size: Option<u64>,
@@ -71,6 +74,7 @@ pub async fn running(registry: &Registry) -> Result<Vec<RunningModel>> {
         .into_iter()
         .map(|e| RunningModel {
             name: e.name,
+            digest: e.digest,
             size_vram: e.size_vram,
             size: e.size,
             context_length: e.context_length,

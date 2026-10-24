@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, HardwareProfile, LibraryModel } from "../types";
+import type { BenchRepeatsMode, BenchRun, BenchSessionSummary, HardwareProfile, LibraryModel } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeFile } from "@tauri-apps/plugin-fs";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
@@ -120,6 +123,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     runStartedAt,
     runProgress,
     history,
+    sessions,
     historyScope,
     setHistoryScope,
     version,
@@ -311,17 +315,55 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
 
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Method</summary>
-        <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine workloads with target input lengths and output caps. Results are medians after warm-up. Prefill counts uncached tokens; TTFT measures request to first received output. Thorough runs three repeats; Fast runs long generations once. Rankings use the current method and matching scenario/context. The live waveform shows response chunks, not tokens. Thermal status comes from boundary snapshots. Server KV cache and Flash Attention settings are not reported.</p>
+        <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine workloads with target input lengths and output caps. Results are descriptive medians after warm-up. Prefill requires a reported cached-token count; TTFT measures request to first received output. Thorough runs three repeats; Fast runs long generations once. Rankings use the current method and matching scenario/context. Raw warmups and every attempted request remain in session evidence. Runtime rates are uncalibrated engine diagnostics. The live waveform shows response chunks, not tokens. Thermal status comes from boundary snapshots. Server KV cache and Flash Attention settings are not reported.</p>
       </details>
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-subtle">{history.length}</span></summary>
         <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={!!mine} /></div>
+        <SessionEvidence sessions={sessions} />
       </details>
       {shareCard && (
         <ShareCardModal data={shareCard.data} url={shareCard.url} onClose={() => setShareCard(null)} />
       )}
     </>
   );
+}
+
+function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
+  const [includeContent, setIncludeContent] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const exportSession = async (id: string) => {
+    setExporting(id);
+    setError(null);
+    try {
+      const path = await save({ defaultPath: `anchor-${id}.json`, filters: [{ name: "Benchmark evidence", extensions: ["json"] }] });
+      if (!path) return;
+      const json = await invoke<string>("export_bench_evidence", { id, includeContent });
+      await writeFile(path, new TextEncoder().encode(json));
+    } catch (e) { setError(String(e)); }
+    finally { setExporting(null); }
+  };
+  return <section aria-label="Execution evidence" className="mt-4 flex flex-col gap-3">
+    <h3 className="text-sm font-medium">Execution evidence</h3>
+    <label className="flex items-center gap-2 text-xs text-fg-muted">
+      <input type="checkbox" checked={includeContent} onChange={e => setIncludeContent(e.target.checked)} />
+      Include prompts and output in exports
+    </label>
+    {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+    {sessions.length === 0 ? <p className="text-xs text-fg-muted">No recorded sessions. Earlier results have no raw event trace.</p> : sessions.map(s =>
+      <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-hair py-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs"><span className="data break-all">{s.model_name}</span> · {s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts</p>
+          <p className="data mt-1 break-all text-[11px] text-fg-muted">{s.id} · {formatRelativeTime(s.created_at)} · formula {s.formula_version}</p>
+          {s.error && <p className="mt-1 break-words text-xs text-danger">{s.error}</p>}
+        </div>
+        <GhostButton className="h-7 text-xs" disabled={!includeContent || exporting != null} title={`Export evidence ${s.id}`} onClick={() => void exportSession(s.id)}>
+          {exporting === s.id ? "Exporting…" : "Export JSON"}
+          <span className="sr-only"> {s.id}</span>
+        </GhostButton>
+      </div>)}
+  </section>;
 }
 
 /** Segmented pill toggle, buttons evenly split (unlike `ui/Tabs.tsx`'s

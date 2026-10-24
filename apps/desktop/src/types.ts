@@ -308,6 +308,7 @@ export const DEFAULT_PRESET_ID = "default";
  */
 export interface RunningModel {
   name: string;
+  digest: string | null;
   /** Bytes held in VRAM, when reported. */
   size_vram: number | null;
   /**
@@ -581,4 +582,17 @@ export interface MeasuredRun {
   prompt: string;
   /** Unix epoch milliseconds. */
   ts: number;
+}
+
+/** Execution evidence summaries, including attempts that produced no result. */
+export interface BenchSessionSummary {
+  id: string;
+  model_name: string;
+  hw_key: string;
+  created_at: number;
+  outcome: "running" | "completed" | "failed" | "cancelled" | "timed_out" | "invalid";
+  error: string | null;
+  planned_attempts: number;
+  recorded_attempts: number;
+  formula_version: number;
 }

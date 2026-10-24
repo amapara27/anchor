@@ -323,8 +323,7 @@ pub struct StorageScan {
 /// One benchmark result: a model, a configuration, a machine, and what it did.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchRun {
-    /// Deterministic composite (see [`BenchRun::derive_id`]) so re-running a
-    /// benchmark updates the existing row instead of adding another.
+    /// Session + scenario identity on new runs; legacy rows use [`BenchRun::derive_id`].
     pub id: String,
     pub hw: HwIdentity,
 
@@ -350,7 +349,7 @@ pub struct BenchRun {
     pub load_ms: Option<u64>,
     /// Ollama-reported allocation after the scenario, not process peak RSS.
     pub resident_bytes: Option<u64>,
-    /// Measured runs behind the medians, excluding the discarded warmup.
+    /// Measured repeats behind the medians, excluding retained session warmups.
     pub repeats: u32,
 
     /// Anonymous per-install id — lets someone update their own submission
@@ -431,9 +430,8 @@ impl BenchRun {
     }
 }
 
-/// One repeat's raw measurement behind a [`BenchRun`]'s medians — including
-/// the discarded warmup. Stored so a methodology change can recompute
-/// medians later instead of only ever having the aggregate.
+/// Legacy-compatible successful-repeat counters behind a [`BenchRun`]'s medians.
+/// Complete raw events, warmups and unsuccessful attempts live in session evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BenchSample {
     /// `"{bench_run_id}#{repeat_index}"`.

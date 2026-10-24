@@ -102,7 +102,13 @@ Measure real tokens/sec and memory use for an installed model on your own hardwa
 
 One suite, run in full every time: nine scenarios, each a target input length and capped output shape with a use case attached — classification, summarization, RAG, chain-of-thought reasoning, code generation, and more — at the smallest power-of-two context that holds both. Each scenario is its own row, so a leaderboard always compares models at the same shape rather than averaging incomparable ones. Fast mode runs the long-generation scenarios once instead of three times. Runs also capture thermal state (Apple Silicon's real pressure signal, not the Intel-era fallback), with pressure observed at scenario boundaries recorded alongside the result. Decode uses Ollama timings; prefill excludes cached tokens and TTFT measures the request to first received output. Server KV cache and Flash Attention settings are recorded as unknown when not exposed.
 
-Each result is stored at the context Ollama actually loaded, not the one requested. Some models have a floor (vision models such as `qwen3.5` load at least 2048), so their smallest scenarios run at that floor; a run is discarded only if Ollama loads *less* than requested, since the scenario could then be truncated. While a run is live, the readout is in chunks/s: streamed pieces of output per second, which usually but not always map to one token each. The stored tok/s comes from Ollama's own token count and timing.
+Each result is stored at the context Ollama actually loaded. Context below the requested size invalidates that attempt; the evidence remains. While a run is live, the readout is in chunks/s, which need not equal tokens/s. Stored tok/s uses Ollama's own token count and timing, currently uncalibrated engine diagnostics.
+
+Method v4 freezes each session's requests, hardware/runtime identity and repeat budget before collection. Reruns get new session IDs. Every dispatched warmup and measured attempt retains its raw NDJSON frames, monotonic event offsets, observed context/digest, environment snapshots and terminal outcome. Missing or changed loaded digests invalidate the attempt. Successful scenarios enter history and rankings; incomplete scenarios remain in execution evidence. Run history includes failed/cancelled sessions and an explicit opt-in JSON export containing prompts and output. Existing results stay readable; older results cannot acquire raw events retroactively, and pre-v4 prefill values are unavailable because missing cache counts could have been treated as zero.
+
+Evidence record v1 / formula v1 recalculates request-to-first-output, first-answer, last-content and valid protocol-completion latency from monotonic nanoseconds. Decode is `eval_count / (eval_duration_ns / 1e9)`; prefill is `(prompt_eval_count - prompt_eval_cached_count) / (prompt_eval_duration_ns / 1e9)`. Missing cache counts remain unknown; explicit zero remains zero; fully cached prefill is not applicable. Durations must be positive for rates. Only complete planned scenarios produce descriptive medians, and a metric with missing repeats stays unavailable. These repeats do not establish independent statistical blocks or confidence intervals.
+
+Attempt metadata is saved before dispatch and frames are committed when the attempt finalizes. Graceful errors and cancellation retain evidence. A hard process kill can leave an unfinished record and lose that attempt's buffered frames; an unfinished record is not evidence that a process is still running. Memory remains an Ollama residency snapshot, not peak RSS. Replay verifies record/formula versions and recalculates from raw frames, ignoring exported derived values; it is not an authenticity signature or live-runtime calibration.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
@@ -145,6 +151,9 @@ anchor chat -m llama3.2:1b                  # interactive; omit -m to continue w
 anchor bench scenarios                      # what the suite measures
 anchor bench run llama3.2:1b --repeats fast
 anchor bench top --scenario balanced        # rank every model on one scenario
+anchor bench sessions                       # includes failed/cancelled executions
+anchor bench export SESSION_ID --include-content > evidence.json
+anchor bench replay evidence.json           # offline recalculation from raw evidence
 anchor storage scan
 anchor settings server --start
 ```

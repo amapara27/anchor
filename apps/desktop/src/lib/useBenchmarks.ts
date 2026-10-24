@@ -5,7 +5,7 @@
 // from a superseded run so a stale stream can't overwrite fresh state.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { BenchProgress, BenchRepeatsMode, BenchRun, MatchQuality } from "../types";
+import type { BenchProgress, BenchRepeatsMode, BenchRun, BenchSessionSummary, MatchQuality } from "../types";
 import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
 import { MEASUREMENTS_EVENT } from "./useMeasurements";
 import { recordUse } from "./lastUsed";
@@ -67,6 +67,7 @@ export function useBenchmarks(modelId: string | null) {
   // scenario index/total, not repeat index/total. The repeat counter resets
   // once per scenario, so a bar driven by it never showed overall progress.
   const [runProgress, setRunProgress] = useState<{ index: number; total: number } | null>(null);
+  const [sessions, setSessions] = useState<BenchSessionSummary[]>([]);
   const [history, setHistory] = useState<BenchRun[]>([]);
   const [historyScope, setHistoryScope] = useState<"this" | "all">("this");
   // Bumped whenever a run finishes, so a view driven by `load` knows to refetch.
@@ -129,8 +130,12 @@ export function useBenchmarks(modelId: string | null) {
     const model = historyScope === "this" ? modelId : null;
     if (historyScope === "this" && !modelId) {
       setHistory([]);
+      setSessions([]);
       return;
     }
+    invoke<BenchSessionSummary[]>("bench_sessions", { limit: 50 })
+      .then((rows) => !cancelled && setSessions(rows.filter(s => historyScope === "all" || s.model_name === modelId)))
+      .catch((e) => !cancelled && setError(String(e)));
     invoke<BenchRun[]>("bench_history", { model, limit: 50 })
       .then((runs) => !cancelled && setHistory(runs))
       .catch(() => !cancelled && setHistory([]));
@@ -194,6 +199,7 @@ export function useBenchmarks(modelId: string | null) {
             window.dispatchEvent(new Event(MEASUREMENTS_EVENT));
             break;
           case "failed":
+            setVersion((v) => v + 1);
             setProgress(null);
             setRunning(false);
             setRunStartedAt(null);
@@ -208,6 +214,7 @@ export function useBenchmarks(modelId: string | null) {
         setRunning(false);
         setRunStartedAt(null);
         setError(String(e));
+        setVersion((v) => v + 1);
       });
     },
     [],
@@ -224,6 +231,7 @@ export function useBenchmarks(modelId: string | null) {
     runStartedAt,
     runProgress,
     history,
+    sessions,
     historyScope,
     setHistoryScope,
     version,

@@ -167,6 +167,8 @@ pub enum Error {
     /// An HTTP / Ollama transport failure.
     #[error("ollama request failed: {0}")]
     Http(String),
+    #[error("ollama request timed out: {0}")]
+    Timeout(String),
     /// An error the Ollama server reported in a response body (HTTP 200), e.g. a
     /// `{"error": "..."}` frame mid-pull for an unknown model.
     #[error("ollama error: {0}")]
