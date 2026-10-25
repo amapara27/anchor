@@ -189,14 +189,12 @@ export interface BenchmarkCardData {
   runtimeName?: string;
   /** Headline number — always the headline scenario's decode tok/s. */
   decodeTps: number;
+  postFirstDecode: boolean;
   ttftMs: number | null;
   /** e.g. "anchor-scenarios v1 · median of 3 runs". */
   suiteLabel: string;
   /** Pre-formatted, e.g. "Aug 7, 2026" — the run's own date, not "today". */
   dateLabel: string;
-  /** 1-based rank and group size within this machine's matching runs, when known. */
-  rank: number | null;
-  totalOnMachine: number | null;
 }
 
 const CARD_BG = "#0b0b0e";
@@ -302,7 +300,7 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
     el(
       "div",
       { fontFamily: MONO, fontWeight: "500", fontSize: "19px", letterSpacing: ".22em", textTransform: "uppercase", color: CARD_ACCENT },
-      "Decode speed",
+      d.postFirstDecode ? "Post-first-token decode" : "Legacy reported decode",
     ),
     decodeNumRow,
     el("div", { marginTop: "26px", fontFamily: MONO, fontSize: "21px", color: "#6e6e79" }, decodeSub),
@@ -340,31 +338,10 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
     paddingTop: "34px",
     borderTop: `1px solid ${CARD_HAIR}`,
   });
-  const footerLeft = el("div", { display: "flex", alignItems: "center", gap: "14px" });
-  if (d.rank != null && d.totalOnMachine != null) {
-    footerLeft.append(
-      el(
-        "span",
-        {
-          padding: "9px 16px",
-          borderRadius: "999px",
-          background: "rgba(139,127,240,.16)",
-          boxShadow: "inset 0 0 0 1px rgba(139,127,240,.32)",
-          fontFamily: MONO,
-          fontWeight: "600",
-          fontSize: "19px",
-          color: "#b4aaf7",
-        },
-        `#${d.rank} on ${d.chip}`,
-      ),
-      el(
-        "span",
-        { fontFamily: MONO, fontSize: "19px", color: CARD_FG_DIM },
-        `of ${d.totalOnMachine} model${d.totalOnMachine === 1 ? "" : "s"} tested on this Mac`,
-      ),
-    );
-  }
-  footer.append(footerLeft, el("span", { fontFamily: MONO, fontSize: "19px", color: "#4e4e58" }, "Anchor"));
+  footer.append(
+    el("span", { fontFamily: MONO, fontSize: "19px", color: CARD_FG_MUTED }, "Runtime-specific timing · quality equivalence unchecked"),
+    el("span", { fontFamily: MONO, fontSize: "19px", color: "#4e4e58" }, "Anchor"),
+  );
 
   card.append(glow, header, modelName, bottom, footer);
   return card;

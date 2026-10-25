@@ -76,7 +76,17 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
         .unwrap()
         .starts_with("3.11."));
     assert_eq!(report.memory.len(), export.attempts.len());
-    for (a, m) in export.attempts.iter().zip(&export.derived.attempts) {
+    assert_eq!(session.formula_version, 2);
+    assert_eq!(session.config.suite_version, 5);
+    let mut legacy = export.clone();
+    legacy.session.formula_version = 1;
+    let legacy_metrics = legacy.recalculate().unwrap();
+    for (index, (a, m)) in export
+        .attempts
+        .iter()
+        .zip(&export.derived.attempts)
+        .enumerate()
+    {
         let plan = &session.config.attempts[a.plan_index];
         if !plan.is_warmup {
             assert_eq!(
@@ -119,10 +129,21 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
             Some(input["ids"].as_array().unwrap().len() as u64)
         );
         assert_eq!(
-            m.decode_tps.value,
+            legacy_metrics.attempts[index].decode_tps.value,
             terminal["mlx"]["generation_tps"].as_f64()
         );
         assert_eq!(m.prefill_tps.value, terminal["mlx"]["prompt_tps"].as_f64());
+        let first_sample = f
+            .iter()
+            .find(|f| f["kind"] == "generation" && f["done"] == false)
+            .unwrap();
+        let count = terminal["eval_count"].as_u64().unwrap();
+        let ns =
+            terminal["worker_ns"].as_u64().unwrap() - first_sample["worker_ns"].as_u64().unwrap();
+        assert_eq!(
+            m.decode_tps.value,
+            (count > 1).then(|| (count - 1) as f64 * 1e9 / ns as f64)
+        );
         assert_eq!(
             terminal["mlx"]["token_ids"].as_array().unwrap().len() as u64,
             m.counters.eval_count.unwrap()
@@ -199,6 +220,52 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
         .scenarios
         .iter()
         .all(|s| !s.complete));
+    let mut single = export.clone();
+    let mut first = true;
+    let mut eos = None;
+    for event in &single.attempts[1].events {
+        if let EventKind::Frame { bytes } = &event.kind {
+            let frame: Value = serde_json::from_slice(bytes).unwrap();
+            if frame["done"] == true {
+                eos = Some(frame["mlx"]["eos_token_ids"][0].clone());
+            }
+        }
+    }
+    let eos = eos.unwrap();
+    single.attempts[1].events.retain_mut(|event| {
+        if let EventKind::Frame { bytes } = &mut event.kind {
+            let mut frame: Value = serde_json::from_slice(bytes).unwrap();
+            if frame["kind"] == "generation" && frame["done"] == false {
+                if !first {
+                    return false;
+                }
+                first = false;
+                frame["token_id"] = eos.clone();
+                frame["generation_tokens"] = json!(1);
+                frame["response"] = json!("");
+            } else if frame["done"] == true {
+                frame["eval_count"] = json!(1);
+                frame["done_reason"] = json!("stop");
+                frame["mlx"]["token_ids"] = json!([eos.clone()]);
+            }
+            *bytes = serde_json::to_vec(&frame).unwrap();
+        }
+        true
+    });
+    let single = single.recalculate().unwrap();
+    assert!(single.attempts[1].validation_errors.is_empty());
+    assert_eq!(
+        single.attempts[1].decode_tps.unavailable_reason.as_deref(),
+        Some("no_post_first_token_decode_work")
+    );
+    assert!(
+        single.scenarios[0].complete,
+        "one-token completion remains a completed request"
+    );
+    assert_eq!(
+        single.scenarios[0].decode_tps_median, None,
+        "an unavailable repeat is not silently dropped from the fixed budget"
+    );
     let stopped = registry
         .run_mlx_suite(
             &model,

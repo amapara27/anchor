@@ -14,6 +14,9 @@ const PROBE_NAMES: Record<string, string> = {
   natural_stop: "Natural completion",
   unicode: "Unicode input",
   reasoning: "Reasoning output",
+  short_generation: "Short generation",
+  long_generation: "Long generation",
+  long_prompt: "Long input",
 };
 
 export function CalibrationResults({ result, initiallyExpanded = false, children }: { result: CalibrationSummary; initiallyExpanded?: boolean; children?: ReactNode }) {
@@ -30,13 +33,13 @@ export function CalibrationResults({ result, initiallyExpanded = false, children
       <p className="mt-1 text-xs text-fg-muted">Ollama {result.runtime_version ?? "version unknown"} · requested 4K context · {formatRelativeTime(result.created_at)}</p>
       {result.error && <p className="mt-2 break-words text-xs text-danger">{result.error}</p>}
     </div>
-    <p className="text-xs text-fg-muted">Engine counts and rates remain diagnostic. Checks cover this model, runtime and request set.</p>
+    <p className="text-xs text-fg-muted">Raw runtime counters stay separate. Post-first decode needs a supported timing convention. Checks cover this recorded request set.</p>
     {probes.length > 0 && <details className="group/checks" open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-fg-muted hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open/checks:rotate-90" />Request details</summary>
       <div className="mt-2 overflow-x-auto rounded-control border border-hair">
       <table aria-label="Validation checks" className="w-full min-w-[620px] text-left text-xs">
         <thead><tr className="border-b border-hair">
-          {["Request", "Input count", "Cache", "Finish", "Answer / reasoning"].map(title => <th key={title} scope="col" className="th whitespace-nowrap px-3 py-2">{title}</th>)}
+          {["Request", "Input count", "Cache", "Finish", "Answer / reasoning", "Runtime prefill / decode", "Post-first decode · tok/s"].map(title => <th key={title} scope="col" className="th whitespace-nowrap px-3 py-2">{title}</th>)}
         </tr></thead>
         <tbody>{probes.map((p, index) => <tr key={p.attempt_id} className="border-b border-hair last:border-b-0">
           <th scope="row" className="px-3 py-2 font-normal">
@@ -50,6 +53,8 @@ export function CalibrationResults({ result, initiallyExpanded = false, children
             {p.stream !== "valid_terminal_and_transport_close" && <span className="mt-1 block text-warn">Incomplete stream</span>}
           </td>
           <td className="data whitespace-nowrap px-3 py-2 text-fg-muted">{p.visible_tokens ?? "—"} / {p.reasoning_tokens ?? "—"}</td>
+          <td className="data whitespace-nowrap px-3 py-2 text-fg-muted">{p.diagnostic_prefill_tps?.toFixed(1) ?? "—"} / {p.diagnostic_decode_tps?.toFixed(1) ?? "—"}</td>
+          <td title={p.post_first_decode_unavailable_reason?.replaceAll("_", " ")} className="data whitespace-nowrap px-3 py-2 text-fg-muted">{p.post_first_decode_tps?.toFixed(1) ?? (p.post_first_decode_unavailable_reason === "no_post_first_token_decode_work" ? "N/A" : "—")}</td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -90,7 +95,7 @@ export function CalibrationPanel({ modelId, result, running, busy, loading, prog
       {running ? <GhostButton onClick={onStop} tone="danger"><StopIcon className="size-3.5" />Stop validation</GhostButton>
         : <GhostButton onClick={onRun} disabled={!modelId || busy}>Validate measurements</GhostButton>}
     </div>
-    <p className="mt-1 max-w-[75ch] text-xs leading-relaxed text-fg-muted">Runs 7–8 test requests to check Ollama’s token counts, cache reuse and response completion. Saves a report without tuning the model or changing benchmark results.</p>
+    <p className="mt-1 max-w-[75ch] text-xs leading-relaxed text-fg-muted">Checks token counts, cache reuse and reported rates across short and long generations. Saves evidence without tuning the model or changing benchmark results.</p>
     {running && <p role="status" aria-live="polite" className="mt-3 text-sm text-fg">{message ?? "Checking Ollama…"}</p>}
     {!running && progress && <p role="status" className="mt-3 text-xs text-fg-muted">{progress}</p>}
     {error && <p role="alert" className="mt-3 break-words text-xs text-danger">{error} Try again when Ollama is available.</p>}

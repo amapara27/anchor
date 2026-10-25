@@ -70,6 +70,12 @@ impl Fixture {
                             if mode == 9 { final_frame.as_object_mut().unwrap().remove("prompt_eval_cached_count"); }
                             if mode == 12 && !warmup { final_frame["eval_count"] = json!(-1); }
                             if mode == 14 && !warmup { final_frame["eval_duration"] = json!(0); }
+                            if matches!(mode,18|19) && !warmup {
+                                final_frame["eval_count"] = json!(1);
+                                final_frame["done_reason"] = json!("stop");
+                                if mode == 18 { final_frame["eval_duration"] = json!(0); }
+                                else { final_frame.as_object_mut().unwrap().remove("eval_duration"); }
+                            }
                             let final_frame = if mode == 13 && !warmup {
                                 final_frame.to_string().replace(&format!("\"eval_count\":{count}"), "\"eval_count\":18446744073709551616")
                             } else { final_frame.to_string() };
@@ -135,13 +141,13 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert!(done); assert_eq!(runs.len(), 9);
     let mut repeats = 0;
     for run in &runs {
-        assert!((run.decode_tps_median.unwrap() - 21.0).abs() < 1e-6);
+        assert_eq!(run.decode_tps_median, None, "an HTTP fixture cannot establish a native decode-clock convention");
         assert_eq!(run.prefill_tps_median, Some(1000.0));
         assert!(run.ttft_ms_median.unwrap() >= 70.0);
         assert_eq!(run.load_ms, Some(2000));
         assert_eq!(run.resident_bytes, Some(3_000_000_000));
         assert_eq!(run.flash_attn, None); assert_eq!(run.kv_cache_type, "unknown");
-        assert_eq!(run.suite_version, 4);
+        assert_eq!(run.suite_version, 5);
         assert_eq!(run.quant.as_deref(), Some("F16"), "live quant wins over stale model cache");
         let conn = rusqlite::Connection::open(fixture.scratch.join("measurements.db")).unwrap();
         let stored_sample_rows: i64 = conn.query_row("SELECT COUNT(*) FROM bench_samples WHERE bench_run_id = ?1", [&run.id], |row| row.get(0)).unwrap();
@@ -158,18 +164,38 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert_eq!(evidence.attempts.len(), session.config.attempts.len());
     assert_eq!(evidence.attempts.len(), 17 + anchor_hub::bench::CATALOG.iter().map(|s| s.num_ctx()).collect::<std::collections::HashSet<_>>().len());
     assert!(evidence.attempts.iter().any(|a| session.config.attempts[a.plan_index].is_warmup));
+    let scoped = fixture.registry("formula-scope.db");
+    let mut conn = rusqlite::Connection::open(fixture.scratch.join("formula-scope.db")).unwrap();
+    let mut current = runs[0].clone();
+    current.id = "current-formula".into();
+    db::upsert_bench_without_samples(&mut conn, &current).unwrap();
+    let mut older = current.clone();
+    older.id = "legacy-formula".into();
+    older.suite_version = 4;
+    older.updated_at += 1;
+    db::upsert_bench_without_samples(&mut conn, &older).unwrap();
+    drop(conn);
+    let ranked = scoped.bench_runs_for(&hw, None, Some(anchor_hub::SUITE_ID), None, None).unwrap();
+    assert_eq!(ranked.len(), 1);
+    assert_eq!(ranked[0].id, current.id, "a later legacy result cannot hide the current method");
+    assert_eq!(scoped.bench_history(&hw, None, 20).unwrap().len(), 2);
     let encoded = serde_json::to_vec(&evidence).unwrap();
     let mut exported: anchor_hub::bench::evidence::EvidenceExport = serde_json::from_slice(&encoded).unwrap();
     exported.derived.attempts.clear(); exported.derived.scenarios.clear();
     let replay = exported.recalculate().unwrap();
     assert_eq!(serde_json::to_value(&replay).unwrap(), serde_json::to_value(&evidence.derived).unwrap());
-    for (attempt, metrics) in evidence.attempts.iter().zip(&replay.attempts) {
+    let mut legacy = evidence.clone();
+    legacy.session.formula_version = 1;
+    let legacy_replay = legacy.recalculate().unwrap();
+    assert!(legacy_replay.scenarios.iter().all(|s| (s.decode_tps_median.unwrap() - 21.0).abs() < 1e-6));
+    for (index, (attempt, metrics)) in evidence.attempts.iter().zip(&replay.attempts).enumerate() {
         let plan = &session.config.attempts[attempt.plan_index];
         if plan.is_warmup { continue; }
         let terminal = attempt.events.iter().filter_map(|e| if let anchor_hub::bench::evidence::EventKind::Frame {bytes} = &e.kind { serde_json::from_slice::<Value>(bytes).ok() } else {None}).find(|v| v["done"] == true).unwrap();
         // Independent arithmetic on the exported wire counters, not stored stats/rates.
         let expected_decode = terminal["eval_count"].as_u64().unwrap() as f64 * 1e9 / terminal["eval_duration"].as_u64().unwrap() as f64;
-        assert!((metrics.decode_tps.value.unwrap() - expected_decode).abs() < 1e-9);
+        assert!((legacy_replay.attempts[index].decode_tps.value.unwrap() - expected_decode).abs() < 1e-9);
+        assert_eq!(metrics.decode_tps.unavailable_reason.as_deref(), Some("decode_timing_convention_unverified"));
         assert_eq!(metrics.prefill_tps.value, Some(1000.0));
         assert_eq!(metrics.finish_reason.as_deref(), Some("length"));
         assert!(metrics.completion_ms.value.unwrap() >= metrics.last_content_ms.value.unwrap());
@@ -197,13 +223,34 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
         RawEvent {at_ns:600_000_000,kind:EventKind::TransportClosed},
         RawEvent {at_ns:600_000_001,kind:EventKind::Outcome},
     ];
-    let metrics = anchor_hub::bench::evidence::recalculate(&trace, session.formula_version).unwrap();
+    let metrics = anchor_hub::bench::evidence::recalculate(&trace, 1).unwrap();
     assert_eq!(metrics.first_output_ms.value, Some(100.0));
     assert_eq!(metrics.first_answer_ms.value, Some(150.0));
     assert_eq!(metrics.last_content_ms.value, Some(500.0));
     assert_eq!(metrics.completion_ms.value, Some(550.0));
     assert_eq!(metrics.prefill_tps.value, Some(3000.0));
     assert_eq!(metrics.decode_tps.value, Some(50.0));
+    use anchor_hub::bench::calibration::{ProbeObservation, DecodeTimingObservation, Fingerprint};
+    trace.calibration = Some(ProbeObservation {decode_timing:Some(DecodeTimingObservation {
+        model:"fixture:latest".into(), runtime_version:"0.34.4".into(),
+        runner_fingerprint:Fingerprint{sha256:"a".repeat(64)}, build_info:"b1-161755f29".into(), model_blob:"/tmp/model.gguf".into(),
+    }), ..Default::default()});
+    let corrected = anchor_hub::bench::evidence::recalculate(&trace, 2).unwrap();
+    assert_eq!(corrected.decode_tps.value, Some(49.5));
+    assert_eq!(corrected.first_output_ms, metrics.first_output_ms, "TTFT is unchanged by the decode calculation");
+    let original_terminal = trace.events[5].clone();
+    trace.events[5].kind = EventKind::Frame {bytes:br#"{"done":true,"eval_count":1,"eval_duration":1000}"#.to_vec()};
+    let one = anchor_hub::bench::evidence::recalculate(&trace, 2).unwrap();
+    assert_eq!(one.decode_tps.unavailable_reason.as_deref(), Some("no_post_first_token_decode_work"));
+    assert_eq!(one.counters.eval_duration_ns, Some(1000), "the original counter is retained");
+    assert_eq!(anchor_hub::bench::evidence::recalculate(&trace, 1).unwrap().decode_tps.value, Some(1_000_000.0));
+    trace.events[5] = original_terminal;
+    trace.calibration.as_mut().unwrap().decode_timing.as_mut().unwrap().build_info = "other-build".into();
+    assert_eq!(anchor_hub::bench::evidence::recalculate(&trace, 2).unwrap().decode_tps.unavailable_reason.as_deref(), Some("decode_timing_convention_unverified"));
+    trace.calibration.as_mut().unwrap().decode_timing.as_mut().unwrap().build_info = "b1-161755f29".into();
+    let mut mismatched = evidence.clone();
+    mismatched.attempts[0] = trace.clone();
+    assert_eq!(mismatched.recalculate().unwrap().attempts[0].decode_tps.unavailable_reason.as_deref(), Some("decode_timing_identity_mismatch"));
     trace.events[3].at_ns = 1;
     let invalid_clock = anchor_hub::bench::evidence::recalculate(&trace, session.formula_version).unwrap();
     assert!(invalid_clock.decode_tps.value.is_none());
@@ -262,7 +309,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     fixture.mode.store(0, Ordering::Relaxed);
     let partial = fixture.registry("partial-failure.db");
     assert!(partial.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Thorough,Some("classify"),&cancel,|e| {
-        if matches!(e, BenchProgress::Run {index:1,..}) { fixture.mode.store(1, Ordering::Relaxed); }
+        if matches!(&e, BenchProgress::Run {index:1,..}) || matches!(&e, BenchProgress::Status {message} if message == "Completed repeat 1 of 3; decode rate unavailable") { fixture.mode.store(1, Ordering::Relaxed); }
     }).await.is_err());
     let ev = partial.bench_evidence(&partial.bench_sessions(1).unwrap()[0].id).unwrap();
     assert_eq!(ev.attempts.len(), 3, "warmup, completed repeat, failed repeat all retained");
@@ -279,10 +326,29 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert_eq!(ev.attempts.len(), 2);
     assert_eq!(ev.attempts[1].outcome, anchor_hub::bench::evidence::Outcome::Cancelled);
     assert!(ev.attempts[1].events.iter().any(|e| matches!(e.kind, anchor_hub::bench::evidence::EventKind::Dispatch)));
+    for mode in [18,19] {
+        fixture.mode.store(mode, Ordering::Relaxed);
+        let reg = fixture.registry(&format!("single-token-{mode}.db"));
+        let runs = reg.run_benchmark("fixture:latest", &hw, "e2e", RepeatsMode::Thorough, Some("classify"), &cancel, |_|{}).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].decode_tps_median, None);
+        assert!(runs[0].ttft_ms_median.is_some());
+        let e = reg.bench_evidence(&runs[0].id).unwrap();
+        assert!(e.derived.scenarios[0].complete);
+        assert_eq!(e.session.outcome, Outcome::Completed);
+        for metric in e.derived.attempts.iter().skip(1) {
+            assert_eq!(metric.counters.eval_count, Some(1));
+            assert_eq!(metric.counters.eval_duration_ns, if mode == 18 {Some(0)} else {None});
+            assert_eq!(metric.decode_tps.unavailable_reason.as_deref(), Some("no_post_first_token_decode_work"));
+        }
+    }
     fixture.mode.store(5, Ordering::Relaxed);
     let fully_cached = fixture.registry("cached.db").run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,None, &cancel, |_|{}).await.unwrap();
     assert_eq!(fully_cached.len(), 9);
-    assert!(fully_cached.iter().all(|r| r.prefill_tps_median.is_none() && r.decode_tps_median.is_some()));
+    assert!(fully_cached.iter().all(|r| r.prefill_tps_median.is_none() && r.decode_tps_median.is_none()));
+    let mut old_cached = fixture.registry("cached.db").bench_evidence(&fully_cached[0].id).unwrap();
+    old_cached.session.formula_version = 1;
+    assert!(old_cached.recalculate().unwrap().scenarios.iter().all(|s| s.prefill_tps_median.is_none() && s.decode_tps_median.is_some()));
     fixture.mode.store(7, Ordering::Relaxed);
     let warm_cancel = AtomicBool::new(false);
     let reg = fixture.registry("warmup-cancel.db");
@@ -305,7 +371,10 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert_eq!(streamed.len(), 1, "cancellation retains completed scenarios");
     assert!(!chunks.is_empty());
     assert!(chunks.iter().all(|v| v.is_finite() && *v > 0.0));
-    assert!((streamed[0].decode_tps_median.unwrap() - 21.0).abs() < 1e-6);
+    assert_eq!(streamed[0].decode_tps_median, None);
+    let mut old_streamed = fixture.registry("streamed.db").bench_evidence(&streamed[0].id).unwrap();
+    old_streamed.session.formula_version = 1;
+    assert!((old_streamed.recalculate().unwrap().scenarios[0].decode_tps_median.unwrap() - 21.0).abs() < 1e-6);
     // Quick measure is one scenario; a re-run under a newer Ollama keeps the old speed as the baseline.
     let quick = fixture.registry("quick.db");
     let headline = Some(anchor_hub::bench::HEADLINE_SCENARIO);
@@ -366,7 +435,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     let calibrated = fixture.registry("calibration.db");
     let export = calibrated.calibrate_ollama("fixture:latest", &hw, "e2e", &cancel, |_|{}).await.unwrap();
     assert_eq!(export.session.outcome, Outcome::Completed);
-    assert_eq!(export.attempts.len(), 7);
+    assert_eq!(export.attempts.len(), 10);
     assert!(export.results.is_empty(), "calibration never enters rankings");
     assert!(calibrated.bench_history(&hw, None, 100).unwrap().is_empty());
     let report = export.derived.calibration.as_ref().unwrap();
@@ -379,6 +448,12 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert!(calibrated.latest_calibration("other-model", &hw.hw_key).unwrap().is_none());
     assert!(calibrated.latest_calibration("fixture:latest", "other-machine").unwrap().is_none());
     assert_eq!(report.engine_counters, "diagnostic");
+    assert!(export.session.config.attempts.iter().any(|p| p.scenario_id == "long_generation" && p.request.num_predict == Some(512)));
+    for (probe, metric) in report.probes.iter().zip(&export.derived.attempts) {
+        assert_eq!(probe.post_first_decode_tps, metric.decode_tps.value);
+        assert!(probe.diagnostic_decode_tps.is_some(), "raw runtime rates remain available separately");
+        assert_eq!(probe.diagnostic_prefill_tps, metric.prefill_tps.value);
+    }
     assert!(report.probes.iter().all(|p| p.input_count == "unverified"), "a fixture cannot calibrate a real tokenizer");
     assert!(report.probes.iter().any(|p| p.finish == "length_count_mismatch"), "a claimed length stop must match its declared cap");
     assert!(export.derived.attempts.iter().all(|m| m.counter_status == "diagnostic"));
@@ -391,7 +466,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     fixture.mode.store(4, Ordering::Relaxed);
     let failed_calibration = calibrated.calibrate_ollama("fixture:latest", &hw, "e2e", &cancel, |_|{}).await.unwrap();
     assert_eq!(failed_calibration.session.outcome, Outcome::Failed);
-    assert_eq!(failed_calibration.attempts.len(), 7, "failed probes do not silently shrink the fixed plan");
+    assert_eq!(failed_calibration.attempts.len(), 10, "failed probes do not silently shrink the fixed plan");
     assert!(failed_calibration.attempts.iter().any(|a| a.outcome == Outcome::Invalid));
     assert!(failed_calibration.results.is_empty());
     let stop = AtomicBool::new(true);

@@ -189,7 +189,7 @@ impl Registry {
         let is_evidence_backed = conn
             .query_row(
                 "SELECT suite_id = ?2 AND suite_version >= ?3 FROM bench_runs WHERE id = ?1",
-                rusqlite::params![bench_run_id, SUITE_ID, SUITE_VERSION],
+                rusqlite::params![bench_run_id, SUITE_ID, 4],
                 |row| row.get::<_, bool>(0),
             )
             .optional()?;
@@ -323,7 +323,7 @@ impl Registry {
             server_is_local: crate::is_local_host(&self.host), concurrency: 1,
             connection_policy: "new HTTP client per attempt; connection setup included".into(),
             cache_policy: "unverified; distinct warmup prompt; runtime counters retained".into(),
-            counter_calibration: "diagnostic: runtime token/EOS conventions and phase timer boundaries require calibration".into(), attempts: plan,
+            counter_calibration: "post-first-token decode requires a recorded matching runner convention; source counters remain separate; TTFT is client-observed".into(), attempts: plan,
             calibration: None, native: None, mlx: None,
         })?;
         let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
@@ -362,6 +362,8 @@ impl Registry {
                         }
                         if let Some(d) = metrics.decode_tps.value {
                             on_progress(BenchProgress::Run { index: i, total: repeat_count, decode_tps: d });
+                        } else {
+                            on_progress(BenchProgress::Status {message:format!("Completed repeat {i} of {repeat_count}; decode rate unavailable")});
                         }
                         attempts.push(attempt);
                     }
@@ -464,7 +466,9 @@ impl Registry {
                 Some("cached token count exceeds prompt token count".to_string())
             } else if !metrics.validation_errors.is_empty() {
                 Some(metrics.validation_errors.join("; "))
-            } else if !plan.is_warmup && (metrics.counters.eval_count.is_none_or(|n| n == 0) || metrics.decode_tps.value.is_none()) {
+            } else if !plan.is_warmup && (metrics.counters.eval_count.is_none_or(|n| n == 0)
+                || ((session.formula_version < 2 || metrics.counters.eval_count.is_some_and(|n| n > 1))
+                    && metrics.counters.eval_duration_ns.is_none_or(|n| n == 0))) {
                 Some("benchmark generation has no valid decode measurement".to_string())
             } else { None };
             if let Some(error) = context_error.or(identity_error).or(validation) {
@@ -480,6 +484,10 @@ impl Registry {
                     Err(e) => observation.tokenizer_error = Some(e.to_string()),
                 }
             }
+        }
+        if failure.is_none() && session.formula_version >= 2 {
+            let timing = calibration::observe_decode_timing(self, session.config.runtime_version.as_deref(), &plan.request.model, cancel).await;
+            if let Some(timing) = timing { attempt.calibration.get_or_insert_with(Default::default).decode_timing = Some(timing); }
         }
         self.finish_bench_attempt(&attempt)?;
         if let Some(error) = failure { return Err(error); }

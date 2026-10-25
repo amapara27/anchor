@@ -203,21 +203,9 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     [exactLocal, scenarios],
   );
 
-  // Shared by the History card's "Share" (this machine's last headline result)
-  // and each leaderboard row's own Share button (that row's result — a
-  // different machine's numbers when the row isn't `mine`). Only substitutes
-  // the live `profile` in for a row measured on this machine; another
-  // machine's row uses its own recorded hw fields, never the viewer's.
-  // `groupRuns` (the row's own match-tier group) is what the card's "#N on
-  // this Mac" rank is computed from — filtered to `source === "local"` since
-  // there's no community sync yet, every row IS this Mac, but the filter is
-  // what keeps that true once sync exists.
-  const cardDataForRun = (r: BenchRun, groupRuns?: BenchRun[]): BenchmarkCardData => {
+  const cardDataForRun = (r: BenchRun): BenchmarkCardData | null => {
+    if (r.decode_tps_median == null) return null;
     const useProfile = r.source === "local" && profile;
-    const ranked = groupRuns
-      ?.filter((x) => x.source === "local")
-      .sort((a, b) => (b.decode_tps_median ?? 0) - (a.decode_tps_median ?? 0));
-    const rank = ranked ? ranked.findIndex((x) => x.id === r.id) + 1 : 0;
     const installedModel = useProfile ? installed.find((m) => m.id === r.model_name) : undefined;
     return {
       modelName: r.model_name,
@@ -228,21 +216,21 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       memoryGb: useProfile && profile.memory_bytes != null ? profile.memory_bytes / 1024 ** 3 : (r.hw.memory_gb ?? null),
       osVersion: useProfile ? (profile.os_version ?? r.hw.os_version) : r.hw.os_version,
       ollamaVersion: r.ollama_version,
-      runtimeName: r.suite_id === "anchor-mlx-scenarios" ? "MLX · diagnostic rates" : undefined,
-      decodeTps: r.decode_tps_median ?? 0,
+      runtimeName: r.suite_id === "anchor-mlx-scenarios" ? "MLX-LM" : `Ollama ${r.ollama_version ?? "version unknown"}`,
+      decodeTps: r.decode_tps_median,
+      postFirstDecode: r.suite_version >= 5,
       ttftMs: r.ttft_ms_median,
       suiteLabel: `${r.suite_id === "anchor-mlx-scenarios" ? "MLX diagnostics" : r.suite_id} v${r.suite_version} · median of ${r.repeats} run${r.repeats === 1 ? "" : "s"}`,
       dateLabel: new Date(r.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-      rank: rank > 0 ? rank : null,
-      totalOnMachine: ranked ? ranked.length : null,
     };
   };
-  const handleShareRun = async (r: BenchRun, groupRuns?: BenchRun[]) => {
-    const data = cardDataForRun(r, groupRuns);
+  const handleShareRun = async (r: BenchRun) => {
+    const data = cardDataForRun(r);
+    if (!data) return;
     const url = await renderBenchmarkCard(data);
     setShareCard({ data, url });
   };
-  const handleShare = () => mine && void handleShareRun(mine, yours?.runs);
+  const handleShare = () => mine && void handleShareRun(mine);
 
   return (
     <>
@@ -296,7 +284,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
             { key: "leaderboard", label: "Leaderboard" },
           ]}
         />
-        {runtime === "mlx" && <span className="text-[11px] text-fg-muted">MLX-LM phase rates · diagnostic</span>}
+        <span className="text-[11px] text-fg-muted">{runtime === "mlx" ? "MLX-LM" : "Ollama"} · post-first-token decode</span>
       </div>
 
       {tab === "suite" && (
@@ -325,8 +313,9 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
               </select>
             </label>
             {activeScenario && <span aria-label="Scenario token counts" className="data text-[11px] text-fg-muted">{activeScenario.promptTokens} in / {activeScenario.genTokens} out · {numCtxFor(activeScenario)/1024}K context</span>}
-            {runtime === "mlx" && <span className="text-[11px] text-fg-muted">MLX rate diagnostics · same tokenizer and template</span>}
+            <span className="text-[11px] text-fg-muted">{runtime === "mlx" ? "Same tokenizer and template" : "Runtime-reported rates"}</span>
           </div>
+          <p className="text-xs text-fg-muted">Sorted by reported decode rate.</p>
           {groups.length === 0 ? (
             <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">
               No results for this scenario.
@@ -353,14 +342,14 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Method</summary>
         <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-fg-muted">
           <li>Nine workloads, medians after warmup. Thorough: three repeats. Fast: long generations run once.</li>
-          <li>TTFT: request to first output. Prefill needs cache counts. Engine rates are diagnostic; the live chart counts chunks.</li>
-          <li>All attempts saved. Rankings match method, workload and context. Thermal readings are snapshots; KV cache and Flash Attention settings are unreported.</li>
-          {runtime === "mlx" && <li>MLX runs real text with a fresh cache. Phase rates retain MLX-LM’s first-token/EOS conventions as diagnostics. Leaderboard rows share the selected checkpoint’s tokenizer/template; quality equivalence and cross-runtime rankings are unchecked.</li>}
+          <li>TTFT: request to first output. Decode excludes the first token; one-token responses have no decode rate. Prefill needs cache counts. The live chart counts chunks.</li>
+          <li>All attempts saved. Rankings match method, workload and context; answer quality is unchecked. Thermal readings are snapshots; KV cache and Flash Attention settings are unreported.</li>
+          {runtime === "mlx" && <li>MLX times the worker from its first sampled token until completion, including communication and final queued work. Ollama uses its matched runtime timer. Unsupported timers show N/A; raw counters remain in the details.</li>}
         </ul>
       </details>
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-subtle">{history.length}</span></summary>
-        <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={!!mine} /></div>
+        <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={mine?.decode_tps_median != null} /></div>
         <SessionEvidence sessions={sessions} />
       </details>
       {shareCard && (
@@ -498,7 +487,10 @@ function RunSetupCard({
   return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-x-4 gap-y-3">
     <Select<BenchRuntime> label="Runtime" ariaLabel="Benchmark runtime" value={runtime} onChange={setRuntime} options={[{value:"ollama",label:"Ollama"},{value:"mlx",label:"MLX"}]} disabled={running || calibrating} className="w-[130px]" />
     <div className="min-w-[220px] max-w-[460px] flex-1">
-      {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={modelId ?? ""} onChange={setSelectedMlx} options={mlxModels.map(m=>({value:m.path,label:m.name.replace(/^.*\//,"").replaceAll("-"," ")})).concat({value:"__add_mlx__",label:"Add local checkpoint…"})} disabled={running || calibrating} placeholder="Choose a local MLX checkpoint" /> : <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
+      {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={modelId ?? ""} onChange={setSelectedMlx} options={mlxModels.map(m=>({value:m.path,label:m.name.replace(/^.*\//,"").replaceAll("-"," ")})).concat({value:"__add_mlx__",label:"Add local checkpoint…"})} disabled={running || calibrating} placeholder="Choose a local MLX checkpoint"
+        renderValue={o=><span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-ok" /><span className="data truncate text-[12px] font-medium">{o.label}</span></span>}
+        renderOption={o=>o.value === "__add_mlx__" ? o.label : <span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-ok" /><span className="data min-w-0 flex-1 truncate">{o.label}</span></span>}
+      /> : <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
         disabled={installed.length === 0 || running || calibrating} variant="field" ariaLabel="Benchmark model"
         placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />}
     </div>
@@ -535,7 +527,7 @@ function LiveRunCard({
   const displayTps = running ? liveTps : (mine?.decode_tps_median ?? null);
   const max = Math.max(...waveform, 1);
 
-  const title = running ? "Benchmarking" : "Last result";
+  const title = running ? "Benchmarking" : "Last decode rate";
   const meta = running
     ? (progress ?? "starting")
     : mine
@@ -550,6 +542,8 @@ function LiveRunCard({
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
       <span className="flex items-center gap-2 text-[13px] font-medium">{running && <span className="size-1.5 rounded-full bg-accent" aria-hidden />}{title}</span>
       {displayTps != null && <span className="data text-[15px]">{displayTps.toFixed(1)} <span className="text-xs text-fg-muted">{running ? "chunks/s" : "tok/s"}</span></span>}
+      {!running && mine && displayTps == null && <span className="data text-[15px]">N/A</span>}
+      {!running && mine?.ttft_ms_median != null && <span className="data text-xs text-fg-muted">TTFT {mine.ttft_ms_median.toFixed(0)} ms</span>}
       <span className="min-w-0 flex-1 text-xs text-fg-muted">{meta}</span>
       {running ? <span className="data text-xs text-fg-muted">{formatElapsed(elapsedMs)}</span> : <ThermalReadout run={mine} />}
     </div>
@@ -611,7 +605,7 @@ function HistoryCard({
               <div className="min-w-0">
                 <div className="flex items-baseline gap-1.5">
                   <span className="data truncate text-[12.5px] font-medium text-fg">{r.model_name}</span>
-                  <span className="data shrink-0 text-[10.5px] text-fg-subtle">{formatRelativeTime(r.updated_at)}</span>
+                  <span className="data shrink-0 text-[10.5px] text-fg-subtle">v{r.suite_version}{r.suite_version < 5 ? " · legacy" : ""} · {formatRelativeTime(r.updated_at)}</span>
                 </div>
                 <span className="mt-1.5 block h-1 overflow-hidden rounded-[2px] bg-hair">
                   <span
@@ -621,7 +615,7 @@ function HistoryCard({
                 </span>
               </div>
               <span className="data text-right text-[13px] font-medium text-fg">
-                {r.decode_tps_median != null ? `${r.decode_tps_median.toFixed(1)} t/s` : "—"}
+                {r.decode_tps_median != null ? `${r.decode_tps_median.toFixed(1)} t/s` : "N/A"}
               </span>
             </div>
           ))
@@ -646,7 +640,7 @@ function Group({
   onShareRun,
 }: {
   group: MatchGroup;
-  onShareRun: (run: BenchRun, groupRuns: BenchRun[]) => void;
+  onShareRun: (run: BenchRun) => void;
 }) {
   const median = medianTps(group.runs);
   const best = Math.max(...group.runs.map((r) => r.decode_tps_median ?? 0), 1);
@@ -671,7 +665,7 @@ function Group({
                 mine ? "bg-accent-soft" : "",
               ].join(" ")}
             >
-              <span className="data text-[11px] text-fg-subtle">{i + 1}</span>
+              <span aria-label="Reported rate order" className="data text-[11px] text-fg-subtle">{i + 1}</span>
               <span className="flex min-w-0 flex-col gap-0.5">
                 <span
                   className={`flex items-center gap-1.5 truncate text-[12.5px] font-medium ${mine ? "text-accent-text" : "text-fg"}`}
@@ -695,7 +689,7 @@ function Group({
               </span>
               <button
                 type="button"
-                onClick={() => onShareRun(r, group.runs)}
+                onClick={() => onShareRun(r)}
                 disabled={r.decode_tps_median == null}
                 title="Share a card of this result"
                 aria-label={`Share ${r.model_name} result`}
@@ -736,7 +730,7 @@ function ShareCardModal({
   // One predictable name the save dialog pre-fills, rather than a timestamped
   // one nobody can guess at; the dialog is where a different name is chosen.
   const filename = "anchor_benchmark.png";
-  const tweetText = `${data.modelName} ${data.runtimeName ? `MLX-LM diagnostic rate: ${data.decodeTps.toFixed(1)} tok/s` : `runs at ${data.decodeTps.toFixed(1)} tok/s`} on ${data.chip} — benchmarked locally with Anchor.`;
+  const tweetText = `${data.modelName}: ${data.runtimeName ?? "Ollama"} ${data.postFirstDecode ? "post-first-token" : "legacy runtime-reported"} decode rate ${data.decodeTps.toFixed(1)} tok/s on ${data.chip}. Runtime-specific timing; quality equivalence unchecked. Measured locally with Anchor.`;
   const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
 
   return (
@@ -754,6 +748,7 @@ function ShareCardModal({
             <CloseIcon className="size-4" />
           </button>
         </div>
+        <p className="text-xs text-fg-muted">Timing scope is runtime-specific. Quality equivalence remains unchecked.</p>
         <img src={url} alt="Benchmark card" className="w-full rounded-[10px] border border-hair" />
         <div className="flex gap-2">
           <PrimaryButton className="flex-1 justify-center" onClick={() => void savePng(url, filename)}>

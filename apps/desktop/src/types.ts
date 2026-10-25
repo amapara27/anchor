@@ -627,6 +627,10 @@ export interface CalibrationSummary {
       visible_tokens: number | null;
       reasoning_tokens: number | null;
       output_count: string;
+      diagnostic_prefill_tps?: number | null;
+      diagnostic_decode_tps?: number | null;
+      post_first_decode_tps?: number | null;
+      post_first_decode_unavailable_reason?: string | null;
     }[];
   };
 }

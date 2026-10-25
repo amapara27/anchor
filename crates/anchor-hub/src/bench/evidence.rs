@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{GenerateRequest, GenerationStats, Registry, Result};
 
-pub const FORMULA_VERSION: u32 = 1;
+pub const FORMULA_VERSION: u32 = 2;
 pub const RECORD_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,7 +150,7 @@ pub struct AttemptMetrics {
 
 fn diagnostic_status() -> String { "diagnostic".into() }
 
-fn rate(count: Option<u64>, duration: Option<u64>) -> Metric {
+pub(super) fn rate(count: Option<u64>, duration: Option<u64>) -> Metric {
     match (count, duration) {
         (Some(c), Some(d)) if d > 0 => Metric::known(c as f64 / (d as f64 / 1e9)),
         (_, Some(0)) => Metric::unknown("zero_duration"),
@@ -160,7 +160,7 @@ fn rate(count: Option<u64>, duration: Option<u64>) -> Metric {
 
 /// Cumulative counters are consumed once, at a single valid terminal frame.
 pub fn recalculate(attempt: &Attempt, formula_version: u32) -> Result<AttemptMetrics> {
-    if formula_version != FORMULA_VERSION {
+    if !matches!(formula_version, 1 | 2) {
         return Err(crate::Error::Ollama(format!("unsupported benchmark formula version {formula_version}")));
     }
     let mut counters = GenerationStats::default();
@@ -229,6 +229,13 @@ pub fn recalculate(attempt: &Attempt, formula_version: u32) -> Result<AttemptMet
     let cached_exceeds_total = counters.prompt_eval_cached_count.zip(counters.prompt_eval_count).is_some_and(|(c, t)| c > t);
     if cached_exceeds_total { errors.push("cached_count_exceeds_total".into()); }
     let mut decode = rate(counters.eval_count, counters.eval_duration_ns);
+    if formula_version >= 2 {
+        decode = match counters.eval_count {
+            Some(0 | 1) => Metric::unknown("no_post_first_token_decode_work"),
+            Some(n) if super::calibration::has_post_first_decode_clock(attempt) => rate(Some(n - 1), counters.eval_duration_ns),
+            _ => Metric::unknown("decode_timing_convention_unverified"),
+        };
+    }
     let mut prefill = match (counters.prompt_eval_count, counters.prompt_eval_cached_count) {
         (Some(total), Some(cached)) if cached > total => Metric::unknown("cached_count_exceeds_total"),
         (Some(total), Some(cached)) if cached == total => Metric::unknown("fully_cached_not_applicable"),
@@ -379,7 +386,7 @@ impl EvidenceExport {
         if self.session.record_version != RECORD_VERSION {
             return Err(crate::Error::Ollama("unsupported benchmark record version".into()));
         }
-        if self.session.formula_version != FORMULA_VERSION {
+        if !matches!(self.session.formula_version, 1 | 2) {
             return Err(crate::Error::Ollama("unsupported benchmark formula version".into()));
         }
         if self.session.config.calibration.as_ref().is_some_and(|c| c.protocol_version != 1) {
@@ -401,6 +408,15 @@ impl EvidenceExport {
             return Err(crate::Error::Native("unsupported MLX text protocol".into()));
         }
         let mut metrics: Vec<_> = self.attempts.iter().map(|a| if is_mlx {super::mlx_suite::metrics(a,&self.session)} else {recalculate(a, self.session.formula_version)}).collect::<Result<_>>()?;
+        if self.session.formula_version >= 2 && !is_mlx {
+            for (a, m) in self.attempts.iter().zip(&mut metrics) {
+                if a.calibration.as_ref().and_then(|o| o.decode_timing.as_ref()).is_some_and(|o|
+                    self.session.config.runtime_version.as_deref() != Some(o.runtime_version.as_str())
+                        || o.model != self.session.config.attempts[a.plan_index].request.model) {
+                    m.decode_tps = Metric::unknown("decode_timing_identity_mismatch");
+                }
+            }
+        }
         let mlx=if is_mlx {Some(super::mlx_suite::report(self,&mut metrics))}else{None};
         if let Some(calibration) = super::calibration::report(self, &metrics) {
             return Ok(Recalculated { attempts: metrics, scenarios: Vec::new(), calibration: Some(calibration), native: None, mlx:None });
@@ -418,7 +434,7 @@ impl EvidenceExport {
                 !p.is_warmup && p.scenario_id == plan.scenario_id
             }).map(|a| a.observed_context).collect();
             let complete = measured.len() == planned_repeats && contexts.len() == 1 && !contexts.contains(&None)
-                && measured.iter().all(|m| m.decode_tps.value.is_some() && m.validation_errors.is_empty())
+                && measured.iter().all(|m| (self.session.formula_version >= 2 || m.decode_tps.value.is_some()) && m.validation_errors.is_empty())
                 && self.attempts.iter().filter(|a| {
                     let p = &self.session.config.attempts[a.plan_index];
                     !p.is_warmup && p.scenario_id == plan.scenario_id

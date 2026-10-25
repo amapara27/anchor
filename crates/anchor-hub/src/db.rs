@@ -742,6 +742,7 @@ pub fn bench_runs_for(
                    AND n.hw_key       = b.hw_key
                    AND n.model_digest = b.model_digest
                    AND n.suite_id     = b.suite_id
+                   AND (?5 IS NULL OR n.suite_version = b.suite_version)
                    AND n.prompt_id    IS b.prompt_id
                    AND n.num_ctx      = b.num_ctx
                    AND (n.updated_at > b.updated_at

@@ -52,3 +52,13 @@ target/debug/anchor --json bench replay ./calibration/SESSION_ID.json
 Without `--output`, the session uses the regular registry; `bench sessions` lists it and `bench export SESSION_ID --include-content` exports it. With `--output`, both the database and evidence stay in that directory. Calibration files use new random session IDs on every run. The independent Node check invokes actual Rust replay and checks event arithmetic, native diagnostic rate arithmetic, token counts and finish caps against stored raw values.
 
 Remaining diagnostic/unverified areas: `/api/chat`, other runtime versions/backends, generated/reasoning/EOS token-level traces, exact prefill/decode/load phase isolation, arbitrary context sizes/templates, native benchmark agreement, concurrency, overhead, task quality and confidence intervals. No public performance comparison is qualified by these probes.
+
+## Representative generation follow-up — 2026-10-25
+
+The GUI validation now includes short generation (cap 128), long generation (cap 512) and long input (cap 128), each after an observed unload, in addition to the original probes. All started attempts and original counters remain in the same evidence tables; no ranking rows are created. The report exposes both phase rates explicitly as diagnostics. Older evidence lacks these additional planned probes and remains readable.
+
+The follow-up checks raw arithmetic, token/cap semantics and observed timing windows across ordinary generation lengths. It does not supply an independent synchronized native timing trace. Rate sorting and share cards therefore remain explicitly diagnostic, with no winner badge. See [the retained rate study](phase-rate-calibration.md).
+
+## Post-first decode correction — formula 2
+
+The current headline excludes first-token work and keeps TTFT separate. A matching local Ollama 0.34.4 llama-server b1-161755f29 observation (model path, runner hash and build) is retained per attempt before applying `(eval_count−1)/eval_duration`. Unknown versions/backends remain unavailable; this is not a global one-token correction. One-token requests remain completed with TTFT/counters, but no decode rate. Raw `eval_count`, `eval_duration` and native rate remain separately visible in the probe report, including the old one-token anomaly. Formula-1 exports keep the original values. See [the versioned definition and live acceptance evidence](phase-rate-calibration.md).

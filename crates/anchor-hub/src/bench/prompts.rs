@@ -14,9 +14,9 @@
 //! on drift.
 
 /// Bump when the catalog's *structure* changes (scenarios added/removed,
-/// context derivation, repeat policy).
+/// context derivation, repeat policy) or the result calculation method changes.
 pub const SUITE_ID: &str = "anchor-scenarios";
-pub const SUITE_VERSION: u32 = 4;
+pub const SUITE_VERSION: u32 = 5;
 /// Bump when a scenario's prompt *text* changes without changing its shape.
 pub const PROMPT_CATALOG_VERSION: u32 = 1;
 /// The scenario model rows quote and the app's quick measure runs. Mirrors

@@ -244,6 +244,20 @@ pub fn metrics(a: &Attempt, session: &BenchSession) -> Result<AttemptMetrics> {
         if m.validation_errors.is_empty() && a.outcome == Outcome::Completed {
             m.decode_tps = diagnostic("generation_tps");
             m.prefill_tps = diagnostic("prompt_tps");
+            if session.formula_version >= 2 {
+                let first = frames(a).find(|v| v["kind"] == "generation" && v["done"] == false);
+                m.decode_tps = match (
+                    n,
+                    first.as_ref().and_then(|v| count(v, "worker_ns")),
+                    count(&t, "worker_ns"),
+                ) {
+                    (Some(0 | 1), _, _) => Metric::unknown("no_post_first_token_decode_work"),
+                    (Some(n), Some(start), Some(end)) if end > start => {
+                        Metric::known((n - 1) as f64 * 1e9 / (end - start) as f64)
+                    }
+                    _ => Metric::unknown("missing_post_first_token_clock"),
+                };
+            }
         }
     } else {
         m.validation_errors
@@ -303,9 +317,11 @@ pub fn report(export: &EvidenceExport, metrics: &mut [AttemptMetrics]) -> MlxRep
         identity_unchanged: unchanged,
         load_peak_bytes: load,
         memory,
-        rate_status:
+        rate_status: if export.session.formula_version >= 2 {
+            "Post-first sampled-token rate over the worker clock through terminal stream drain; includes consumer/IPC work; raw MLX-LM rates remain in evidence"
+        } else {
             "diagnostic: upstream MLX-LM rates retain first-token/EOS and consumer-time conventions"
-                .into(),
+        }.into(),
         comparison_eligible: false,
         quality: "unchecked".into(),
     }
@@ -323,7 +339,7 @@ pub fn runs(export: &EvidenceExport) -> Vec<BenchRun> {
             kv_cache_type:"unknown".into(),flash_attn:None,ollama_version:None,suite_id:SUITE_ID.into(),suite_version:c.suite_version,prefill_tps_median:m.prefill_tps_median,decode_tps_median:m.decode_tps_median,
             load_ms:export.attempts.iter().flat_map(frames).find(|v|v["kind"]=="mlx_load").and_then(|v|count(&v,"duration_ns")).map(|n|n/1_000_000),resident_bytes:None,repeats:m.planned_repeats as u32,install_id:c.install_id.clone(),rating:None,review:None,visible:true,created_at:s.created_at,updated_at:s.finished_at.unwrap_or(s.created_at),source:BenchSource::Local,synced_at:None,match_quality:Some(MatchQuality::Exact),prompt_id:Some(m.scenario_id.clone()),prompt_version:Some(c.prompt_version),ttft_ms_median:m.ttft_ms_median,
             env_start:attempts.first().and_then(|a|a.env_start.clone()),env_end:attempts.last().and_then(|a|a.env_end.clone()),prev_decode_tps_median:None,prev_ollama_version:None,thermal_label:None,
-            notes:Some(format!("{}; MLX-LM rate diagnostics; latency includes framed worker IPC; allocator peaks are in execution evidence; quality equivalence unchecked",c.runtime_version.as_deref().unwrap_or("MLX")))}
+            notes:Some(format!("{}; decode scope is recorded in execution evidence; latency includes framed worker IPC; allocator peaks are in execution evidence; quality equivalence unchecked",c.runtime_version.as_deref().unwrap_or("MLX")))}
     }).collect()
 }
 
@@ -356,7 +372,9 @@ impl Registry {
         for s in self.bench_sessions(200)? {
             if s.config.protocol == PROTOCOL
                 && s.config.hw.hw_key == hw.hw_key
-                && s.config.suite_version == SUITE_VERSION
+                && (history
+                    || (s.config.suite_version == SUITE_VERSION
+                        && s.formula_version == super::evidence::FORMULA_VERSION))
             {
                 exports.push(self.bench_evidence(&s.id)?);
             }
@@ -514,7 +532,7 @@ impl Registry {
             });
         let session=self.begin_bench_session(SessionConfig{protocol:PROTOCOL.into(),suite_id:SUITE_ID.into(),suite_version:SUITE_VERSION,prompt_version:prompts::PROMPT_CATALOG_VERSION,hw:hw.clone(),install_id:install.into(),model_name:name,
             model_digest:identity.as_ref().and_then(|v|v["model_digest"].as_str()).unwrap_or("unverified").into(),quant:identity.as_ref().and_then(|v|v["quantization"]["bits"].as_u64()).map(|b|format!("{b}-bit")),runtime_version:identity.as_ref().map(|v|format!("MLX {} / MLX-LM {}",v["versions"]["mlx"].as_str().unwrap_or("unknown"),v["versions"]["mlx-lm"].as_str().unwrap_or("unknown"))),
-            server_is_local:true,concurrency:1,connection_policy:"resident worker; each framed request closes at attempt_finished; client latency includes IPC/formatting, not HTTP".into(),cache_policy:"fresh KVCache per request; one distinct warmup per context; no prefix reuse".into(),counter_calibration:"diagnostic: upstream MLX-LM first-token/EOS/consumer timer conventions retained; allocator windows separately checked".into(),attempts:plans,calibration:None,native:None,mlx:Some(MlxConfig{protocol_version:1,model_path:path,identity})})?;
+            server_is_local:true,concurrency:1,connection_policy:"resident worker; each framed request closes at attempt_finished; client latency includes IPC/formatting, not HTTP".into(),cache_policy:"fresh KVCache per request; one distinct warmup per context; no prefix reuse".into(),counter_calibration:"post-first sampled-token worker clock through terminal stream drain; TTFT separate; upstream rates retained independently".into(),attempts:plans,calibration:None,native:None,mlx:Some(MlxConfig{protocol_version:1,model_path:path,identity})})?;
         let mut attempt = self.begin_bench_attempt(&session, 0)?;
         attempt.env_start = Some(anchor_system::telemetry::snapshot());
         attempt.events.push(RawEvent {

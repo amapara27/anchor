@@ -32,6 +32,25 @@ pub struct ProbeObservation {
     pub residency_before: Option<Vec<RunningModel>>,
     pub tokens: Option<TokenObservation>,
     pub tokenizer_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_timing: Option<DecodeTimingObservation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecodeTimingObservation {
+    pub model: String,
+    pub runtime_version: String,
+    pub runner_fingerprint: Fingerprint,
+    pub build_info: String,
+    pub model_blob: PathBuf,
+}
+
+pub(super) fn has_post_first_decode_clock(attempt: &super::evidence::Attempt) -> bool {
+    attempt.calibration.as_ref().and_then(|o| o.decode_timing.as_ref()).is_some_and(|o|
+        o.runtime_version == "0.34.4" && o.build_info == "b1-161755f29"
+            && o.runner_fingerprint.sha256.len() == 64
+            && o.runner_fingerprint.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+            && o.model_blob.is_absolute())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +78,14 @@ pub struct ProbeReport {
     pub visible_tokens: Option<usize>,
     pub reasoning_tokens: Option<usize>,
     pub output_count: String,
+    #[serde(default)]
+    pub diagnostic_prefill_tps: Option<f64>,
+    #[serde(default)]
+    pub diagnostic_decode_tps: Option<f64>,
+    #[serde(default)]
+    pub post_first_decode_tps: Option<f64>,
+    #[serde(default)]
+    pub post_first_decode_unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,7 +131,8 @@ fn fingerprint_bytes(bytes: &[u8]) -> Option<Fingerprint> {
 }
 
 async fn request(base: &str, route: &str, body: Option<&Value>) -> Result<Value> {
-    let client = reqwest::Client::builder().timeout(Duration::from_secs(180)).build()?;
+    let timeout = if matches!(route, "/props" | "/api/show") { 5 } else { 180 };
+    let client = reqwest::Client::builder().timeout(Duration::from_secs(timeout)).build()?;
     let url = format!("{base}{route}");
     let response = match body { Some(body) => client.post(url).json(body).send().await?, None => client.get(url).send().await? };
     Ok(response.error_for_status()?.json().await?)
@@ -182,6 +210,9 @@ impl Registry {
             ("cap_one", "List the positive integers in order, starting with one.".into(), 1, true, false),
             ("natural_stop", "Reply with the single word blue.".into(), 64, true, false),
             ("unicode", "Reply briefly to: café 🦊 中文 é.".into(), 32, true, false),
+            ("short_generation", "Describe how a lighthouse works in one detailed paragraph.".into(), 128, true, false),
+            ("long_generation", "Write a detailed story in at least twenty paragraphs about a lighthouse keeper preparing for a storm. Continue until the story is complete.".into(), 512, true, false),
+            ("long_prompt", format!("Reference text:\n{}\nSummarize the reference in detail.", "A lighthouse keeper checks the lamp, cleans the lens, records the weather and guides ships safely through dark water. ".repeat(60)), 128, true, false),
         ];
         if show["capabilities"].as_array().is_some_and(|v| v.iter().any(|v| v == "thinking")) {
             cases.push(("reasoning", "What is 17 times 23? Explain briefly.".into(), 256, true, true));
@@ -231,12 +262,8 @@ impl Registry {
     }
 }
 
-/// Token IDs come from a separately queried matching runner, never from chunk counts.
-pub(super) async fn tokenize(registry: &Registry, identity: &CalibrationIdentity, req: &GenerateRequest, events: &[RawEvent]) -> Result<TokenObservation> {
-    let unsupported = || crate::Error::Ollama("matching local llama-server tokenizer unavailable; counters remain diagnostic".into());
-    let model_blob = identity.model_blob.as_ref().ok_or_else(unsupported)?.canonicalize().map_err(|_| unsupported())?;
-    if identity.model_fingerprint.is_none() || identity.source_reference.is_none() { return Err(unsupported()); }
-    let pid = identity.server_pid.ok_or_else(unsupported)?;
+async fn matching_runner(pid: u32, model_blob: &Path) -> Result<(String, PathBuf, Value)> {
+    let unsupported = || crate::Error::Ollama("matching local llama-server unavailable".into());
     let processes = Command::new("ps").args(["-axo", "pid=,ppid=,command="]).output().map_err(|_| unsupported())?;
     for line in String::from_utf8_lossy(&processes.stdout).lines() {
         let mut columns = line.trim().splitn(2, char::is_whitespace);
@@ -250,7 +277,35 @@ pub(super) async fn tokenize(registry: &Registry, identity: &CalibrationIdentity
             .find(|w| w[0] == "--port").and_then(|w| w[1].parse::<u16>().ok()) else { continue };
         let base = format!("http://127.0.0.1:{port}");
         let props = request(&base, "/props", None).await?;
-        if props["model_path"].as_str().and_then(|p| Path::new(p).canonicalize().ok()).as_ref() != Some(&model_blob) { continue; }
+        if props["model_path"].as_str().and_then(|p| Path::new(p).canonicalize().ok()).as_deref() != Some(model_blob) { continue; }
+        return Ok((base, PathBuf::from(binary), props));
+    }
+    Err(unsupported())
+}
+
+pub(super) async fn observe_decode_timing(registry: &Registry, version: Option<&str>, model: &str, cancel: &AtomicBool) -> Option<DecodeTimingObservation> {
+    if cancel.load(Ordering::Relaxed) || version != Some("0.34.4") || !crate::is_local_host(&registry.host) { return None; }
+    let (pid, _) = server_identity(&registry.host);
+    let show = request(&registry.host, "/api/show", Some(&json!({"model":model}))).await.ok()?;
+    if cancel.load(Ordering::Relaxed) { return None; }
+    let path = PathBuf::from(show["modelfile"].as_str()?.lines().find_map(|l| l.strip_prefix("FROM "))?);
+    let path = path.canonicalize().ok()?;
+    let root = crate::storage::models_root()?.join("blobs").canonicalize().ok()?;
+    if !path.starts_with(root) { return None; }
+    let (_, binary, props) = matching_runner(pid?, &path).await.ok()?;
+    if cancel.load(Ordering::Relaxed) { return None; }
+    let build_info = props["build_info"].as_str()?;
+    if build_info != "b1-161755f29" { return None; }
+    Some(DecodeTimingObservation {model:model.into(),runtime_version:"0.34.4".into(), runner_fingerprint:fingerprint(&binary)?,build_info:build_info.into(),model_blob:path})
+}
+
+/// Token IDs come from a separately queried matching runner, never from chunk counts.
+pub(super) async fn tokenize(registry: &Registry, identity: &CalibrationIdentity, req: &GenerateRequest, events: &[RawEvent]) -> Result<TokenObservation> {
+    let unsupported = || crate::Error::Ollama("matching local llama-server tokenizer unavailable; counters remain diagnostic".into());
+    let model_blob = identity.model_blob.as_ref().ok_or_else(unsupported)?.canonicalize().map_err(|_| unsupported())?;
+    if identity.model_fingerprint.is_none() || identity.source_reference.is_none() { return Err(unsupported()); }
+    let pid = identity.server_pid.ok_or_else(unsupported)?;
+    let (base, binary, props) = matching_runner(pid, &model_blob).await?;
         let render_request = json!({"model":req.model,"prompt":req.prompt,"stream":false,"think":req.think,
             "_debug_render_only":true,"options":{"num_ctx":req.num_ctx,"num_predict":req.num_predict,"temperature":req.temperature}});
         let render_response = request(&registry.host, "/api/generate", Some(&render_request)).await?;
@@ -260,14 +315,12 @@ pub(super) async fn tokenize(registry: &Registry, identity: &CalibrationIdentity
         let visible_request = json!({"content":frames.iter().filter_map(|f| f["response"].as_str()).collect::<String>(),"add_special":false,"parse_special":true});
         let reasoning_request = json!({"content":frames.iter().filter_map(|f| f["thinking"].as_str()).collect::<String>(),"add_special":false,"parse_special":true});
         return Ok(TokenObservation {
-            runner_fingerprint:fingerprint(Path::new(binary)).ok_or_else(unsupported)?, build_info:props["build_info"].as_str().map(str::to_owned),
+            runner_fingerprint:fingerprint(&binary).ok_or_else(unsupported)?, build_info:props["build_info"].as_str().map(str::to_owned),
             input_response:request(&base,"/tokenize",Some(&input_request)).await?,
             visible_response:request(&base,"/tokenize",Some(&visible_request)).await?,
             reasoning_response:request(&base,"/tokenize",Some(&reasoning_request)).await?,
             render_request, render_response, input_request, visible_request, reasoning_request,
         });
-    }
-    Err(unsupported())
 }
 
 fn token_ids(response: &Value) -> Option<Vec<u64>> { response["tokens"].as_array()?.iter().map(Value::as_u64).collect() }
@@ -310,6 +363,12 @@ pub(super) fn report(export: &EvidenceExport, metrics: &[AttemptMetrics]) -> Opt
             visible_tokens:tokens.and_then(|t| token_ids(&t.visible_response)).map(|v| v.len()),
             reasoning_tokens:tokens.and_then(|t| token_ids(&t.reasoning_response)).map(|v| v.len()),
             output_count:"diagnostic: visible/reasoning retokenization is not a generated-token/EOS trace".into(),
+            diagnostic_prefill_tps:m.prefill_tps.value,
+            diagnostic_decode_tps:if a.outcome == Outcome::Completed && m.validation_errors.is_empty() {
+                super::evidence::rate(m.counters.eval_count, m.counters.eval_duration_ns).value
+            } else { None },
+            post_first_decode_tps:if export.session.formula_version >= 2 {m.decode_tps.value} else {None},
+            post_first_decode_unavailable_reason:if export.session.formula_version >= 2 {m.decode_tps.unavailable_reason.clone()} else {Some("legacy_formula".into())},
         }
     }).collect();
     Some(CalibrationReport { protocol_version:1, probes, engine_counters:"diagnostic".into(),

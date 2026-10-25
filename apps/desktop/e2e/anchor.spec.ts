@@ -4,7 +4,7 @@ const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
+async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
   await page.addInitScript(({catalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -27,8 +27,8 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
       runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
-      quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:4,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
-      gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
+      quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:5,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
+      gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.noDecode?null:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
       source:'local',updated_at:Date.now(),match_quality:'exact',thermal_label:'sustained',env_start:null,env_end:null,
       rating:null,review:null,notes:null,resident_bytes:options.variants?1.2*1024**3:null,kv_cache_type:"unknown",flash_attn:null,synced_at:null,
       ollama_version:state.version,prev_decode_tps_median:null,prev_ollama_version:null});
@@ -101,7 +101,7 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
             state.mlxRows.push(...rows);
             const result={session_id:id,model_name:'MLX Llama checkpoint',outcome,error:null,runtime_version:'MLX 0.32.4 / MLX-LM 0.31.3',report:{protocol_version:1,boundaries_validated:!cancelled,boundary_checks:[{name:'Live allocation',passed:true},{name:'Peak reset with live allocations',passed:true}],identity_unchanged:cancelled?null:true,load_peak_bytes:900e6,memory:cancelled?[]:[{plan_index:0,baseline_active_bytes:600e6,baseline_cache_bytes:0,peak_bytes:1e9}],rate_status:'diagnostic',comparison_eligible:false,quality:'unchecked'}};
             state.nativeRuns.unshift(result);
-            state.sessions.unshift({id,protocol:'mlx_worker_text_v1',model_name:result.model_name,model_key:args.modelPath,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:21,recorded_attempts:cancelled?2:21,formula_version:1});
+            state.sessions.unshift({id,protocol:'mlx_worker_text_v1',model_name:result.model_name,model_key:args.modelPath,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:21,recorded_attempts:cancelled?2:21,formula_version:2});
             emit(args.onEvent,{kind:'done',runs:rows});return rows;
           }
           case 'latest_calibration': return state.calibrations.find((r:any)=>r.model_name===args.model) ?? null;
@@ -111,13 +111,13 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
             await sleep(900);
             if(options.failCalibration) throw 'Ollama is not reachable';
             const id='calibration-'+Date.now();
-            const names=state.benchStop?['after_unload']:['after_unload','identical_repeat','shared_prefix','changed_prefix','cap_one','natural_stop','unicode','reasoning'];
+            const names=state.benchStop?['after_unload']:['after_unload','identical_repeat','shared_prefix','changed_prefix','cap_one','natural_stop','unicode','short_generation','long_generation','long_prompt','reasoning'];
             const outcome=state.benchStop?'cancelled':'completed';
-            const result={session_id:id,model_name:args.model,runtime_version:'0.34.4',created_at:Date.now(),outcome,error:null,planned_attempts:8,probe_names:names,
+            const result={session_id:id,model_name:args.model,runtime_version:'0.34.4',created_at:Date.now(),outcome,error:null,planned_attempts:11,probe_names:names,
               report:{protocol_version:1,engine_counters:'diagnostic',phase_timing:'diagnostic',quality:'unverified',reasoning_support:'probed',scope:'Recorded probe set only',
-                probes:names.map((name,i)=>({attempt_id:id+':'+i,outcome,input_count:state.benchStop?'unverified':i<6?'cross_checked_for_probe':'unverified',cache:state.benchStop||i>=6?'unverified':i===1?'observed_prefix_reuse':'observed_uncached',finish:state.benchStop?'unverified':i===5?'reported_stop_eos_or_stop_sequence':'cap_reached',stream:state.benchStop?'incomplete_or_invalid':'valid_terminal_and_transport_close',visible_tokens:state.benchStop?null:name==='reasoning'?0:name==='cap_one'?1:32,reasoning_tokens:state.benchStop?null:name==='reasoning'?256:0,output_count:'diagnostic'}))}};
+                probes:names.map((name,i)=>({attempt_id:id+':'+i,outcome,input_count:state.benchStop?'unverified':i<6?'cross_checked_for_probe':'unverified',cache:state.benchStop||i>=6?'unverified':i===1?'observed_prefix_reuse':'observed_uncached',finish:state.benchStop?'unverified':i===5?'reported_stop_eos_or_stop_sequence':'cap_reached',stream:state.benchStop?'incomplete_or_invalid':'valid_terminal_and_transport_close',visible_tokens:state.benchStop?null:name==='reasoning'?0:name==='cap_one'?1:32,reasoning_tokens:state.benchStop?null:name==='reasoning'?256:0,output_count:'diagnostic',diagnostic_prefill_tps:200,diagnostic_decode_tps:name==='cap_one'?1000000:32,post_first_decode_tps:name==='cap_one'?null:31,post_first_decode_unavailable_reason:name==='cap_one'?'no_post_first_token_decode_work':null}))}};
             state.calibrations.unshift(result);
-            state.sessions.unshift({id,protocol:'ollama_calibration_serving_v1',model_name:args.model,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:8,recorded_attempts:names.length,formula_version:1});
+            state.sessions.unshift({id,protocol:'ollama_calibration_serving_v1',model_name:args.model,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:11,recorded_attempts:names.length,formula_version:2});
             return result;
           }
           case 'export_bench_evidence': if(!args.includeContent) throw 'content consent required'; return '{"session":{"formula_version":1},"raw_counter":9007199254740993}';
@@ -129,7 +129,7 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
             if(options.measurements) {emit(args.onEvent,{kind:'sample',chunks_per_sec:12});await sleep(500);}
             await sleep(700);
             const runs=state.benchStop?[]:[runFor(args.model)];state.runs.push(...runs);
-            state.sessions.unshift({id:'session-'+Date.now(),model_name:args.model,hw_key:'test',created_at:Date.now(),outcome:state.benchStop?'cancelled':'completed',error:null,planned_attempts:2,recorded_attempts:state.benchStop?1:2,formula_version:1});
+            state.sessions.unshift({id:'session-'+Date.now(),model_name:args.model,hw_key:'test',created_at:Date.now(),outcome:state.benchStop?'cancelled':'completed',error:null,planned_attempts:2,recorded_attempts:state.benchStop?1:2,formula_version:2});
             if(options.measurements && runs.length) {emit(args.onEvent,{kind:"scenario_started",scenario_id:"balanced",num_ctx:2048,index:1,total:9});emit(args.onEvent,{kind:"scenario_done",run:runs[0],index:1,total:9});}
             emit(args.onEvent,{kind:'done',runs});return runs;
           }
@@ -225,6 +225,41 @@ test('model → benchmark handoff, cancellation, completion and stored results',
   await expect(page.getByText('32.0',{exact:true}).first()).toBeVisible();
   await expect(page.getByRole('tab',{name:'Community',exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=> (window as any).__e2e.runs.length)).toBe(1);
+  await expect(page.getByText('Ollama · post-first-token decode',{exact:true})).toBeVisible();
+  await expect(page.getByText('vs the fastest here',{exact:true})).toHaveCount(0);
+  await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
+  await expect(page.getByText('Sorted by reported decode rate.',{exact:true})).toBeVisible();
+  await page.evaluate(()=>{
+    new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes){if(node instanceof HTMLElement && node.textContent?.includes('Post-first-token decode'))(window as any).__cardText=node.textContent;}}).observe(document.body,{childList:true});
+  });
+  await page.getByRole('button',{name:/Share .* result/}).click();
+  const preview=page.getByRole('dialog',{name:'Share benchmark card'});
+  await expect(preview).toContainText('Timing scope is runtime-specific.');
+  await expect(preview.getByRole('img')).toBeVisible();
+  const cardText=await page.evaluate(()=>(window as any).__cardText);
+  expect(cardText).toContain('Post-first-token decode');
+  expect(cardText).toContain('Runtime-specific timing · quality equivalence unchecked');
+  expect(cardText).not.toMatch(/#\d+ on/);
+  await preview.screenshot({path:'test-results/diagnostic-share.png'});
+  await preview.getByRole('button',{name:'Close share preview'}).click();
+  for(const width of [800,1440]){
+    await page.setViewportSize({width,height:900});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:`test-results/diagnostic-ranking-${width}.png`});
+  }
+});
+
+test('unavailable decode retains TTFT and cannot share a fabricated zero',async({page})=>{
+  await boot(page,{noDecode:true});await nav(page,'Benchmark').click();
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();
+  const row=page.getByRole('button').filter({hasText:'balanced'}).filter({hasText:'896'});
+  await expect(row).toContainText('N/A');
+  await expect(page.getByRole('region',{name:'Benchmark status'})).toContainText('TTFT 100 ms');
+  await row.click();
+  await expect(page.getByRole('button',{name:/Share .* result/})).toBeDisabled();
+  await page.getByText('Run history',{exact:false}).first().click();
+  await expect(page.getByRole('button',{name:'Share',exact:true})).toBeDisabled();
+  await expect(page.getByRole('dialog',{name:'Share benchmark card'})).toHaveCount(0);
 });
 
 test('offline recovery and failed download are visible',async({page})=>{
@@ -466,7 +501,7 @@ test('GUI calibration runs, explains diagnostics, exports safely and stays in hi
   await nav(page,'Benchmark').click();
   const panel=page.getByRole('region',{name:'Measurement validation'});
   await expect(panel).toContainText('No validation recorded');
-  await expect(panel).toContainText('Runs 7–8 test requests');
+  await expect(panel).toContainText('Checks token counts, cache reuse and reported rates');
   await expect(panel).toContainText('without tuning the model or changing benchmark results');
   expect(await panel.evaluate(el => !!(document.querySelector('[aria-label="Benchmarks view"]')!.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
@@ -475,12 +510,15 @@ test('GUI calibration runs, explains diagnostics, exports safely and stays in hi
   await nav(page,'Explore').click();
   await nav(page,'Benchmark').click();
   await expect(panel).toContainText('Checks recorded');
-  await expect(panel).toContainText('Engine counts and rates remain diagnostic');
+  await expect(panel).toContainText('Raw runtime counters stay separate');
   await expect(panel.getByRole('table')).toBeHidden();
   await panel.getByText('Request details',{exact:true}).click();
   await expect(panel.getByRole('row').filter({hasText:'Reasoning output'})).toContainText('0 / 256');
   await expect(panel.getByRole('table')).toContainText('Unverified');
   await expect(panel.getByRole('table')).toContainText('Unknown');
+  await expect(panel.getByRole('table')).toContainText('Post-first decode · tok/s');
+  await expect(panel.getByRole('row').filter({hasText:'One-token limit'})).toContainText('1000000.0');
+  await expect(panel.getByRole('row').filter({hasText:'One-token limit'})).toContainText('N/A');
   const exportButton=panel.getByRole('button',{name:'Export evidence',exact:true});
   await expect(exportButton).toBeDisabled();
   await panel.getByRole('checkbox',{name:'Include prompts and output',exact:true}).check();
@@ -513,7 +551,7 @@ test('GUI calibration retains cancellation', async ({page}) => {
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
   await panel.getByRole('button',{name:'Stop validation',exact:true}).click();
   await expect(panel).toContainText('Validation stopped');
-  await expect(panel).toContainText('1/8 requests recorded');
+  await expect(panel).toContainText('1/11 requests recorded');
   await panel.getByText('Request details',{exact:true}).click();
   await expect(panel).toContainText('Incomplete stream');
   await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
@@ -550,10 +588,12 @@ test('MLX uses the shared suite, named model picker, runtime scope and evidence 
   for(const [width,theme] of [[800,'dark'],[1440,'light']] as const){
     await page.setViewportSize({width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await expect(classify.getByText('32.0',{exact:true})).toBeInViewport();
+    await expect(classify.getByText('100',{exact:true})).toBeInViewport();
     await page.screenshot({path:'test-results/mlx-shared-suite-'+width+'-'+theme+'.png'});
   }
   await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
-  await expect(page.getByText('MLX rate diagnostics · same tokenizer and template',{exact:true})).toBeVisible();
+  await expect(page.getByText('Same tokenizer and template',{exact:true})).toBeVisible();
   await expect(page.getByText('MLX Llama checkpoint',{exact:true}).first()).toBeVisible();
   await selectModel(page,'Benchmark runtime','Ollama');
   await expect(page.getByText('No results for this scenario.',{exact:true})).toBeVisible();

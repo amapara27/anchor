@@ -46,7 +46,8 @@ export function MlxSuiteChecks({result}: {result: MlxSuiteSummary}) {
   const r=result.report;
   return <div className="flex flex-col gap-2 text-xs text-fg-muted">
     <p>{result.runtime_version ?? "MLX"} · {r.boundaries_validated ? "Timing and allocator checks passed" : "Measurement checks incomplete"}</p>
-    <p>Normal text generation with a fresh prompt cache. MLX-LM phase rates are diagnostic; first-token and EOS conventions differ from Ollama.</p>
+    <p>Normal text generation with a fresh prompt cache.</p>
+    <p>{r.rate_status}.</p>
     <p>Client latency includes worker IPC and formatting. Quality equivalence and cross-runtime comparisons are unchecked.</p>
     <p>Load allocator peak: <span className="data">{bytes(r.load_peak_bytes)}</span>. Allocator bytes include resident weights; they are not process RSS or total Mac memory.</p>
     <details className="group/windows">

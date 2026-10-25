@@ -55,3 +55,11 @@ The legacy synchronized synthetic harness separately retains 512 input tokens, 6
 Cross-runtime comparison, task-quality equivalence, instrumentation overhead, independent sample characterization, concurrency and broader model/cache support remain unqualified. Repeated requests within one session are descriptive samples, not independent experimental blocks or a confidence interval. Thermal/power readings are boundary snapshots.
 
 Graceful failure/cancellation retains evidence; Stop terminates the process group, and loss of host stdin ends the worker. Frames are buffered until attempt finalization, so abrupt host death can lose buffered frames and leave unfinished records. Export is reproducible data, not a signed authenticity proof. Full export contains prompts, output, local paths and token IDs and requires explicit consent.
+
+## Phase-rate observations — 2026-10-25
+
+The real-text traces also support an observational review of upstream phase rates against worker boundaries. `tools/calibrate-phase-rates.mjs` checks raw rates against Rust replay, conserves sampled IDs including EOS, retains all warmups/outcomes, and reports the outer window from first sample to terminal drain separately. Its explicitly named post-first sampled-token rate uses the observed remaining-token count; it never replaces upstream rates or infers a native duration from them. Consumer/IPC work and final stream drain make this a different interval from isolated native compute. These observations do not qualify a cross-runtime winner; see [phase-rate findings](phase-rate-calibration.md).
+
+## Post-first decode correction — formula 2
+
+The main decode metric now uses the conserved sampled-token count after the first sample divided by the actual worker-clock interval from that first sample through terminal stream drain. It includes sampled EOS, consumer/IPC work and final drain; it is not GPU-kernel-only time. TTFT remains a separate client-observed first-output latency. One-token output has no decode rate, and unavailable repeats are not removed to form a median. Raw MLX-LM rates stay in evidence. Formula 1 still replays those original rates; method v5 ordering excludes older v4 values while history retains them. See [the current definition](phase-rate-calibration.md).

@@ -117,7 +117,7 @@ try{
   assert.match(await visibleText(),/Input counts unverified/,'fixture runtime is never presented as calibrated');
   const calibrated=await execute(`return window.__TAURI_INTERNALS__.invoke('latest_calibration',{model:${JSON.stringify(catalog[1].id)}});`);
   assert.equal(calibrated.outcome,'completed');assert.equal(calibrated.report.engine_counters,'diagnostic');
-  assert.equal(calibrated.report.probes.length,7);assert.equal(calibrated.config,undefined);
+  assert.equal(calibrated.report.probes.length,10);assert.equal(calibrated.config,undefined);
   const recalled=await execute(`return window.__TAURI_INTERNALS__.invoke('calibration_report',{id:${JSON.stringify(calibrated.session_id)}});`);
   assert.equal(recalled.session_id,calibrated.session_id);
   const rawCalibration=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(calibrated.session_id)},includeContent:true});`);

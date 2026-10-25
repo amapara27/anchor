@@ -10,6 +10,12 @@ const evidence = JSON.parse(readFileSync(filename, 'utf8'));
 const anchor = fileURLToPath(new URL('../target/debug/anchor', import.meta.url));
 const replay = JSON.parse(execFileSync(anchor, ['--json', 'bench', 'replay', filename], {encoding:'utf8', maxBuffer:16*1024**2}));
 assert.equal(evidence.session.config.protocol, 'ollama_calibration_serving_v1');
+// Older exports precede these additive report fields; their existing values still must match.
+for (const [i, probe] of evidence.derived.calibration.probes.entries()) {
+  for (const key of ['diagnostic_prefill_tps','diagnostic_decode_tps','post_first_decode_tps','post_first_decode_unavailable_reason']) {
+    if (!Object.hasOwn(probe, key)) delete replay.calibration.probes[i][key];
+  }
+}
 assert.deepEqual(replay, evidence.derived, 'exported and replayed reports must agree');
 assert.equal(replay.calibration.engine_counters, 'diagnostic');
 const close = (actual, expected, label) => {
@@ -41,7 +47,13 @@ for (const [index, attempt] of evidence.attempts.entries()) {
   const transport = attempt.events.find(e=>e.kind==='transport_closed');
   assert.ok(transport && transport.at_ns >= terminal.at_ns);
   const raw = terminal.value;
-  close(metrics.decode_tps.value, raw.eval_duration > 0 ? raw.eval_count*1e9/raw.eval_duration : null, 'native diagnostic decode');
+  const timing=attempt.calibration?.decode_timing;
+  const supported=timing?.runtime_version==='0.34.4' && timing.build_info==='b1-161755f29'
+    && /^[a-fA-F0-9]{64}$/.test(timing.runner_fingerprint.sha256) && timing.model_blob.startsWith('/')
+    && timing.runtime_version===evidence.session.config.runtime_version && timing.model===plan.request.model;
+  const numerator=evidence.session.formula_version>=2 ? supported && raw.eval_count>1 ? raw.eval_count-1 : null : raw.eval_count;
+  close(metrics.decode_tps.value, numerator!==null && raw.eval_duration>0 ? numerator*1e9/raw.eval_duration : null, 'versioned decode');
+  if (evidence.session.formula_version>=2) close(probe.post_first_decode_tps,metrics.decode_tps.value,'post-first report');
   const cached = raw.prompt_eval_cached_count;
   close(metrics.prefill_tps.value, Number.isSafeInteger(cached) && cached < raw.prompt_eval_count && raw.prompt_eval_duration > 0
     ? (raw.prompt_eval_count-cached)*1e9/raw.prompt_eval_duration : null, 'native diagnostic prefill');
@@ -55,4 +67,4 @@ for (const [index, attempt] of evidence.attempts.entries()) {
   } else assert.equal(probe.input_count, 'unverified');
   console.log(`${plan.scenario_id}: ${probe.input_count}; cache ${probe.cache}; finish ${probe.finish}`);
 }
-console.log(`Checked ${evidence.attempts.length} retained attempts: raw events → export → Rust replay → independent arithmetic. Engine phase rates remain diagnostic.`);
+console.log(`Checked ${evidence.attempts.length} retained attempts: raw events → export → Rust replay → independent arithmetic. Formula ${evidence.session.formula_version} replay verified; original runtime counters retained.`);
