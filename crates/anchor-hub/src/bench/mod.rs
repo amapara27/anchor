@@ -6,14 +6,15 @@
 //! owns: the Ollama client that produces [`GenerationStats`], and the SQLite
 //! connection the results land in.
 //!
-//! Timings are Ollama's own (`eval_count / eval_duration`), never wall-clock
-//! measured here — the server knows when the model actually started
-//! generating and we don't. TTFT is measured from the HTTP request to the
-//! first received output chunk.
+//! Serving phase rates use Ollama's diagnostic counters. TTFT measures HTTP
+//! dispatch to first received output. Native MLX compute has separate worker
+//! timing, allocator scopes and replay in [`mlx`], outside serving rankings.
 
 mod prompts;
 pub mod calibration;
 pub mod evidence;
+pub mod mlx;
+pub mod mlx_suite;
 
 pub use prompts::{RepeatsMode, Scenario, CATALOG, HEADLINE_SCENARIO, SUITE_ID, SUITE_VERSION};
 
@@ -60,13 +61,13 @@ const LIVE_SAMPLE_WINDOW: usize = 12;
 const LIVE_SAMPLE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(90);
 
 impl LiveSampler {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self { window: std::collections::VecDeque::with_capacity(LIVE_SAMPLE_WINDOW), last_emit: std::time::Instant::now() }
     }
 
     /// Records one chunk's arrival; returns a chunks/sec reading
     /// when the window has enough span and the throttle has elapsed.
-    fn on_token(&mut self) -> Option<f64> {
+    pub(super) fn on_token(&mut self) -> Option<f64> {
         let now = std::time::Instant::now();
         self.window.push_back(now);
         if self.window.len() > LIVE_SAMPLE_WINDOW {
@@ -323,7 +324,7 @@ impl Registry {
             connection_policy: "new HTTP client per attempt; connection setup included".into(),
             cache_policy: "unverified; distinct warmup prompt; runtime counters retained".into(),
             counter_calibration: "diagnostic: runtime token/EOS conventions and phase timer boundaries require calibration".into(), attempts: plan,
-            calibration: None,
+            calibration: None, native: None, mlx: None,
         })?;
         let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
         let mut index = 0u32;

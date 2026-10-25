@@ -66,7 +66,7 @@ function Workspace() {
     <nav aria-label="Tools" className="tool-sidebar" data-collapsed={collapsed}>
       <span className="tool-sidebar-label">Workspace</span>
       {([
-        {id: "models", sub: "installed", label: "Models", icon: LayersIcon},
+        {id: "models", sub: "installed", label: "Explore", icon: LayersIcon},
         {id: "benchmarks", label: "Benchmark", icon: ZapIcon},
         {id: "chat", label: "Try", icon: ChatIcon},
         {id: "models", sub: "compare", label: "Compare", icon: CompareIcon},

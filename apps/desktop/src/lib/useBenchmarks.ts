@@ -5,7 +5,7 @@
 // from a superseded run so a stale stream can't overwrite fresh state.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { BenchProgress, BenchRepeatsMode, BenchRun, BenchSessionSummary, CalibrationSummary, MatchQuality } from "../types";
+import type { BenchProgress, BenchRepeatsMode, BenchRun, BenchSessionSummary, CalibrationSummary, MatchQuality, BenchRuntime } from "../types";
 import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
 import { MEASUREMENTS_EVENT } from "./useMeasurements";
 import { recordUse } from "./lastUsed";
@@ -46,7 +46,7 @@ export interface ScenarioProgress {
 /** Rolling buffer length for the live-run waveform. */
 const WAVEFORM_LENGTH = 52;
 
-export function useBenchmarks(modelId: string | null) {
+export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "ollama") {
   const [groups, setGroups] = useState<MatchGroup[]>([]);
   // This model's headline scenario, fetched separately because `groups` gets
   // repointed at a cross-model ranking whenever the Leaderboard tab is open —
@@ -56,6 +56,7 @@ export function useBenchmarks(modelId: string | null) {
   const [progress, setProgress] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioProgress[]>([]);
   // Real instantaneous decode-tps readings from the backend's `sample` events
   // (token-arrival timing, not a client-side simulation) — the running
@@ -74,25 +75,25 @@ export function useBenchmarks(modelId: string | null) {
   const [version, setVersion] = useState(0);
   const runId = useRef(0);
   const active = useRef(false);
+  const loadId = useRef(0);
   const [calibrating, setCalibrating] = useState(false);
   const [calibration, setCalibration] = useState<CalibrationSummary | null>(null);
   const [calibrationProgress, setCalibrationProgress] = useState<string | null>(null);
   const [calibrationError, setCalibrationError] = useState<string | null>(null);
   const [calibrationLoading, setCalibrationLoading] = useState(false);
-
   useEffect(() => {
     let cancelled = false;
     setCalibration(current => current?.model_name === modelId ? current : null);
-    if (!modelId) { setCalibrationLoading(false); return; }
+    if (!modelId || runtime !== "ollama") { setCalibration(null); setCalibrationLoading(false); return; }
     setCalibrationLoading(true);
     invoke<CalibrationSummary | null>("latest_calibration", { model: modelId })
       .then(result => { if (!cancelled) setCalibration(result); })
       .catch(e => { if (!cancelled) setCalibrationError(`Could not load the saved check. ${String(e)}`); })
       .finally(() => { if (!cancelled) setCalibrationLoading(false); });
     return () => { cancelled = true; };
-  }, [modelId, version]);
+  }, [modelId, runtime, version]);
 
-  useEffect(() => { setCalibrationError(null); setCalibrationProgress(null); }, [modelId]);
+  useEffect(() => { setCalibrationError(null); setCalibrationProgress(null); setScenarios([]); setWaveform([]); setError(null); }, [modelId, runtime]);
 
   const calibrate = useCallback((id: string) => {
     if (active.current) return;
@@ -127,26 +128,27 @@ export function useBenchmarks(modelId: string | null) {
    *  `scenarioId` pins the comparison to one apples-to-apples shape. */
   const load = useCallback(
     async (id: string | null, suiteId?: string, scenarioId?: string, numCtx?: number) => {
+      const requestId=++loadId.current;
       try {
+        const runs=await invoke<BenchRun[]>(runtime === "mlx" ? "mlx_suite_runs" : "bench_runs_for_model", {
+          modelPath:id,referencePath:modelId,history:false,model:id,suiteId:suiteId ?? null,promptId:scenarioId ?? null,numCtx:numCtx ?? null,
+        });
+        if(requestId!==loadId.current)return;
         setGroups(
           group(
-            await invoke<BenchRun[]>("bench_runs_for_model", {
-              model: id,
-              suiteId: suiteId ?? null,
-              promptId: scenarioId ?? null,
-              numCtx: numCtx ?? null,
-            }),
+            runs,
           ),
         );
-        setError(null);
+        setLoadError(null);
       } catch (e) {
+        if(requestId!==loadId.current)return;
         // A model that isn't installed has no digest to match on — not an error
         // worth shouting about, just nothing to show.
         setGroups([]);
-        setError(String(e));
+        setLoadError(String(e));
       }
     },
-    [],
+    [runtime, modelId],
   );
 
   useEffect(() => {
@@ -155,7 +157,8 @@ export function useBenchmarks(modelId: string | null) {
       setHeadlineGroups([]);
       return;
     }
-    invoke<BenchRun[]>("bench_runs_for_model", {
+    invoke<BenchRun[]>(runtime === "mlx" ? "mlx_suite_runs" : "bench_runs_for_model", {
+      modelPath: modelId, referencePath: modelId, history: false,
       model: modelId,
       suiteId: SUITE_ID,
       promptId: HEADLINE_SCENARIO,
@@ -166,7 +169,7 @@ export function useBenchmarks(modelId: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [modelId, version]);
+  }, [modelId, runtime, version]);
 
   // History panel: chronological (`bench_history`), distinct from the
   // rank-by-speed queries above. `limit` is fetched generously (50) even
@@ -181,15 +184,15 @@ export function useBenchmarks(modelId: string | null) {
       return;
     }
     invoke<BenchSessionSummary[]>("bench_sessions", { limit: 50 })
-      .then((rows) => !cancelled && setSessions(rows.filter(s => historyScope === "all" || s.model_name === modelId)))
+      .then((rows) => !cancelled && setSessions(rows.filter(s => historyScope === "all" || (s.model_key ?? s.model_name) === modelId)))
       .catch((e) => !cancelled && setError(String(e)));
-    invoke<BenchRun[]>("bench_history", { model, limit: 50 })
+    invoke<BenchRun[]>(runtime === "mlx" ? "mlx_suite_runs" : "bench_history", { model, modelPath: model, referencePath: null, promptId: null, history: true, limit: 50 })
       .then((runs) => !cancelled && setHistory(runs))
       .catch(() => !cancelled && setHistory([]));
     return () => {
       cancelled = true;
     };
-  }, [modelId, historyScope, version]);
+  }, [modelId, runtime, historyScope, version]);
 
   /** Ends the running suite, keeping the scenarios it already measured. The
    *  backend unloads the model and emits its usual `done`, so nothing special
@@ -257,18 +260,19 @@ export function useBenchmarks(modelId: string | null) {
         }
       };
 
-      invoke("run_benchmark", { model: id, repeats, onEvent: channel }).catch((e) => {
+      invoke(runtime === "mlx" ? "run_mlx_suite" : "run_benchmark", { model: id, modelPath: id, repeats, scenario: null, onEvent: channel }).catch((e) => {
         if (runId.current !== myRun) return;
         setProgress(null);
         setRunning(false);
         setRunStartedAt(null);
+        if (runtime === "mlx") setScenarios([]);
         setError(String(e));
         setVersion((v) => v + 1);
       }).finally(() => {
         if (runId.current === myRun) { active.current = false; setRunning(false); }
       });
     },
-    [],
+    [runtime],
   );
 
   return {
@@ -276,7 +280,7 @@ export function useBenchmarks(modelId: string | null) {
     headlineGroups,
     progress,
     running,
-    error,
+    error: error ?? loadError,
     scenarios,
     waveform,
     runStartedAt,

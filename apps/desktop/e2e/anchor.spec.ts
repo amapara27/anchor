@@ -4,7 +4,7 @@ const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean} = {}) {
+async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
   await page.addInitScript(({catalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -25,7 +25,7 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
-      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
+      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
       quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:4,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
       gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
@@ -85,6 +85,25 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
           case 'bench_runs_for_model': return state.runs.filter((r:any)=>!args.model||r.model_name===args.model);
           case 'bench_history': return state.runs;
           case 'bench_sessions': return state.sessions;
+          case 'mlx_models': return [{name:'MLX Llama checkpoint',path:'/local/mlx-llama'}];
+          case 'native_mlx_report': return null;
+          case 'choose_mlx_model': return {name:'Imported Llama checkpoint',path:'/local/imported-llama'};
+          case 'mlx_suite_report': return state.nativeRuns.find((r:any)=>r.session_id===args.id);
+          case 'mlx_suite_runs': return state.mlxRows.filter((r:any)=>(!args.modelPath||r.model_path===args.modelPath)&&(!args.promptId||r.prompt_id===args.promptId));
+          case 'run_mlx_suite': {
+            state.benchStop=false;emit(args.onEvent,{kind:'status',message:'Preparing MLX with uv…'});
+            await sleep(900);
+            if(options.failNative) throw 'Could not start uv for MLX. Install uv and try again.';
+            const cancelled=state.benchStop,id='mlx-suite-'+Date.now(),outcome=cancelled?'cancelled':'completed';
+            const names=['classify','summarize','balanced','expand','creative','rag','draft','codegen','reasoning'];
+            const rows=cancelled?[]:names.map((name,i)=>({...runFor(args.modelPath),id:id+':'+name,model_path:args.modelPath,model_name:'MLX Llama checkpoint',suite_id:'anchor-mlx-scenarios',prompt_id:name,num_ctx:i===0?1024:i<5?2048:i<8?4096:8192,quant:'4-bit',ollama_version:null,resident_bytes:null,notes:'MLX-LM diagnostic phase rates'}));
+            for(const [i,row] of rows.entries()){emit(args.onEvent,{kind:'scenario_started',scenario_id:row.prompt_id,num_ctx:row.num_ctx,index:i+1,total:9});emit(args.onEvent,{kind:'scenario_done',run:row,index:i+1,total:9});}
+            state.mlxRows.push(...rows);
+            const result={session_id:id,model_name:'MLX Llama checkpoint',outcome,error:null,runtime_version:'MLX 0.32.4 / MLX-LM 0.31.3',report:{protocol_version:1,boundaries_validated:!cancelled,boundary_checks:[{name:'Live allocation',passed:true},{name:'Peak reset with live allocations',passed:true}],identity_unchanged:cancelled?null:true,load_peak_bytes:900e6,memory:cancelled?[]:[{plan_index:0,baseline_active_bytes:600e6,baseline_cache_bytes:0,peak_bytes:1e9}],rate_status:'diagnostic',comparison_eligible:false,quality:'unchecked'}};
+            state.nativeRuns.unshift(result);
+            state.sessions.unshift({id,protocol:'mlx_worker_text_v1',model_name:result.model_name,model_key:args.modelPath,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:21,recorded_attempts:cancelled?2:21,formula_version:1});
+            emit(args.onEvent,{kind:'done',runs:rows});return rows;
+          }
           case 'latest_calibration': return state.calibrations.find((r:any)=>r.model_name===args.model) ?? null;
           case 'calibration_report': return state.calibrations.find((r:any)=>r.session_id===args.id);
           case 'calibrate_model': {
@@ -134,7 +153,7 @@ async function selectModel(page: Page, label: string, name: string) {
 
 test('models → inspect → context → try → navigation preserves conversation and draft',async ({page})=>{
   await boot(page);
-  await expect(page.getByRole('navigation',{name:'Tools'}).getByRole('button',{name:'Models',exact:true})).toHaveAttribute('aria-current','page');
+  await expect(page.getByRole('navigation',{name:'Tools'}).getByRole('button',{name:'Explore',exact:true})).toHaveAttribute('aria-current','page');
   await expect(page.getByText('Select a model to see its details.')).toHaveCount(0);
   await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
   const inspector=page.getByRole('region',{name:'Model inspector'});
@@ -146,12 +165,12 @@ test('models → inspect → context → try → navigation preserves conversati
   await expect(page.getByRole('combobox',{name:'Chat model'})).toContainText(catalog[0].name);
   await page.getByRole('textbox',{name:'Message',exact:true}).fill('Explain a local model');
   await page.getByRole('button',{name:'Send message'}).click();
-  await nav(page,'Models').click();
+  await nav(page,'Explore').click();
   await expect(page.getByRole('status',{name:'Activity'})).toContainText('Trying');
   await nav(page,'Try').click();
   await expect(page.getByText('A useful local answer.',{exact:true})).toBeVisible();
   await page.getByRole('textbox',{name:'Message',exact:true}).fill('A draft worth keeping');
-  await nav(page,'Models').click();await nav(page,'Try').click();
+  await nav(page,'Explore').click();await nav(page,'Try').click();
   await expect(page.getByRole('textbox',{name:'Message',exact:true})).toHaveValue('A draft worth keeping');
   expect(await page.evaluate(()=> (window as any).__e2e.conversations.length)).toBe(1);
   expect(await page.evaluate(()=> (window as any).__e2e.presets.find((p:any)=>p.id==='trial-context-32768').num_ctx)).toBe(32768);
@@ -199,7 +218,7 @@ test('model → benchmark handoff, cancellation, completion and stored results',
   await boot(page);await page.getByRole('button',{name:'Inspect '+catalog[1].name,exact:true}).click();
   await page.getByRole('region',{name:'Model inspector'}).getByRole('button',{name:'Benchmark',exact:true}).click();
   await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(catalog[1].name);
-  await page.getByRole('button',{name:'Run suite',exact:true}).click();await nav(page,'Models').click();
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();await nav(page,'Explore').click();
   await page.getByRole('status',{name:'Activity'}).getByRole('button',{name:'Stop benchmark'}).click();
   await nav(page,'Benchmark').click();await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Run suite',exact:true}).click();
@@ -262,7 +281,7 @@ for (const [width,height,theme] of [[1440,900,'dark'],[1000,700,'light'],[800,60
       expect(await main.evaluate(el=>el.scrollWidth <= el.clientWidth)).toBe(true);
       await page.screenshot({path:'test-results/revamp-'+width+'-'+theme+'-'+name+'.png'});
     };
-    expect(await page.getByRole('navigation',{name:'Tools'}).getByRole('button').evaluateAll(buttons=>buttons.map(button=>button.getAttribute('aria-label')))).toEqual(['Models','Benchmark','Try','Compare','Storage','Settings']);
+    expect(await page.getByRole('navigation',{name:'Tools'}).getByRole('button').evaluateAll(buttons=>buttons.map(button=>button.getAttribute('aria-label')))).toEqual(['Explore','Benchmark','Try','Compare','Storage','Settings']);
     await capture('models');
     const modelRow=page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true});
     await modelRow.click();await expect(page.getByRole('region',{name:'Model inspector'})).toBeFocused();
@@ -453,7 +472,7 @@ test('GUI calibration runs, explains diagnostics, exports safely and stays in hi
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
   await expect(panel.getByRole('status')).toContainText('Checking fresh prompt');
   await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeDisabled();
-  await nav(page,'Models').click();
+  await nav(page,'Explore').click();
   await nav(page,'Benchmark').click();
   await expect(panel).toContainText('Checks recorded');
   await expect(panel).toContainText('Engine counts and rates remain diagnostic');
@@ -507,4 +526,60 @@ test('GUI calibration reports startup failure and allows retry', async ({page}) 
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
   await expect(panel.getByRole('alert')).toContainText('Ollama is not reachable');
   await expect(panel.getByRole('button',{name:'Validate measurements',exact:true})).toBeEnabled();
+});
+
+test('MLX uses the shared suite, named model picker, runtime scope and evidence export',async({page})=>{
+  await boot(page);await nav(page,'Benchmark').click();
+  await selectModel(page,'Benchmark runtime','MLX');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('MLX Llama checkpoint');
+  await expect(page.getByLabel('MLX model folder')).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Measure MLX',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('region',{name:'Native MLX',exact:true})).toHaveCount(0);
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Benchmark status'})).toContainText('Preparing MLX');
+  await expect(page.getByRole('combobox',{name:'Benchmark runtime'})).toBeDisabled();
+  await nav(page,'Explore').click();await nav(page,'Benchmark').click();
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeVisible();
+  const classify=page.getByRole('button').filter({hasText:'classify'}).filter({hasText:'768'});
+  await expect(classify).toContainText('32.0');
+  await page.getByText('Measurement checks',{exact:true}).click();
+  await expect(page.getByText('Client latency includes worker IPC and formatting.',{exact:false})).toBeVisible();
+  await page.getByText('Checks and memory windows',{exact:true}).click();
+  await expect(page.getByRole('table',{name:'MLX allocator windows'})).toContainText('0 B');
+  await page.getByText('Measurement checks',{exact:true}).click();
+  for(const [width,theme] of [[800,'dark'],[1440,'light']] as const){
+    await page.setViewportSize({width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:'test-results/mlx-shared-suite-'+width+'-'+theme+'.png'});
+  }
+  await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
+  await expect(page.getByText('MLX rate diagnostics · same tokenizer and template',{exact:true})).toBeVisible();
+  await expect(page.getByText('MLX Llama checkpoint',{exact:true}).first()).toBeVisible();
+  await selectModel(page,'Benchmark runtime','Ollama');
+  await expect(page.getByText('No results for this scenario.',{exact:true})).toBeVisible();
+  await selectModel(page,'Benchmark runtime','MLX');
+  await page.getByText('Run history',{exact:false}).first().click();
+  const evidence=page.getByRole('region',{name:'Execution evidence'});await expect(evidence).toContainText('MLX suite');
+  await evidence.getByRole('button',{name:/View checks/}).click();
+  await expect(evidence).toContainText('Timing and allocator checks passed');
+  const save=evidence.getByRole('button',{name:/Export JSON/});await expect(save).toBeDisabled();
+  await evidence.getByRole('checkbox',{name:'Include prompts and output in exports',exact:true}).check();await save.click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:fs|write_file'))).toBe(true);
+  expect(await page.evaluate(()=>(window as any).__e2e.runs.length)).toBe(0);
+});
+
+test('MLX shared-suite cancellation retains a cancelled execution',async({page})=>{
+  await boot(page);await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();await page.getByRole('region',{name:'Benchmark setup'}).getByRole('button',{name:'Stop',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeVisible();await page.getByText('Run history',{exact:false}).first().click();
+  await expect(page.getByRole('region',{name:'Execution evidence'})).toContainText('cancelled');
+});
+
+test('MLX shared-suite startup failure recovers and supports importing a checkpoint',async({page})=>{
+  await boot(page,{empty:true,failNative:true});await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();await expect(page.getByText(/Install uv and try again/)).toBeVisible();
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  await selectModel(page,'Benchmark model','Add local checkpoint…');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('Imported Llama checkpoint');
+  await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('anchor.mlx-models')??'[]'))).toContain('/local/imported-llama');
 });

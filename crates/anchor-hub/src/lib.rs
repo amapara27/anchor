@@ -173,6 +173,8 @@ pub enum Error {
     /// `{"error": "..."}` frame mid-pull for an unknown model.
     #[error("ollama error: {0}")]
     Ollama(String),
+    #[error("MLX worker: {0}")]
+    Native(String),
     /// A SQLite failure.
     #[error("registry database error: {0}")]
     Db(#[from] rusqlite::Error),

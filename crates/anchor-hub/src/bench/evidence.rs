@@ -47,6 +47,10 @@ pub struct SessionConfig {
     pub attempts: Vec<PlannedAttempt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibration: Option<super::calibration::CalibrationIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<super::mlx::NativeConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mlx: Option<super::mlx_suite::MlxConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +70,7 @@ pub struct SessionSummary {
     pub id: String,
     pub protocol: String,
     pub model_name: String,
+    pub model_key: String,
     pub hw_key: String,
     pub created_at: i64,
     pub outcome: Outcome,
@@ -117,10 +122,10 @@ pub struct Metric {
 }
 
 impl Metric {
-    fn known(value: f64) -> Self {
+    pub(crate) fn known(value: f64) -> Self {
         Self { value: Some(value), unavailable_reason: None }
     }
-    fn unknown(reason: &str) -> Self {
+    pub(crate) fn unknown(reason: &str) -> Self {
         Self { value: None, unavailable_reason: Some(reason.into()) }
     }
     fn time(at: Option<u64>, reason: &str) -> Self {
@@ -263,7 +268,8 @@ impl Registry {
         let conn = self.connect()?;
         self.bench_sessions(limit)?.into_iter().map(|s| {
             let count = conn.query_row("SELECT COUNT(*) FROM benchmark_attempts WHERE session_id=?1", [&s.id], |r| r.get(0))?;
-            Ok(SessionSummary { id: s.id, protocol: s.config.protocol, model_name: s.config.model_name, hw_key: s.config.hw.hw_key,
+            let model_key=s.config.mlx.as_ref().map(|m|m.model_path.to_string_lossy().into_owned()).unwrap_or_else(||s.config.model_name.clone());
+            Ok(SessionSummary { id: s.id, protocol: s.config.protocol, model_name: s.config.model_name, model_key, hw_key: s.config.hw.hw_key,
                 created_at: s.created_at, outcome: s.outcome, error: s.error, planned_attempts: s.config.attempts.len(),
                 recorded_attempts: count, formula_version: s.formula_version })
         }).collect()
@@ -338,7 +344,7 @@ impl Registry {
         let rows = stmt.query_map([id], |r| r.get::<_, String>(0))?;
         let attempts = rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect::<Result<Vec<Attempt>>>()?;
         let results = crate::db::bench_session_results(&conn, id)?;
-        let mut export = EvidenceExport { session, attempts, results, derived: Recalculated { attempts: Vec::new(), scenarios: Vec::new(), calibration: None } };
+        let mut export = EvidenceExport { session, attempts, results, derived: Recalculated { attempts: Vec::new(), scenarios: Vec::new(), calibration: None, native: None, mlx: None } };
         export.derived = export.recalculate()?;
         Ok(export)
     }
@@ -361,6 +367,10 @@ pub struct Recalculated {
     pub scenarios: Vec<ScenarioMetrics>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibration: Option<super::calibration::CalibrationReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<super::mlx::NativeReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mlx: Option<super::mlx_suite::MlxReport>,
 }
 
 impl EvidenceExport {
@@ -383,9 +393,17 @@ impl EvidenceExport {
                 return Err(crate::Error::Ollama("invalid attempt identity or plan index".into()));
             }
         }
-        let metrics: Vec<_> = self.attempts.iter().map(|a| recalculate(a, self.session.formula_version)).collect::<Result<_>>()?;
+        if self.session.config.protocol == super::mlx::PROTOCOL || self.session.config.native.is_some() {
+            return Ok(Recalculated { attempts:Vec::new(), scenarios:Vec::new(), calibration:None, native:Some(super::mlx::recalculate(self)?), mlx:None });
+        }
+        let is_mlx=self.session.config.protocol==super::mlx_suite::PROTOCOL || self.session.config.mlx.is_some();
+        if is_mlx && (self.session.config.protocol!=super::mlx_suite::PROTOCOL || self.session.config.mlx.as_ref().is_none_or(|m|m.protocol_version!=1)) {
+            return Err(crate::Error::Native("unsupported MLX text protocol".into()));
+        }
+        let mut metrics: Vec<_> = self.attempts.iter().map(|a| if is_mlx {super::mlx_suite::metrics(a,&self.session)} else {recalculate(a, self.session.formula_version)}).collect::<Result<_>>()?;
+        let mlx=if is_mlx {Some(super::mlx_suite::report(self,&mut metrics))}else{None};
         if let Some(calibration) = super::calibration::report(self, &metrics) {
-            return Ok(Recalculated { attempts: metrics, scenarios: Vec::new(), calibration: Some(calibration) });
+            return Ok(Recalculated { attempts: metrics, scenarios: Vec::new(), calibration: Some(calibration), native: None, mlx:None });
         }
         let mut scenarios = Vec::new();
         for plan in self.session.config.attempts.iter().filter(|p| !p.is_warmup) {
@@ -422,6 +440,6 @@ impl EvidenceExport {
                 ttft_ms_median: median(|m| m.first_output_ms.value),
             });
         }
-        Ok(Recalculated { attempts: metrics, scenarios, calibration: None })
+        Ok(Recalculated { attempts: metrics, scenarios, calibration: None, native: None, mlx })
     }
 }

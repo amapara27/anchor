@@ -22,7 +22,7 @@
 
 Anchor is a compact native macOS tool for finding, checking and testing local AI models. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, trying what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
 
-It is **not** an inference engine. Ollama does the inference; Anchor is the management layer around it. That boundary is deliberate and it shapes most of the design decisions in the codebase — if a feature would require Anchor to run weights itself, it is out of scope.
+Anchor orchestrates existing runtimes: Ollama for interactive inference and serving benchmarks, plus an optional isolated MLX-LM worker for real-text benchmarks.
 
 Anchor also owns the Ollama server lifecycle: it starts `ollama serve` on launch and shuts it down on quit, so you never need the menubar app or a terminal.
 
@@ -115,6 +115,12 @@ Evidence-backed suite-v4 results no longer duplicate raw attempts into `bench_sa
 `bench calibrate MODEL` retains a separate calibration session with unload/repeat/prefix, one-token cap, natural-stop, Unicode and (when supported) reasoning probes. On the tested local Ollama 0.34.4 llama-server path, it cross-checks the rendered prompt against matching tokenizer IDs and records binary/model hashes. Versioned reports are replayed from the stored observations. Missing capabilities remain unverified, and all engine counters/rates are explicitly diagnostic; calibration never creates ranking rows or qualifies other runs. See [the live calibration findings](docs/ollama-calibration.md) for timing/EOS limits and the exact tested scope. Other versions/backends keep token verification unavailable until their adapter is checked.
 
 In the desktop app, open **Benchmarks**, select a model and use **Measurement validation → Validate measurements** below the results. It runs 7–8 test requests to check Ollama's token counts, cache reuse and response completion, then saves a report; it does not tune the model or change benchmark results. Progress and Stop validation stay available during collection. Expand Request details for individual checks and evidence export, which requires choosing to include prompts and output. Run history labels validation sessions and provides View checks for older results.
+
+**MLX benchmarks:** open **Benchmark**, choose **Runtime → MLX**, select a named local checkpoint, then **Run suite**. Cached Hugging Face checkpoints appear automatically; **Add local checkpoint…** opens a folder picker. MLX uses the same nine workloads, Fast/Thorough repeats, live progress and Stop as Ollama. Initial support is MLX-LM Llama with a chat template and standard KVCache. This optional feature requires [uv](https://docs.astral.sh/uv/); first use creates a locked environment in Anchor's data directory. It does not download model weights or enable remote model code.
+
+Each request generates real text, ending at EOS or its output cap, with a fresh prompt cache. Actual formatted input IDs, sampled output IDs, finish reasons, monotonic client events and allocator windows are saved with the frozen plan. Measurement checks run automatically; their detailed report sits below the suite. Load and resident-inference allocator peaks remain separate and are not total Mac memory.
+
+MLX-LM phase rates remain **diagnostic** because its first-token, EOS and consumer-time conventions differ from Ollama. Client latency includes worker IPC and formatting. Results and leaderboard queries stay runtime-scoped; MLX rows also match tokenizer/template, source/runtime, workload and context. They are descriptive observations, not qualified cross-runtime comparisons. Existing session/attempt tables provide replayed results without duplicate sample writes. Run history preserves failed/cancelled work and older synthetic validation reports; exports require explicit content consent. See [MLX measurements](docs/mlx-measurements.md) for tested scope and limits.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
@@ -239,6 +245,8 @@ pnpm --filter @anchor/desktop test:e2e:measurements # headless HTTP/SQLite measu
 
 E2E tests require macOS, Rust, pnpm and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). They run the real interface and native IPC against an isolated Ollama HTTP fixture and temporary database; they do not download model weights or touch your installed models.
 
+Opt-in MLX E2E reads a local checkpoint on an Apple GPU: set `ANCHOR_MLX_E2E_MODEL` to its directory and run `cargo test -p anchor-hub --test mlx_suite_e2e -- --ignored --nocapture`. With the same variable, `pnpm --filter @anchor/desktop test:e2e:native` also checks the real GUI → uv worker → GPU → SQLite path and Stop. Real-text suite artifacts stay in `.internal/benchmarking/mlx-suite-validation/`; the separate legacy synthetic harness is exercised with `--test mlx_e2e` and retains artifacts in `.internal/benchmarking/mlx-validation/`; normal tests remain model-free. Worker dependencies live in `workers/mlx/{pyproject.toml,uv.lock}`; `requirements.txt` is the generated hash-pinned export. Regenerate it with `uv export --project workers/mlx --frozen --no-dev --no-emit-project --output-file workers/mlx/requirements.txt` after changing the lock.
+
 Conventions worth knowing before contributing:
 
 - Domain logic goes in `crates/*`, never in `src-tauri` or `anchor-cli`. Both front-ends delegate.
@@ -250,7 +258,7 @@ Conventions worth knowing before contributing:
 ## Currently supported
 
 - **macOS**, Apple Silicon as the primary target. Intel Macs build and run but are untested.
-- **[Ollama](https://ollama.com)** as the only backing inference engine — Anchor manages it, doesn't replace it.
+- **[Ollama](https://ollama.com)** for interactive inference and serving benchmarks; optional **MLX-LM Llama** real-text benchmarks on Apple Silicon, with runtime-scoped results.
 - **Desktop app and CLI**, sharing one database, released separately: `v*` tags for the app, `cli-v*` for the CLI.
 
 ## In the pipeline

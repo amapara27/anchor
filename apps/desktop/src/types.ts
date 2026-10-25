@@ -551,6 +551,8 @@ export interface BenchRun {
 
 /** Repeats tradeoff: `fast` runs the long-generation scenarios once, `thorough` runs everything three times. */
 export type BenchRepeatsMode = "thorough" | "fast";
+export type BenchRuntime = "ollama" | "mlx";
+export interface MlxModel {name: string; path: string;}
 
 /** Streamed progress from a running benchmark (`anchor_hub::BenchProgress`). */
 export type BenchProgress =
@@ -589,6 +591,7 @@ export interface BenchSessionSummary {
   protocol?: string;
   id: string;
   model_name: string;
+  model_key?: string;
   hw_key: string;
   created_at: number;
   outcome: "running" | "completed" | "failed" | "cancelled" | "timed_out" | "invalid";
@@ -625,5 +628,63 @@ export interface CalibrationSummary {
       reasoning_tokens: number | null;
       output_count: string;
     }[];
+  };
+}
+
+export interface NativeMlxSummary {
+  session_id: string;
+  model_name: string;
+  created_at: number;
+  outcome: BenchSessionSummary["outcome"];
+  error: string | null;
+  runtime_version: string | null;
+  report: {
+    protocol_version: number;
+    prompt_tokens: number;
+    decode_steps: number;
+    planned_repeats: number;
+    completed_repeats: number;
+    boundary_checks: {name: string; passed: boolean}[];
+    boundaries_validated: boolean;
+    comparison_eligible: boolean;
+    comparability: string;
+    quality: string;
+    memory_scope: string;
+    attempts: {
+      plan_index: number;
+      kind: string;
+      is_warmup: boolean;
+      outcome: BenchSessionSummary["outcome"];
+      prompt_ns: number | null;
+      decode_ns: number | null;
+      load_ns: number | null;
+      prompt_tps: number | null;
+      decode_steps_per_second: number | null;
+      baseline_active_bytes: number | null;
+      baseline_cache_bytes: number | null;
+      peak_bytes: number | null;
+      end_active_bytes: number | null;
+      end_cache_bytes: number | null;
+      errors: string[];
+    }[];
+  };
+}
+
+export interface MlxSuiteSummary {
+  session_id: string;
+  model_name: string;
+  runtime_version: string | null;
+  outcome: BenchSessionSummary["outcome"];
+  error: string | null;
+  report: {
+    protocol_version: number;
+    boundary_checks: {name: string; passed: boolean}[];
+    boundaries_validated: boolean;
+    identity_unchanged: boolean | null;
+    load_peak_bytes: number | null;
+    memory: {plan_index: number; baseline_active_bytes: number | null; baseline_cache_bytes: number | null; peak_bytes: number | null}[];
+    rate_status: string;
+    comparison_eligible: boolean;
+    quality: string;
   };
 }

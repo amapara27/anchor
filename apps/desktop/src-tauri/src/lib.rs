@@ -815,6 +815,134 @@ fn calibration_report(app: AppHandle, id: String) -> Result<anchor_hub::bench::c
     registry(&app)?.calibration_summary(&id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn mlx_models(
+    paths: Option<Vec<std::path::PathBuf>>,
+) -> Result<Vec<anchor_hub::bench::mlx::NativeModel>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut models = anchor_hub::bench::mlx::cached_models();
+        for path in paths.unwrap_or_default().into_iter().take(20) {
+            if let Ok(model) = anchor_hub::bench::mlx::local_model(&path) {
+                if !models.iter().any(|m| m.path == model.path) {
+                    models.push(model);
+                }
+            }
+        }
+        models
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn choose_mlx_model(
+    app: AppHandle,
+) -> Result<Option<anchor_hub::bench::mlx::NativeModel>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Choose a local MLX Llama checkpoint")
+        .pick_folder(move |path| {
+            let _ = tx.send(path);
+        });
+    let Some(path) = rx.await.map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        anchor_hub::bench::mlx::local_model(&path)
+            .map(Some)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn run_mlx_suite(
+    app: AppHandle,
+    model_path: std::path::PathBuf,
+    repeats: BenchRepeatsMode,
+    scenario: Option<String>,
+    on_event: Channel<BenchProgress>,
+) -> Result<Vec<BenchRun>, String> {
+    let state = app.state::<ServerState>();
+    state.bench_cancel.store(false, Ordering::Relaxed);
+    let _run = state.compare_lock.lock().await;
+    if state.bench_cancel.load(Ordering::Relaxed) {
+        let _ = on_event.send(BenchProgress::Done { runs: Vec::new() });
+        return Ok(Vec::new());
+    }
+    // Blocking subprocess reads stay off the async/webview threads.
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let registry = registry(&worker_app)?;
+        let root = data_dir(&worker_app)
+            .map_err(|e| e.to_string())?
+            .join("mlx-worker");
+        registry
+            .run_mlx_suite(
+                &model_path,
+                &root,
+                &hw_identity(&worker_app)?,
+                &install_id(&worker_app)?,
+                repeats.into(),
+                scenario.as_deref(),
+                &worker_app.state::<ServerState>().bench_cancel,
+                |event| {
+                    let _ = on_event.send(event);
+                },
+            )
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn native_mlx_report(
+    app: AppHandle,
+    id: String,
+) -> Result<anchor_hub::bench::mlx::NativeSummary, String> {
+    registry(&app)?
+        .native_mlx_summary(&id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn mlx_suite_report(
+    app: AppHandle,
+    id: String,
+) -> Result<anchor_hub::bench::mlx_suite::MlxSummary, String> {
+    registry(&app)?
+        .mlx_suite_summary(&id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mlx_suite_runs(
+    app: AppHandle,
+    model_path: Option<std::path::PathBuf>,
+    reference_path: Option<std::path::PathBuf>,
+    prompt_id: Option<String>,
+    history: bool,
+) -> Result<Vec<BenchRun>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        registry(&app)?
+            .mlx_suite_runs(
+                &hw_identity(&app)?,
+                model_path.as_deref(),
+                reference_path.as_deref(),
+                prompt_id.as_deref(),
+                history,
+            )
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Benchmark results from machines resembling this one, best match first.
 /// Each row carries the tier it matched at so the UI can group them.
 ///
@@ -982,6 +1110,12 @@ pub fn run() {
             calibrate_model,
             latest_calibration,
             calibration_report,
+            mlx_models,
+            choose_mlx_model,
+            run_mlx_suite,
+            native_mlx_report,
+            mlx_suite_report,
+            mlx_suite_runs,
             restart_app,
             bench_runs_for_model,
             bench_history,

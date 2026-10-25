@@ -186,6 +186,7 @@ export interface BenchmarkCardData {
   memoryGb: number | null;
   osVersion: string | null;
   ollamaVersion: string | null;
+  runtimeName?: string;
   /** Headline number — always the headline scenario's decode tok/s. */
   decodeTps: number;
   ttftMs: number | null;
@@ -326,7 +327,7 @@ function buildBenchmarkCard(d: BenchmarkCardData): HTMLElement {
     specRow("Quant", [d.quant, d.paramSize].filter(Boolean).join(" · ") || "—"),
     specRow("Machine", [d.chip, d.cpuCores != null && `${d.cpuCores}-core`].filter(Boolean).join(" · ")),
     specRow("Memory", d.memoryGb != null ? `${d.memoryGb.toFixed(0)} GiB unified` : "—"),
-    specRow("OS · Runtime", [d.osVersion && `macOS ${d.osVersion}`, d.ollamaVersion && `Ollama ${d.ollamaVersion}`].filter(Boolean).join(" · ") || "—", true),
+    specRow("OS · Runtime", [d.osVersion && `macOS ${d.osVersion}`, d.runtimeName ?? (d.ollamaVersion && `Ollama ${d.ollamaVersion}`)].filter(Boolean).join(" · ") || "—", true),
   );
 
   bottom.append(decodeCol, specCol);

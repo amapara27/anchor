@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel } from "../types";
+import type { BenchRepeatsMode, BenchRun, BenchRuntime, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel, NativeMlxSummary, MlxModel, MlxSuiteSummary } from "../types";
 import { invoke } from "@tauri-apps/api/core";
 import { exportEvidence } from "../lib/exportEvidence";
 import { CalibrationPanel, CalibrationResults } from "./CalibrationPanel";
+import { NativeMlxResults, MlxSuiteChecks } from "./MlxMeasurementChecks";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
@@ -12,6 +13,7 @@ import { savePng } from "../lib/savePng";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Meta, PageHeader, GhostButton, PrimaryButton } from "./PageHeader";
 import { ModelSelect } from "./ui/ModelSelect";
+import { Select } from "./ui/Select";
 import { Tabs } from "./ui/Tabs";
 import { Meter } from "./ui/SegmentedBar";
 import { ScenarioTable, type ScenarioRow } from "./ui/ScenarioTable";
@@ -105,13 +107,27 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
   const { profile } = useHardwareProfile();
   const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
   const [selected, setSelected] = useState<string | null>(null);
-  useEffect(() => { if(openModel) setSelected(openModel.id); }, [openModel]);
+  const [runtime, setRuntime] = useState<BenchRuntime>("ollama");
+  const [mlxModels, setMlxModels] = useState<MlxModel[]>([]);
+  const [selectedMlx, setSelectedMlx] = useState<string | null>(null);
+  const [mlxModelError, setMlxModelError] = useState<string | null>(null);
+  const [mlxChecks, setMlxChecks] = useState<MlxSuiteSummary | null>(null);
+  useEffect(() => {let cancelled=false;let paths:unknown=[];try{paths=JSON.parse(localStorage.getItem("anchor.mlx-models")??"[]");}catch{}
+    invoke<MlxModel[]>("mlx_models",{paths:Array.isArray(paths)?paths.filter((p):p is string=>typeof p==="string").slice(0,20):[]}).then(m=>{if(!cancelled)setMlxModels(m);}).catch(e=>{if(!cancelled)setMlxModelError(String(e));});return()=>{cancelled=true;};},[]);
+  const chooseMlx=async (id:string)=>{
+    if(id!=="__add_mlx__"){setSelectedMlx(id);setMlxModelError(null);return;}
+    setMlxModelError(null);
+    try{const model=await invoke<MlxModel|null>("choose_mlx_model");if(model){setMlxModels(models=>{const next=models.filter(m=>m.path!==model.path).concat(model);localStorage.setItem("anchor.mlx-models",JSON.stringify(next.map(m=>m.path).slice(-20)));return next;});setSelectedMlx(model.path);}}
+    catch(e){setMlxModelError(String(e));}
+  };
+  useEffect(() => { if(openModel) {setSelected(openModel.id);setRuntime("ollama");} }, [openModel]);
   const [tab, setTab] = useState<BenchTab>("suite");
   const [repeatsMode, setRepeatsMode] = useState<BenchRepeatsMode>("fast");
   const [scenarioFilter, setScenarioFilter] = useState(HEADLINE_SCENARIO);
   const [shareCard, setShareCard] = useState<{ data: BenchmarkCardData; url: string } | null>(null);
 
-  const modelId = selected ?? installed[0]?.id ?? null;
+  const modelId = runtime === "mlx" ? selectedMlx ?? mlxModels[0]?.path ?? null : selected ?? installed[0]?.id ?? null;
+  const suiteId=runtime === "mlx" ? "anchor-mlx-scenarios" : SUITE_ID;
   const {
     groups,
     headlineGroups,
@@ -131,8 +147,10 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     stop,
     load,
     calibrating, calibration, calibrationProgress, calibrationError, calibrationLoading, calibrate,
-  } = useBenchmarks(modelId);
+  } = useBenchmarks(modelId,runtime);
   useEffect(() => { onBusy?.(running || calibrating); }, [running, calibrating, onBusy]);
+  const mlxSession=sessions.find(s=>s.protocol==="mlx_worker_text_v1" && (s.model_key ?? s.model_name)===modelId);
+  useEffect(()=>{let cancelled=false;setMlxChecks(null);if(runtime==="mlx" && mlxSession)invoke<MlxSuiteSummary>("mlx_suite_report",{id:mlxSession.id}).then(r=>{if(!cancelled)setMlxChecks(r);}).catch(e=>{if(!cancelled)setMlxModelError(String(e));});return()=>{cancelled=true;};},[runtime,mlxSession?.id]);
 
   // `groups` is driven entirely by which view is on screen: the Suite tab is
   // about one model's nine scenarios, while the Leaderboard ranks every model
@@ -140,11 +158,11 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
   // like for like.
   useEffect(() => {
     if (tab === "suite") {
-      if (modelId) void load(modelId, SUITE_ID);
+      if (modelId) void load(modelId, suiteId);
     } else if (tab === "leaderboard") {
-      void load(null, SUITE_ID, scenarioFilter);
+      void load(null, suiteId, scenarioFilter);
     }
-  }, [modelId, tab, scenarioFilter, version, load]);
+  }, [modelId, tab, scenarioFilter, version, load, suiteId]);
 
   // Elapsed-time clock for the live-run card. Ticks locally rather than
   // threading a timestamp through every backend event.
@@ -210,9 +228,10 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       memoryGb: useProfile && profile.memory_bytes != null ? profile.memory_bytes / 1024 ** 3 : (r.hw.memory_gb ?? null),
       osVersion: useProfile ? (profile.os_version ?? r.hw.os_version) : r.hw.os_version,
       ollamaVersion: r.ollama_version,
+      runtimeName: r.suite_id === "anchor-mlx-scenarios" ? "MLX · diagnostic rates" : undefined,
       decodeTps: r.decode_tps_median ?? 0,
       ttftMs: r.ttft_ms_median,
-      suiteLabel: `${r.suite_id} v${r.suite_version} · median of ${r.repeats} run${r.repeats === 1 ? "" : "s"}`,
+      suiteLabel: `${r.suite_id === "anchor-mlx-scenarios" ? "MLX diagnostics" : r.suite_id} v${r.suite_version} · median of ${r.repeats} run${r.repeats === 1 ? "" : "s"}`,
       dateLabel: new Date(r.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
       rank: rank > 0 ? rank : null,
       totalOnMachine: ranked ? ranked.length : null,
@@ -237,10 +256,15 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       />
 
       {error && <p className="text-sm text-danger">{error}</p>}
+      {runtime === "mlx" && mlxModelError && <p className="text-sm text-danger">{mlxModelError}</p>}
 
       <div className="flex flex-col gap-4">
         <RunSetupCard
           modelId={modelId}
+          runtime={runtime}
+          setRuntime={setRuntime}
+          mlxModels={mlxModels}
+          setSelectedMlx={id=>void chooseMlx(id)}
           setSelected={setSelected}
           installed={installed}
           profile={profile}
@@ -272,12 +296,13 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
             { key: "leaderboard", label: "Leaderboard" },
           ]}
         />
+        {runtime === "mlx" && <span className="text-[11px] text-fg-muted">MLX-LM phase rates · diagnostic</span>}
       </div>
 
       {tab === "suite" && (
         <section className="flex flex-col gap-3">
           {!modelId ? (
-            <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">Install a model to benchmark it.</p>
+            <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">{runtime === "mlx" ? "Choose a compatible local MLX Llama checkpoint to run the suite." : "Install a model to benchmark it."}</p>
           ) : (
             <ScenarioTable
               rows={scenarioRows}
@@ -300,6 +325,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
               </select>
             </label>
             {activeScenario && <span aria-label="Scenario token counts" className="data text-[11px] text-fg-muted">{activeScenario.promptTokens} in / {activeScenario.genTokens} out · {numCtxFor(activeScenario)/1024}K context</span>}
+            {runtime === "mlx" && <span className="text-[11px] text-fg-muted">MLX rate diagnostics · same tokenizer and template</span>}
           </div>
           {groups.length === 0 ? (
             <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">
@@ -314,9 +340,14 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         </div>
       )}
 
-      <CalibrationPanel modelId={modelId} result={calibration} running={calibrating} busy={running}
+      {runtime === "ollama" && <CalibrationPanel modelId={modelId} result={calibration} running={calibrating} busy={running}
         loading={calibrationLoading} progress={calibrationProgress} error={calibrationError}
-        onRun={() => modelId && calibrate(modelId)} onStop={stop} />
+        onRun={() => modelId && calibrate(modelId)} onStop={stop} />}
+
+      {runtime === "mlx" && <details className="group border-t border-hair pt-4">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Measurement checks</summary>
+        <div className="mt-3">{mlxChecks ? <MlxSuiteChecks result={mlxChecks} /> : <p className="text-xs text-fg-muted">Checks run automatically with the MLX suite. Real text generation uses the same nine workloads and output caps.</p>}</div>
+      </details>}
 
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Method</summary>
@@ -324,6 +355,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
           <li>Nine workloads, medians after warmup. Thorough: three repeats. Fast: long generations run once.</li>
           <li>TTFT: request to first output. Prefill needs cache counts. Engine rates are diagnostic; the live chart counts chunks.</li>
           <li>All attempts saved. Rankings match method, workload and context. Thermal readings are snapshots; KV cache and Flash Attention settings are unreported.</li>
+          {runtime === "mlx" && <li>MLX runs real text with a fresh cache. Phase rates retain MLX-LM’s first-token/EOS conventions as diagnostics. Leaderboard rows share the selected checkpoint’s tokenizer/template; quality equivalence and cross-runtime rankings are unchecked.</li>}
         </ul>
       </details>
       <details className="group border-t border-hair pt-4">
@@ -343,8 +375,24 @@ function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
   const [exporting, setExporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewed, setViewed] = useState<CalibrationSummary | null>(null);
+  const [nativeViewed, setNativeViewed] = useState<NativeMlxSummary | null>(null);
+  const [mlxViewed, setMlxViewed] = useState<MlxSuiteSummary | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const view = async (id: string) => {
+    if (sessions.find(s=>s.id===id)?.protocol === "mlx_worker_text_v1") {
+      if(mlxViewed?.session_id===id){setMlxViewed(null);return;}
+      setLoading(id);setError(null);
+      try{setMlxViewed(await invoke<MlxSuiteSummary>("mlx_suite_report",{id}));}catch(e){setError(String(e));}finally{setLoading(null);}
+      return;
+    }
+    if (sessions.find(s => s.id === id)?.protocol === "mlx_native_compute_v1") {
+      if (nativeViewed?.session_id === id) {setNativeViewed(null); return;}
+      setLoading(id); setError(null);
+      try {setNativeViewed(await invoke<NativeMlxSummary>("native_mlx_report", {id}));}
+      catch(e) {setError(String(e));}
+      finally {setLoading(null);}
+      return;
+    }
     if (viewed?.session_id === id) { setViewed(null); return; }
     setLoading(id); setError(null);
     try { setViewed(await invoke<CalibrationSummary>("calibration_report", { id })); }
@@ -361,6 +409,7 @@ function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
   };
   return <section aria-label="Execution evidence" className="mt-4 flex flex-col gap-3">
     <h3 className="text-sm font-medium">Execution evidence</h3>
+    {sessions.some(s=>s.protocol?.startsWith("mlx_")) && <p className="text-xs text-fg-muted">Full MLX exports include model paths, token IDs and generated text.</p>}
     <label className="flex items-center gap-2 text-xs text-fg-muted">
       <input type="checkbox" checked={includeContent} onChange={e => setIncludeContent(e.target.checked)} />
       Include prompts and output in exports
@@ -369,16 +418,20 @@ function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
     {sessions.length === 0 ? <p className="text-xs text-fg-muted">No recorded sessions. Earlier results have no raw event trace.</p> : sessions.map(s =>
       <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-hair py-2">
         <div className="min-w-0 flex-1">
-          <p className="text-xs"><span className="data break-all">{s.model_name}</span> · {s.protocol === "ollama_calibration_serving_v1" ? "validation · " : ""}{s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts</p>
+          <p className="text-xs"><span className="data break-all">{s.model_name}</span> · {s.protocol === "mlx_worker_text_v1" ? "MLX suite · " : s.protocol === "mlx_native_compute_v1" ? "native validation · " : s.protocol === "ollama_calibration_serving_v1" ? "validation · " : ""}{s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts</p>
           <p className="data mt-1 break-all text-[11px] text-fg-muted">{s.id} · {formatRelativeTime(s.created_at)} · formula {s.formula_version}</p>
           {s.error && <p className="mt-1 break-words text-xs text-danger">{s.error}</p>}
         </div>
         {s.protocol === "ollama_calibration_serving_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={() => void view(s.id)}>{loading === s.id ? "Loading…" : viewed?.session_id === s.id ? "Hide checks" : "View checks"}<span className="sr-only"> {s.id}</span></GhostButton>}
+        {s.protocol === "mlx_native_compute_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={() => void view(s.id)}>{loading === s.id ? "Loading…" : nativeViewed?.session_id === s.id ? "Hide MLX result" : "View MLX result"}<span className="sr-only"> {s.id}</span></GhostButton>}
+        {s.protocol === "mlx_worker_text_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={()=>void view(s.id)}>{loading===s.id ? "Loading…" : mlxViewed?.session_id===s.id ? "Hide checks" : "View checks"}<span className="sr-only"> {s.id}</span></GhostButton>}
         <GhostButton className="h-7 text-xs" disabled={!includeContent || exporting != null} title={`Export evidence ${s.id}`} onClick={() => void exportSession(s.id)}>
           {exporting === s.id ? "Exporting…" : "Export JSON"}
           <span className="sr-only"> {s.id}</span>
         </GhostButton>
         {viewed?.session_id === s.id && <div className="w-full py-2"><CalibrationResults result={viewed} initiallyExpanded /></div>}
+        {nativeViewed?.session_id === s.id && <div className="w-full py-2"><NativeMlxResults result={nativeViewed} /></div>}
+        {mlxViewed?.session_id === s.id && <div className="w-full py-2"><MlxSuiteChecks result={mlxViewed} /></div>}
       </div>)}
   </section>;
 }
@@ -415,6 +468,7 @@ function SegToggle<T extends string>({
  *  benchmark, in one place near the top instead of split across the header
  *  and a tab. */
 function RunSetupCard({
+  runtime, setRuntime, mlxModels, setSelectedMlx,
   modelId,
   setSelected,
   installed,
@@ -426,6 +480,10 @@ function RunSetupCard({
   onRun,
   onStop,
 }: {
+  runtime: BenchRuntime;
+  setRuntime: (runtime: BenchRuntime)=>void;
+  mlxModels: MlxModel[];
+  setSelectedMlx: (path: string)=>void;
   modelId: string | null;
   setSelected: (id: string) => void;
   installed: LibraryModel[];
@@ -438,10 +496,11 @@ function RunSetupCard({
   onStop: () => void;
 }) {
   return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-x-4 gap-y-3">
+    <Select<BenchRuntime> label="Runtime" ariaLabel="Benchmark runtime" value={runtime} onChange={setRuntime} options={[{value:"ollama",label:"Ollama"},{value:"mlx",label:"MLX"}]} disabled={running || calibrating} className="w-[130px]" />
     <div className="min-w-[220px] max-w-[460px] flex-1">
-      <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
+      {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={modelId ?? ""} onChange={setSelectedMlx} options={mlxModels.map(m=>({value:m.path,label:m.name.replace(/^.*\//,"").replaceAll("-"," ")})).concat({value:"__add_mlx__",label:"Add local checkpoint…"})} disabled={running || calibrating} placeholder="Choose a local MLX checkpoint" /> : <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
         disabled={installed.length === 0 || running || calibrating} variant="field" ariaLabel="Benchmark model"
-        placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />
+        placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />}
     </div>
     <div title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
       <span className="mb-1.5 block text-xs text-fg-muted">Rigor</span>
@@ -677,7 +736,7 @@ function ShareCardModal({
   // One predictable name the save dialog pre-fills, rather than a timestamped
   // one nobody can guess at; the dialog is where a different name is chosen.
   const filename = "anchor_benchmark.png";
-  const tweetText = `${data.modelName} runs at ${data.decodeTps.toFixed(1)} tok/s on ${data.chip} — benchmarked locally with Anchor.`;
+  const tweetText = `${data.modelName} ${data.runtimeName ? `MLX-LM diagnostic rate: ${data.decodeTps.toFixed(1)} tok/s` : `runs at ${data.decodeTps.toFixed(1)} tok/s`} on ${data.chip} — benchmarked locally with Anchor.`;
   const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
 
   return (
