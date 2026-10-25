@@ -1,5 +1,7 @@
 # Ollama calibration — 2026-10-24
 
+For the current metric definitions and support matrix, read the [benchmark methodology](benchmark-methodology.md). This report preserves the original formula-1 observations and subsequent formula-2 follow-up; historical raw rates are not current headline calculations.
+
 Live validation of the installed Ollama **0.34.4**, using the production Rust `/api/generate` collector, SQLite evidence storage and CLI replay. This checks the serving adapter and a fixed probe set; it does not establish native compute equivalence, statistical uncertainty, answer quality or instrumentation overhead.
 
 ## Scope and provenance
@@ -29,7 +31,7 @@ The source reference is Ollama release commit [`b2da9e468af2479058ae18c6d908ed29
 
 The pinned backend source explains the one-token result: sampling the first token ends prompt processing, the generation timer starts at that boundary, and generation duration is clamped to at least 1 microsecond. The generation count includes that first token. See [`server-context.cpp`](https://github.com/ggml-org/llama.cpp/blob/161755f29/tools/server/server-context.cpp) around `stats.n_gen += 1` / `update_prompt_last`, and [`server-common.h`](https://github.com/ggml-org/llama.cpp/blob/161755f29/tools/server/server-common.h) around `t_gen_us` / `n_gen_steps`. Ollama maps those fields into native counters in its pinned [`llm/llama_server.go`](https://github.com/ollama/ollama/blob/b2da9e468af2479058ae18c6d908ed29de410684/llm/llama_server.go).
 
-Keep the original formulas and raw counters as diagnostics. Do not silently subtract one token, relabel prompt time as isolated prefill, or substitute server durations for client latency. A synchronized native timing/token trace would be required to qualify a normalized compute rate.
+Keep original formulas and raw counters available for formula-1 replay. Formula 2 explicitly versions the supported post-first calculation described below. Prompt time is not isolated prefill, and server durations do not substitute for client latency. A synchronized native timing/token trace would be required to qualify isolated compute rates.
 
 ## Retained evidence and reproducibility
 
@@ -57,7 +59,7 @@ Remaining diagnostic/unverified areas: `/api/chat`, other runtime versions/backe
 
 The GUI validation now includes short generation (cap 128), long generation (cap 512) and long input (cap 128), each after an observed unload, in addition to the original probes. All started attempts and original counters remain in the same evidence tables; no ranking rows are created. The report exposes both phase rates explicitly as diagnostics. Older evidence lacks these additional planned probes and remains readable.
 
-The follow-up checks raw arithmetic, token/cap semantics and observed timing windows across ordinary generation lengths. It does not supply an independent synchronized native timing trace. Rate sorting and share cards therefore remain explicitly diagnostic, with no winner badge. See [the retained rate study](phase-rate-calibration.md).
+The follow-up checks raw arithmetic, token/cap semantics and observed timing windows across ordinary generation lengths. It does not supply an independent synchronized native timing trace. Current formula-2 cards identify post-first decode and runtime-specific timing, disclose unchecked quality equivalence and omit winner badges. See [the retained rate study](phase-rate-calibration.md).
 
 ## Post-first decode correction — formula 2
 

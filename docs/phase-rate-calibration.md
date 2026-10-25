@@ -1,5 +1,7 @@
 # Phase-rate evidence and diagnostic rankings
 
+The [benchmark methodology](benchmark-methodology.md) is the current reader-facing reference for workloads, metrics and runtime support. This report preserves the earlier raw-counter study alongside the versioned correction.
+
 Recorded 2026-10-25 on this Mac. **Raw runtime phase rates remain preserved; the current headline uses formula-2 post-first-token decode, with TTFT separate.** The earlier observational study below explains the original counter issue. Independent GPU-only timing and comparison qualification remain unavailable. This study does not qualify a winner, answer-quality equivalence, instrumentation overhead or a confidence interval.
 
 ## Current calculation: formula 2 / method v5
@@ -66,6 +68,6 @@ The separate `tools/calibrate-ollama.mjs` check passed both new Ollama exports a
 
 ## Result claims
 
-The GUI keeps Suite and Leaderboard, with source-labeled “runtime-reported rates” for both runtimes. The prominent diagnostic banner is removed at the user’s request; technical diagnostic status and timing/quality limits remain in Method and measurement details. Leaderboard order describes reported decode rate. Suite bars say “relative reported rate,” not “fastest.” Shared benchmark PNGs and post text say diagnostic decode rate, disclose unverified timing/quality and omit “#1 on this Mac” badges.
+The GUI keeps Suite and Leaderboard, with source-labeled post-first-token decode for current results. Technical raw-counter status and timing/quality limits remain in Method and measurement details. Leaderboard order describes reported decode rate. Suite bars say “relative reported rate,” not “fastest.” Current shared benchmark PNGs and post text identify post-first decode and runtime-specific timing, disclose unchecked quality equivalence and omit rank badges. Legacy cards identify legacy reported decode.
 
 Future promotion requires independently synchronized phase timing and compatible token/EOS accounting on the specific runtime/build/model/configuration, plus an overhead check. A validated performance comparison additionally needs quality equivalence, controlled comparison design and adequate uncertainty evidence. Those gates remain unmet. Passing the present observations must not automatically upgrade historical or future sessions.
