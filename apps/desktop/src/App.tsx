@@ -67,10 +67,10 @@ function Workspace() {
       <span className="tool-sidebar-label">Workspace</span>
       {([
         {id: "models", sub: "installed", label: "Models", icon: LayersIcon},
+        {id: "benchmarks", label: "Benchmark", icon: ZapIcon},
         {id: "chat", label: "Try", icon: ChatIcon},
         {id: "models", sub: "compare", label: "Compare", icon: CompareIcon},
-        {id: "benchmarks", label: "Benchmarks", icon: ZapIcon},
-        {id: "storage", label: "Manage storage", icon: StorageIcon},
+        {id: "storage", label: "Storage", icon: StorageIcon},
         {id: "settings", label: "Settings", icon: SettingsIcon},
       ] as const).map(item => {
         const sub = "sub" in item ? item.sub : undefined;

@@ -197,11 +197,11 @@ test('comparison survives navigation and can be stopped elsewhere',async({page})
 
 test('model → benchmark handoff, cancellation, completion and stored results',async({page})=>{
   await boot(page);await page.getByRole('button',{name:'Inspect '+catalog[1].name,exact:true}).click();
-  await page.getByRole('button',{name:'Benchmark',exact:true}).click();
+  await page.getByRole('region',{name:'Model inspector'}).getByRole('button',{name:'Benchmark',exact:true}).click();
   await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(catalog[1].name);
   await page.getByRole('button',{name:'Run suite',exact:true}).click();await nav(page,'Models').click();
   await page.getByRole('status',{name:'Activity'}).getByRole('button',{name:'Stop benchmark'}).click();
-  await nav(page,'Benchmarks').click();await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeVisible();
+  await nav(page,'Benchmark').click();await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Run suite',exact:true}).click();
   await expect(page.getByText('32.0',{exact:true}).first()).toBeVisible();
   await expect(page.getByRole('tab',{name:'Community',exact:true})).toHaveCount(0);
@@ -262,6 +262,7 @@ for (const [width,height,theme] of [[1440,900,'dark'],[1000,700,'light'],[800,60
       expect(await main.evaluate(el=>el.scrollWidth <= el.clientWidth)).toBe(true);
       await page.screenshot({path:'test-results/revamp-'+width+'-'+theme+'-'+name+'.png'});
     };
+    expect(await page.getByRole('navigation',{name:'Tools'}).getByRole('button').evaluateAll(buttons=>buttons.map(button=>button.getAttribute('aria-label')))).toEqual(['Models','Benchmark','Try','Compare','Storage','Settings']);
     await capture('models');
     const modelRow=page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true});
     await modelRow.click();await expect(page.getByRole('region',{name:'Model inspector'})).toBeFocused();
@@ -274,12 +275,12 @@ for (const [width,height,theme] of [[1440,900,'dark'],[1000,700,'light'],[800,60
     await expect(page.getByRole('heading',{name:'Settings',exact:true})).toBeVisible();
     await toggle.click();
     await capture('settings');
-    await nav(page,'Manage storage').click();
+    await nav(page,'Storage').click();
     const checkbox=page.getByRole('checkbox',{name:'Select '+catalog[0].name});
     await checkbox.focus();await page.keyboard.press('Space');
     await expect(checkbox).toBeChecked();
     await capture('storage');
-    await nav(page,'Benchmarks').click();await expect(page.getByRole('region',{name:'Benchmark status'})).toHaveCount(0);await capture('benchmarks');
+    await nav(page,'Benchmark').click();await expect(page.getByRole('region',{name:'Benchmark status'})).toHaveCount(0);await capture('benchmarks');
     await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
     const scenario=page.getByRole('combobox',{name:'Leaderboard scenario'});
     await expect(scenario.locator('option')).toHaveCount(9);
@@ -344,7 +345,7 @@ test('comparison shows observed TTFT and benchmark distinguishes chunk rate from
   await expect(page.getByText('TTFT',{exact:true})).toHaveCount(2);
   await expect(page.getByText('21.0 tok/s',{exact:true}).first()).toBeVisible();
   await expect(page.getByText('Load + prompt',{exact:true})).toHaveCount(0);
-  await nav(page,'Benchmarks').click();
+  await nav(page,'Benchmark').click();
   await selectModel(page,'Benchmark model',catalog[0].name);
   await page.getByRole('button',{name:'Run suite',exact:true}).click();
   await expect(page.getByRole('region',{name:'Benchmark status'})).toContainText('12.0 chunks/s');
@@ -417,7 +418,7 @@ test('global fit context, per-quant table, quick measure, version flags and copy
 
 test('execution evidence retains cancelled sessions and exports JSON with explicit content consent', async ({page}) => {
   await boot(page);
-  await nav(page, 'Benchmarks').click();
+  await nav(page, 'Benchmark').click();
   await page.getByRole('button', {name:'Run suite',exact:true}).click();
   await page.getByRole('button', {name:'Stop',exact:true}).click();
   await expect(page.getByRole('button', {name:'Run suite',exact:true})).toBeEnabled();
@@ -443,7 +444,7 @@ test('execution evidence retains cancelled sessions and exports JSON with explic
 
 test('GUI calibration runs, explains diagnostics, exports safely and stays in history', async ({page}) => {
   await boot(page);
-  await nav(page,'Benchmarks').click();
+  await nav(page,'Benchmark').click();
   const panel=page.getByRole('region',{name:'Measurement validation'});
   await expect(panel).toContainText('No validation recorded');
   await expect(panel).toContainText('Runs 7–8 test requests');
@@ -453,7 +454,7 @@ test('GUI calibration runs, explains diagnostics, exports safely and stays in hi
   await expect(panel.getByRole('status')).toContainText('Checking fresh prompt');
   await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeDisabled();
   await nav(page,'Models').click();
-  await nav(page,'Benchmarks').click();
+  await nav(page,'Benchmark').click();
   await expect(panel).toContainText('Checks recorded');
   await expect(panel).toContainText('Engine counts and rates remain diagnostic');
   await expect(panel.getByRole('table')).toBeHidden();
@@ -488,7 +489,7 @@ test('GUI calibration runs, explains diagnostics, exports safely and stays in hi
 
 test('GUI calibration retains cancellation', async ({page}) => {
   await boot(page);
-  await nav(page,'Benchmarks').click();
+  await nav(page,'Benchmark').click();
   const panel=page.getByRole('region',{name:'Measurement validation'});
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
   await panel.getByRole('button',{name:'Stop validation',exact:true}).click();
@@ -501,7 +502,7 @@ test('GUI calibration retains cancellation', async ({page}) => {
 
 test('GUI calibration reports startup failure and allows retry', async ({page}) => {
   await boot(page,{failCalibration:true});
-  await nav(page,'Benchmarks').click();
+  await nav(page,'Benchmark').click();
   const panel=page.getByRole('region',{name:'Measurement validation'});
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
   await expect(panel.getByRole('alert')).toContainText('Ollama is not reachable');
