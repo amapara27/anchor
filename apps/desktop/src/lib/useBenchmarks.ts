@@ -5,7 +5,7 @@
 // from a superseded run so a stale stream can't overwrite fresh state.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type { BenchProgress, BenchRepeatsMode, BenchRun, BenchSessionSummary, MatchQuality } from "../types";
+import type { BenchProgress, BenchRepeatsMode, BenchRun, BenchSessionSummary, CalibrationSummary, MatchQuality } from "../types";
 import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
 import { MEASUREMENTS_EVENT } from "./useMeasurements";
 import { recordUse } from "./lastUsed";
@@ -73,6 +73,53 @@ export function useBenchmarks(modelId: string | null) {
   // Bumped whenever a run finishes, so a view driven by `load` knows to refetch.
   const [version, setVersion] = useState(0);
   const runId = useRef(0);
+  const active = useRef(false);
+  const [calibrating, setCalibrating] = useState(false);
+  const [calibration, setCalibration] = useState<CalibrationSummary | null>(null);
+  const [calibrationProgress, setCalibrationProgress] = useState<string | null>(null);
+  const [calibrationError, setCalibrationError] = useState<string | null>(null);
+  const [calibrationLoading, setCalibrationLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCalibration(current => current?.model_name === modelId ? current : null);
+    if (!modelId) { setCalibrationLoading(false); return; }
+    setCalibrationLoading(true);
+    invoke<CalibrationSummary | null>("latest_calibration", { model: modelId })
+      .then(result => { if (!cancelled) setCalibration(result); })
+      .catch(e => { if (!cancelled) setCalibrationError(`Could not load the saved check. ${String(e)}`); })
+      .finally(() => { if (!cancelled) setCalibrationLoading(false); });
+    return () => { cancelled = true; };
+  }, [modelId, version]);
+
+  useEffect(() => { setCalibrationError(null); setCalibrationProgress(null); }, [modelId]);
+
+  const calibrate = useCallback((id: string) => {
+    if (active.current) return;
+    active.current = true;
+    const myRun = ++runId.current;
+    setCalibrating(true);
+    setCalibration(null);
+    setCalibrationError(null);
+    setCalibrationProgress("Preparing Ollama…");
+    const channel = new Channel<BenchProgress>();
+    channel.onmessage = event => {
+      if (runId.current === myRun && event.kind === "status") setCalibrationProgress(event.message);
+    };
+    invoke<CalibrationSummary | null>("calibrate_model", { model: id, onEvent: channel })
+      .then(result => {
+        if (runId.current !== myRun) return;
+        setCalibration(result);
+        setCalibrationProgress(result ? null : "Stopped before any checks began.");
+      })
+      .catch(e => { if (runId.current === myRun) { setCalibrationError(`Validation could not finish. ${String(e)}`); setCalibrationProgress(null); } })
+      .finally(() => {
+        if (runId.current !== myRun) return;
+        active.current = false;
+        setCalibrating(false);
+        setVersion(v => v + 1);
+      });
+  }, []);
 
   /** Loads results, optionally filtered to one suite/scenario/context.
    *  `id: null` ranks every benchmarked model against every other one — the
@@ -148,11 +195,13 @@ export function useBenchmarks(modelId: string | null) {
    *  backend unloads the model and emits its usual `done`, so nothing special
    *  is needed here beyond asking it to stop. */
   const stop = useCallback(() => {
-    invoke("stop_benchmark").catch(() => {}); // best-effort
+    invoke("stop_benchmark").catch(e => setError(`Could not stop the measurement: ${String(e)}`));
   }, []);
 
   const run = useCallback(
     (id: string, repeats: BenchRepeatsMode) => {
+      if (active.current) return;
+      active.current = true;
       const myRun = ++runId.current;
       recordUse(id); // feeds Storage's last-used column and its stale check
       setRunning(true);
@@ -215,6 +264,8 @@ export function useBenchmarks(modelId: string | null) {
         setRunStartedAt(null);
         setError(String(e));
         setVersion((v) => v + 1);
+      }).finally(() => {
+        if (runId.current === myRun) { active.current = false; setRunning(false); }
       });
     },
     [],
@@ -238,5 +289,11 @@ export function useBenchmarks(modelId: string | null) {
     run,
     stop,
     load,
+    calibrating,
+    calibration,
+    calibrationProgress,
+    calibrationError,
+    calibrationLoading,
+    calibrate,
   };
 }

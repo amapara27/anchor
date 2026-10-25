@@ -84,6 +84,13 @@ pub enum Cmd {
     },
     /// Recalculate metrics from an evidence JSON file, without a runtime or database.
     Replay { path: std::path::PathBuf },
+    /// Probe the installed Ollama build. Counters remain diagnostic where unverified.
+    Calibrate {
+        model: String,
+        /// Use an isolated database here and save the full synthetic-probe evidence JSON.
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -124,6 +131,37 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             let export: anchor_hub::bench::evidence::EvidenceExport = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
             print_json(&export.recalculate().map_err(|e| e.to_string())?)
         }
+        Cmd::Calibrate { model, output } => {
+            ensure_server().await?;
+            let dir = match &output { Some(dir) => dir.clone(), None => crate::data_dir()? };
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let registry = anchor_hub::Registry::open(dir.join("registry.db")).map_err(|e| e.to_string())?;
+            let profile = anchor_system::Profiler::new(dir.join("hardware.json")).get().map_err(|e| e.to_string())?;
+            let install = anchor_hub::install_id(&dir).map_err(|e| e.to_string())?;
+            let cancel = watch_for_interrupt();
+            let export = registry.calibrate_ollama(&model, &HwIdentity::from_profile(&profile), &install, &cancel, |p| {
+                if let BenchProgress::Status { message } = p { eprintln!("{message}"); }
+            }).await.map_err(|e| e.to_string())?;
+            if output.is_some() {
+                let path = dir.join(format!("{}.json", export.session.id));
+                std::fs::write(&path, serde_json::to_vec_pretty(&export).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+                eprintln!("Evidence: {}", path.display());
+            }
+            if json { print_json(&export.derived)?; }
+            else {
+                println!("Session {} · {:?}", export.session.id, export.session.outcome);
+                for probe in &export.derived.calibration.as_ref().unwrap().probes {
+                    println!("{}: {:?} · input {} · cache {} · finish {} · {}", probe.attempt_id,
+                        probe.outcome, probe.input_count, probe.cache, probe.finish, probe.stream);
+                }
+                println!("Engine counts and phase rates remain diagnostic; see the versioned report in the evidence export.");
+            }
+            if export.session.outcome != anchor_hub::bench::evidence::Outcome::Completed
+                || export.derived.calibration.as_ref().is_some_and(|r| r.probes.iter().any(|p| p.input_count == "mismatch" || p.finish == "length_count_mismatch")) {
+                return Err(format!("calibration has failures; evidence retained in {}", export.session.id));
+            }
+            Ok(())
+        }
         Cmd::Samples {
             run_id,
             model,
@@ -145,6 +183,7 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             }
             // Context-tier warmups and unsuccessful attempts live in session evidence.
             println!("{:>6} {:>12} {:>12} {:>10}", "REPEAT", "PREFILL t/s", "DECODE t/s", "TTFT ms");
+            println!("Engine token counts and phase rates are diagnostic; TTFT is client observed.");
             for s in &samples {
                 println!(
                     "{:>6} {:>12} {:>12} {:>10}",
@@ -426,6 +465,7 @@ fn print_runs(runs: &[BenchRun], show_match: bool) {
         println!("no benchmark runs yet — try `anchor bench run <model>`");
         return;
     }
+    println!("PREFILL, DECODE and LOAD use diagnostic engine counters; timing scopes are runtime dependent.");
     // Run ids are 200-char composites — useless in a table, so the last column
     // is what actually distinguishes the rows: which machine (for a ranking) or
     // which scenario (for this machine's own history). `--json` carries the id.

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, BenchSessionSummary, HardwareProfile, LibraryModel } from "../types";
+import type { BenchRepeatsMode, BenchRun, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel } from "../types";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { exportEvidence } from "../lib/exportEvidence";
+import { CalibrationPanel, CalibrationResults } from "./CalibrationPanel";
 import { useModels } from "../lib/useModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
@@ -130,8 +130,9 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     run,
     stop,
     load,
+    calibrating, calibration, calibrationProgress, calibrationError, calibrationLoading, calibrate,
   } = useBenchmarks(modelId);
-  useEffect(() => { onBusy?.(running); }, [running, onBusy]);
+  useEffect(() => { onBusy?.(running || calibrating); }, [running, calibrating, onBusy]);
 
   // `groups` is driven entirely by which view is on screen: the Suite tab is
   // about one model's nine scenarios, while the Leaderboard ranks every model
@@ -244,6 +245,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
           installed={installed}
           profile={profile}
           running={running}
+          calibrating={calibrating}
           repeatsMode={repeatsMode}
           setRepeatsMode={setRepeatsMode}
           onRun={() => modelId && run(modelId, repeatsMode)}
@@ -312,10 +314,17 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         </div>
       )}
 
+      <CalibrationPanel modelId={modelId} result={calibration} running={calibrating} busy={running}
+        loading={calibrationLoading} progress={calibrationProgress} error={calibrationError}
+        onRun={() => modelId && calibrate(modelId)} onStop={stop} />
 
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Method</summary>
-        <p className="mt-3 max-w-[65ch] text-xs leading-relaxed text-fg-muted">Nine workloads with target input lengths and output caps. Results are descriptive medians after warm-up. Prefill requires a reported cached-token count; TTFT measures request to first received output. Thorough runs three repeats; Fast runs long generations once. Rankings use the current method and matching scenario/context. Raw warmups and every attempted request remain in session evidence. Runtime rates are uncalibrated engine diagnostics. The live waveform shows response chunks, not tokens. Thermal status comes from boundary snapshots. Server KV cache and Flash Attention settings are not reported.</p>
+        <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-fg-muted">
+          <li>Nine workloads, medians after warmup. Thorough: three repeats. Fast: long generations run once.</li>
+          <li>TTFT: request to first output. Prefill needs cache counts. Engine rates are diagnostic; the live chart counts chunks.</li>
+          <li>All attempts saved. Rankings match method, workload and context. Thermal readings are snapshots; KV cache and Flash Attention settings are unreported.</li>
+        </ul>
       </details>
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-subtle">{history.length}</span></summary>
@@ -333,14 +342,20 @@ function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
   const [includeContent, setIncludeContent] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [viewed, setViewed] = useState<CalibrationSummary | null>(null);
+  const [loading, setLoading] = useState<string | null>(null);
+  const view = async (id: string) => {
+    if (viewed?.session_id === id) { setViewed(null); return; }
+    setLoading(id); setError(null);
+    try { setViewed(await invoke<CalibrationSummary>("calibration_report", { id })); }
+    catch(e) { setError(String(e)); }
+    finally { setLoading(null); }
+  };
   const exportSession = async (id: string) => {
     setExporting(id);
     setError(null);
     try {
-      const path = await save({ defaultPath: `anchor-${id}.json`, filters: [{ name: "Benchmark evidence", extensions: ["json"] }] });
-      if (!path) return;
-      const json = await invoke<string>("export_bench_evidence", { id, includeContent });
-      await writeFile(path, new TextEncoder().encode(json));
+      await exportEvidence(id, includeContent);
     } catch (e) { setError(String(e)); }
     finally { setExporting(null); }
   };
@@ -354,14 +369,16 @@ function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
     {sessions.length === 0 ? <p className="text-xs text-fg-muted">No recorded sessions. Earlier results have no raw event trace.</p> : sessions.map(s =>
       <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-hair py-2">
         <div className="min-w-0 flex-1">
-          <p className="text-xs"><span className="data break-all">{s.model_name}</span> · {s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts</p>
+          <p className="text-xs"><span className="data break-all">{s.model_name}</span> · {s.protocol === "ollama_calibration_serving_v1" ? "validation · " : ""}{s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts</p>
           <p className="data mt-1 break-all text-[11px] text-fg-muted">{s.id} · {formatRelativeTime(s.created_at)} · formula {s.formula_version}</p>
           {s.error && <p className="mt-1 break-words text-xs text-danger">{s.error}</p>}
         </div>
+        {s.protocol === "ollama_calibration_serving_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={() => void view(s.id)}>{loading === s.id ? "Loading…" : viewed?.session_id === s.id ? "Hide checks" : "View checks"}<span className="sr-only"> {s.id}</span></GhostButton>}
         <GhostButton className="h-7 text-xs" disabled={!includeContent || exporting != null} title={`Export evidence ${s.id}`} onClick={() => void exportSession(s.id)}>
           {exporting === s.id ? "Exporting…" : "Export JSON"}
           <span className="sr-only"> {s.id}</span>
         </GhostButton>
+        {viewed?.session_id === s.id && <div className="w-full py-2"><CalibrationResults result={viewed} initiallyExpanded /></div>}
       </div>)}
   </section>;
 }
@@ -403,6 +420,7 @@ function RunSetupCard({
   installed,
   profile,
   running,
+  calibrating,
   repeatsMode,
   setRepeatsMode,
   onRun,
@@ -413,6 +431,7 @@ function RunSetupCard({
   installed: LibraryModel[];
   profile: HardwareProfile | null;
   running: boolean;
+  calibrating: boolean;
   repeatsMode: BenchRepeatsMode;
   setRepeatsMode: (m: BenchRepeatsMode) => void;
   onRun: () => void;
@@ -421,16 +440,16 @@ function RunSetupCard({
   return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-x-4 gap-y-3">
     <div className="min-w-[220px] max-w-[460px] flex-1">
       <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
-        disabled={installed.length === 0 || running} variant="field" ariaLabel="Benchmark model"
+        disabled={installed.length === 0 || running || calibrating} variant="field" ariaLabel="Benchmark model"
         placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />
     </div>
     <div title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
       <span className="mb-1.5 block text-xs text-fg-muted">Rigor</span>
-      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running}
+      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running || calibrating}
         options={[{key:"fast",label:"Fast"},{key:"thorough",label:"Thorough"}]} />
     </div>
     {running ? <GhostButton onClick={onStop} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />Stop</GhostButton> :
-      <PrimaryButton onClick={onRun} disabled={!modelId}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}
+      <PrimaryButton onClick={onRun} disabled={!modelId || calibrating}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}
   </section>;
 }
 

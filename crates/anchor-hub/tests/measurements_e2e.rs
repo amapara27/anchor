@@ -361,4 +361,49 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
         let exists: i64 = retired.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1", [table], |row| row.get(0)).unwrap();
         assert_eq!(exists, 0, "retired table {table} should be removed");
     }
+
+    fixture.mode.store(0, Ordering::Relaxed);
+    let calibrated = fixture.registry("calibration.db");
+    let export = calibrated.calibrate_ollama("fixture:latest", &hw, "e2e", &cancel, |_|{}).await.unwrap();
+    assert_eq!(export.session.outcome, Outcome::Completed);
+    assert_eq!(export.attempts.len(), 7);
+    assert!(export.results.is_empty(), "calibration never enters rankings");
+    assert!(calibrated.bench_history(&hw, None, 100).unwrap().is_empty());
+    let report = export.derived.calibration.as_ref().unwrap();
+    let safe = calibrated.calibration_summary(&export.session.id).unwrap();
+    let safe_json = serde_json::to_value(&safe).unwrap();
+    assert!(safe_json.get("attempts").is_none() && safe_json.get("config").is_none());
+    assert!(!serde_json::to_string(&safe).unwrap().contains("model_blob"), "GUI summaries exclude local filesystem provenance");
+    assert_eq!(safe.probe_names[0], "after_unload");
+    assert_eq!(calibrated.latest_calibration("fixture:latest", &hw.hw_key).unwrap().unwrap().session_id, export.session.id);
+    assert!(calibrated.latest_calibration("other-model", &hw.hw_key).unwrap().is_none());
+    assert!(calibrated.latest_calibration("fixture:latest", "other-machine").unwrap().is_none());
+    assert_eq!(report.engine_counters, "diagnostic");
+    assert!(report.probes.iter().all(|p| p.input_count == "unverified"), "a fixture cannot calibrate a real tokenizer");
+    assert!(report.probes.iter().any(|p| p.finish == "length_count_mismatch"), "a claimed length stop must match its declared cap");
+    assert!(export.derived.attempts.iter().all(|m| m.counter_status == "diagnostic"));
+    let mut roundtrip: anchor_hub::bench::evidence::EvidenceExport = serde_json::from_slice(&serde_json::to_vec(&export).unwrap()).unwrap();
+    roundtrip.derived.calibration = None;
+    assert_eq!(serde_json::to_value(roundtrip.recalculate().unwrap()).unwrap(), serde_json::to_value(&export.derived).unwrap());
+    roundtrip.session.config.calibration.as_mut().unwrap().protocol_version += 1;
+    assert!(roundtrip.recalculate().is_err(), "unknown calibration protocols cannot inherit verification");
+
+    fixture.mode.store(4, Ordering::Relaxed);
+    let failed_calibration = calibrated.calibrate_ollama("fixture:latest", &hw, "e2e", &cancel, |_|{}).await.unwrap();
+    assert_eq!(failed_calibration.session.outcome, Outcome::Failed);
+    assert_eq!(failed_calibration.attempts.len(), 7, "failed probes do not silently shrink the fixed plan");
+    assert!(failed_calibration.attempts.iter().any(|a| a.outcome == Outcome::Invalid));
+    assert!(failed_calibration.results.is_empty());
+    let stop = AtomicBool::new(true);
+    let cancelled_calibration = calibrated.calibrate_ollama("fixture:latest", &hw, "e2e", &stop, |_|{}).await.unwrap();
+    assert_eq!(cancelled_calibration.session.outcome, Outcome::Cancelled);
+    assert!(cancelled_calibration.attempts.is_empty());
+    fixture.mode.store(0, Ordering::Relaxed);
+    let drifted = calibrated.calibrate_ollama("fixture:latest", &hw, "e2e", &cancel, |p| {
+        if let BenchProgress::Status {message} = p {
+            if message == "calibrating identical_repeat" { fixture.mode.store(8, Ordering::Relaxed); }
+        }
+    }).await.unwrap();
+    assert_eq!(drifted.session.outcome, Outcome::Failed);
+    assert!(drifted.session.error.as_deref().unwrap().contains("identity changed"));
 }

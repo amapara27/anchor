@@ -4,7 +4,7 @@ const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean} = {}) {
+async function boot(page: Page, options: {empty?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean} = {}) {
   await page.addInitScript(({catalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -25,7 +25,7 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
-      runs:[] as any[],sessions:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
+      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
       quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:4,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
       gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
@@ -85,6 +85,22 @@ async function boot(page: Page, options: {empty?: boolean; offline?: boolean; fa
           case 'bench_runs_for_model': return state.runs.filter((r:any)=>!args.model||r.model_name===args.model);
           case 'bench_history': return state.runs;
           case 'bench_sessions': return state.sessions;
+          case 'latest_calibration': return state.calibrations.find((r:any)=>r.model_name===args.model) ?? null;
+          case 'calibration_report': return state.calibrations.find((r:any)=>r.session_id===args.id);
+          case 'calibrate_model': {
+            state.benchStop=false;emit(args.onEvent,{kind:'status',message:'calibrating after_unload'});
+            await sleep(900);
+            if(options.failCalibration) throw 'Ollama is not reachable';
+            const id='calibration-'+Date.now();
+            const names=state.benchStop?['after_unload']:['after_unload','identical_repeat','shared_prefix','changed_prefix','cap_one','natural_stop','unicode','reasoning'];
+            const outcome=state.benchStop?'cancelled':'completed';
+            const result={session_id:id,model_name:args.model,runtime_version:'0.34.4',created_at:Date.now(),outcome,error:null,planned_attempts:8,probe_names:names,
+              report:{protocol_version:1,engine_counters:'diagnostic',phase_timing:'diagnostic',quality:'unverified',reasoning_support:'probed',scope:'Recorded probe set only',
+                probes:names.map((name,i)=>({attempt_id:id+':'+i,outcome,input_count:state.benchStop?'unverified':i<6?'cross_checked_for_probe':'unverified',cache:state.benchStop||i>=6?'unverified':i===1?'observed_prefix_reuse':'observed_uncached',finish:state.benchStop?'unverified':i===5?'reported_stop_eos_or_stop_sequence':'cap_reached',stream:state.benchStop?'incomplete_or_invalid':'valid_terminal_and_transport_close',visible_tokens:state.benchStop?null:name==='reasoning'?0:name==='cap_one'?1:32,reasoning_tokens:state.benchStop?null:name==='reasoning'?256:0,output_count:'diagnostic'}))}};
+            state.calibrations.unshift(result);
+            state.sessions.unshift({id,protocol:'ollama_calibration_serving_v1',model_name:args.model,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:8,recorded_attempts:names.length,formula_version:1});
+            return result;
+          }
           case 'export_bench_evidence': if(!args.includeContent) throw 'content consent required'; return '{"session":{"formula_version":1},"raw_counter":9007199254740993}';
           case 'plugin:dialog|save': return '/fixture/evidence.json';
           case 'plugin:fs|write_file': return;
@@ -338,8 +354,8 @@ test('comparison shows observed TTFT and benchmark distinguishes chunk rate from
   const balanced=page.getByRole('button').filter({hasText:'balanced'}).filter({hasText:'1000'});
   await expect(balanced).toContainText('21.0');
   await page.getByText('Method',{exact:true}).click();
-  await expect(page.getByText(/Prefill requires a reported cached-token count/)).toBeVisible();
-  await expect(page.getByText(/Thermal status comes from boundary snapshots/)).toBeVisible();
+  await expect(page.getByText(/Prefill needs cache counts/)).toBeVisible();
+  await expect(page.getByText(/Thermal readings are snapshots/)).toBeVisible();
   await expect(page.getByText('In target',{exact:true})).toBeVisible();
   await expect(page.getByText('Out cap',{exact:true})).toBeVisible();
 });
@@ -423,4 +439,71 @@ test('execution evidence retains cancelled sessions and exports JSON with explic
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await evidence.screenshot({path:`test-results/evidence-${width}.png`});
   }
+});
+
+test('GUI calibration runs, explains diagnostics, exports safely and stays in history', async ({page}) => {
+  await boot(page);
+  await nav(page,'Benchmarks').click();
+  const panel=page.getByRole('region',{name:'Measurement validation'});
+  await expect(panel).toContainText('No validation recorded');
+  await expect(panel).toContainText('Runs 7–8 test requests');
+  await expect(panel).toContainText('without tuning the model or changing benchmark results');
+  expect(await panel.evaluate(el => !!(document.querySelector('[aria-label="Benchmarks view"]')!.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
+  await expect(panel.getByRole('status')).toContainText('Checking fresh prompt');
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeDisabled();
+  await nav(page,'Models').click();
+  await nav(page,'Benchmarks').click();
+  await expect(panel).toContainText('Checks recorded');
+  await expect(panel).toContainText('Engine counts and rates remain diagnostic');
+  await expect(panel.getByRole('table')).toBeHidden();
+  await panel.getByText('Request details',{exact:true}).click();
+  await expect(panel.getByRole('row').filter({hasText:'Reasoning output'})).toContainText('0 / 256');
+  await expect(panel.getByRole('table')).toContainText('Unverified');
+  await expect(panel.getByRole('table')).toContainText('Unknown');
+  const exportButton=panel.getByRole('button',{name:'Export evidence',exact:true});
+  await expect(exportButton).toBeDisabled();
+  await panel.getByRole('checkbox',{name:'Include prompts and output',exact:true}).check();
+  await exportButton.click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:fs|write_file'))).toBe(true);
+  for(const [width,theme] of [[800,'dark'],[1440,'light']] as const) {
+    await page.setViewportSize({width,height:900});
+    await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await panel.screenshot({path:`test-results/calibration-${width}-${theme}.png`});
+    await panel.getByText('Request details',{exact:true}).click();
+    await page.getByText('Method',{exact:true}).click();
+    await page.screenshot({path:`test-results/benchmarks-clean-${width}-${theme}.png`});
+    await page.getByText('Method',{exact:true}).click();
+    await panel.getByText('Request details',{exact:true}).click();
+  }
+  await page.getByText('Run history',{exact:false}).first().click();
+  const evidence=page.getByRole('region',{name:'Execution evidence'});
+  await expect(evidence).toContainText('validation');
+  await evidence.getByRole('button',{name:/View checks/}).first().click();
+  await expect(evidence.getByRole('table',{name:'Validation checks'})).toBeVisible();
+  await selectModel(page,'Benchmark model',catalog[1].name);
+  await expect(panel).toContainText('No validation recorded for this model');
+});
+
+test('GUI calibration retains cancellation', async ({page}) => {
+  await boot(page);
+  await nav(page,'Benchmarks').click();
+  const panel=page.getByRole('region',{name:'Measurement validation'});
+  await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
+  await panel.getByRole('button',{name:'Stop validation',exact:true}).click();
+  await expect(panel).toContainText('Validation stopped');
+  await expect(panel).toContainText('1/8 requests recorded');
+  await panel.getByText('Request details',{exact:true}).click();
+  await expect(panel).toContainText('Incomplete stream');
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+});
+
+test('GUI calibration reports startup failure and allows retry', async ({page}) => {
+  await boot(page,{failCalibration:true});
+  await nav(page,'Benchmarks').click();
+  const panel=page.getByRole('region',{name:'Measurement validation'});
+  await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
+  await expect(panel.getByRole('alert')).toContainText('Ollama is not reachable');
+  await expect(panel.getByRole('button',{name:'Validate measurements',exact:true})).toBeEnabled();
 });

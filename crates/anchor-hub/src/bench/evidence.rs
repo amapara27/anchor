@@ -45,6 +45,8 @@ pub struct SessionConfig {
     pub cache_policy: String,
     pub counter_calibration: String,
     pub attempts: Vec<PlannedAttempt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<super::calibration::CalibrationIdentity>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +64,7 @@ pub struct BenchSession {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub id: String,
+    pub protocol: String,
     pub model_name: String,
     pub hw_key: String,
     pub created_at: i64,
@@ -103,6 +106,8 @@ pub struct Attempt {
     pub events: Vec<RawEvent>,
     pub outcome: Outcome,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<super::calibration::ProbeObservation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -125,6 +130,8 @@ impl Metric {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttemptMetrics {
+    #[serde(default = "diagnostic_status")]
+    pub counter_status: String,
     pub counters: GenerationStats,
     pub finish_reason: Option<String>,
     pub first_output_ms: Metric,
@@ -135,6 +142,8 @@ pub struct AttemptMetrics {
     pub prefill_tps: Metric,
     pub validation_errors: Vec<String>,
 }
+
+fn diagnostic_status() -> String { "diagnostic".into() }
 
 fn rate(count: Option<u64>, duration: Option<u64>) -> Metric {
     match (count, duration) {
@@ -231,6 +240,7 @@ pub fn recalculate(attempt: &Attempt, formula_version: u32) -> Result<AttemptMet
     counters.ttft_ms = if clock_invalid { None } else { first.map(|ns| ns as f64 / 1e6) };
     let trace_time = |at, missing| if clock_invalid { Metric::unknown("invalid_clock_trace") } else { Metric::time(at, missing) };
     Ok(AttemptMetrics {
+        counter_status: diagnostic_status(),
         counters, finish_reason,
         first_output_ms: trace_time(first, "no_output_observed"),
         first_answer_ms: trace_time(answer, "no_answer_observed"),
@@ -253,7 +263,7 @@ impl Registry {
         let conn = self.connect()?;
         self.bench_sessions(limit)?.into_iter().map(|s| {
             let count = conn.query_row("SELECT COUNT(*) FROM benchmark_attempts WHERE session_id=?1", [&s.id], |r| r.get(0))?;
-            Ok(SessionSummary { id: s.id, model_name: s.config.model_name, hw_key: s.config.hw.hw_key,
+            Ok(SessionSummary { id: s.id, protocol: s.config.protocol, model_name: s.config.model_name, hw_key: s.config.hw.hw_key,
                 created_at: s.created_at, outcome: s.outcome, error: s.error, planned_attempts: s.config.attempts.len(),
                 recorded_attempts: count, formula_version: s.formula_version })
         }).collect()
@@ -283,6 +293,7 @@ impl Registry {
             id: format!("{}:{plan_index}", session.id), session_id: session.id.clone(), plan_index,
             wall_start_ms: super::now_ms(), observed_context: None, observed_digest: None, env_start: None, env_end: None,
             resident_bytes: None, events: Vec::new(), outcome: Outcome::Running, error: None,
+            calibration: None,
         };
         self.connect()?.execute("INSERT INTO benchmark_attempts (id,session_id,plan_index,record_json) VALUES (?1,?2,?3,?4)",
             rusqlite::params![attempt.id, session.id, plan_index, serde_json::to_string(&attempt)?])?;
@@ -327,7 +338,7 @@ impl Registry {
         let rows = stmt.query_map([id], |r| r.get::<_, String>(0))?;
         let attempts = rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect::<Result<Vec<Attempt>>>()?;
         let results = crate::db::bench_session_results(&conn, id)?;
-        let mut export = EvidenceExport { session, attempts, results, derived: Recalculated { attempts: Vec::new(), scenarios: Vec::new() } };
+        let mut export = EvidenceExport { session, attempts, results, derived: Recalculated { attempts: Vec::new(), scenarios: Vec::new(), calibration: None } };
         export.derived = export.recalculate()?;
         Ok(export)
     }
@@ -348,6 +359,8 @@ pub struct ScenarioMetrics {
 pub struct Recalculated {
     pub attempts: Vec<AttemptMetrics>,
     pub scenarios: Vec<ScenarioMetrics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<super::calibration::CalibrationReport>,
 }
 
 impl EvidenceExport {
@@ -359,6 +372,9 @@ impl EvidenceExport {
         if self.session.formula_version != FORMULA_VERSION {
             return Err(crate::Error::Ollama("unsupported benchmark formula version".into()));
         }
+        if self.session.config.calibration.as_ref().is_some_and(|c| c.protocol_version != 1) {
+            return Err(crate::Error::Ollama("unsupported calibration protocol version".into()));
+        }
         let mut seen = std::collections::HashSet::new();
         for attempt in &self.attempts {
             if attempt.session_id != self.session.id || attempt.plan_index >= self.session.config.attempts.len()
@@ -368,6 +384,9 @@ impl EvidenceExport {
             }
         }
         let metrics: Vec<_> = self.attempts.iter().map(|a| recalculate(a, self.session.formula_version)).collect::<Result<_>>()?;
+        if let Some(calibration) = super::calibration::report(self, &metrics) {
+            return Ok(Recalculated { attempts: metrics, scenarios: Vec::new(), calibration: Some(calibration) });
+        }
         let mut scenarios = Vec::new();
         for plan in self.session.config.attempts.iter().filter(|p| !p.is_warmup) {
             if scenarios.iter().any(|s: &ScenarioMetrics| s.scenario_id == plan.scenario_id) { continue; }
@@ -403,6 +422,6 @@ impl EvidenceExport {
                 ttft_ms_median: median(|m| m.first_output_ms.value),
             });
         }
-        Ok(Recalculated { attempts: metrics, scenarios })
+        Ok(Recalculated { attempts: metrics, scenarios, calibration: None })
     }
 }

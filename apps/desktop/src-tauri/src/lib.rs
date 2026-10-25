@@ -787,6 +787,34 @@ fn stop_benchmark(app: AppHandle) {
     app.state::<ServerState>().bench_cancel.store(true, Ordering::Relaxed);
 }
 
+#[tauri::command]
+async fn calibrate_model(app: AppHandle, model: String, on_event: Channel<BenchProgress>)
+    -> Result<Option<anchor_hub::bench::calibration::CalibrationSummary>, String> {
+    let state = app.state::<ServerState>();
+    state.bench_cancel.store(false, Ordering::Relaxed);
+    let _ = on_event.send(BenchProgress::Status { message:"Preparing Ollama".into() });
+    ensure_server(&app).await?;
+    if state.bench_cancel.load(Ordering::Relaxed) { return Ok(None); }
+    let _ = on_event.send(BenchProgress::Status { message:"Waiting for other model work to finish".into() });
+    let _run = state.compare_lock.lock().await;
+    if state.bench_cancel.load(Ordering::Relaxed) { return Ok(None); }
+    let registry = registry(&app)?;
+    let export = registry.calibrate_ollama(&model, &hw_identity(&app)?, &install_id(&app)?, &state.bench_cancel, |event| {
+        let _ = on_event.send(event);
+    }).await.map_err(|e| e.to_string())?;
+    registry.calibration_summary(&export.session.id).map(Some).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn latest_calibration(app: AppHandle, model: String) -> Result<Option<anchor_hub::bench::calibration::CalibrationSummary>, String> {
+    registry(&app)?.latest_calibration(&model, &hw_identity(&app)?.hw_key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn calibration_report(app: AppHandle, id: String) -> Result<anchor_hub::bench::calibration::CalibrationSummary, String> {
+    registry(&app)?.calibration_summary(&id).map_err(|e| e.to_string())
+}
+
 /// Benchmark results from machines resembling this one, best match first.
 /// Each row carries the tier it matched at so the UI can group them.
 ///
@@ -951,6 +979,9 @@ pub fn run() {
             get_server_status,
             run_benchmark,
             stop_benchmark,
+            calibrate_model,
+            latest_calibration,
+            calibration_report,
             restart_app,
             bench_runs_for_model,
             bench_history,

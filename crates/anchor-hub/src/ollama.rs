@@ -311,10 +311,10 @@ impl GenerateChunk {
 /// as `GenerationStats` in `types.ts`.
 #[derive(Debug, Clone, Default, serde::Serialize, Deserialize)]
 pub struct GenerationStats {
-    /// Total wall time for the request, in nanoseconds.
+    /// Engine-internal request duration (diagnostic), not client completion latency.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_duration_ns: Option<u64>,
-    /// Time spent loading the model's weights into RAM, in nanoseconds.
+    /// Engine load/setup duration (diagnostic), not an isolated model-load interval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load_duration_ns: Option<u64>,
     /// Total prompt tokens, including tokens reused from the cache.
@@ -326,13 +326,13 @@ pub struct GenerationStats {
     /// Observed milliseconds from request start to the first output chunk.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<f64>,
-    /// Time spent evaluating uncached prompt tokens, in nanoseconds.
+    /// Engine prompt-phase duration (diagnostic); first-token work may be included.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_eval_duration_ns: Option<u64>,
-    /// Tokens generated in the response.
+    /// Engine output count (diagnostic); can include EOS and hidden reasoning tokens.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eval_count: Option<u64>,
-    /// Time spent generating the response, in nanoseconds.
+    /// Engine generation-phase duration (diagnostic); first-token work may be excluded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub eval_duration_ns: Option<u64>,
 }

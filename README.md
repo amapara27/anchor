@@ -112,6 +112,10 @@ Attempt metadata is saved before dispatch and frames are committed when the atte
 
 Evidence-backed suite-v4 results no longer duplicate raw attempts into `bench_samples`; the existing table remains readable for older runs, and `bench samples` reconstructs the compatibility view from replayed evidence. Schema migration V13 archives retired agent and knowledge-base rows in `retired_feature_archive` (embeddings are preserved as hex JSON) before dropping their unused tables.
 
+`bench calibrate MODEL` retains a separate calibration session with unload/repeat/prefix, one-token cap, natural-stop, Unicode and (when supported) reasoning probes. On the tested local Ollama 0.34.4 llama-server path, it cross-checks the rendered prompt against matching tokenizer IDs and records binary/model hashes. Versioned reports are replayed from the stored observations. Missing capabilities remain unverified, and all engine counters/rates are explicitly diagnostic; calibration never creates ranking rows or qualifies other runs. See [the live calibration findings](docs/ollama-calibration.md) for timing/EOS limits and the exact tested scope. Other versions/backends keep token verification unavailable until their adapter is checked.
+
+In the desktop app, open **Benchmarks**, select a model and use **Measurement validation → Validate measurements** below the results. It runs 7–8 test requests to check Ollama's token counts, cache reuse and response completion, then saves a report; it does not tune the model or change benchmark results. Progress and Stop validation stay available during collection. Expand Request details for individual checks and evidence export, which requires choosing to include prompts and output. Run history labels validation sessions and provides View checks for older results.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
   <img src="docs/screenshots/benchmarks.png" alt="Benchmarks">
@@ -156,6 +160,9 @@ anchor bench top --scenario balanced        # rank every model on one scenario
 anchor bench sessions                       # includes failed/cancelled executions
 anchor bench export SESSION_ID --include-content > evidence.json
 anchor bench replay evidence.json           # offline recalculation from raw evidence
+anchor bench calibrate llama3.2:1b           # live, fixed-plan Ollama calibration session
+anchor bench calibrate llama3.2:1b --output ./calibration  # isolated DB + full synthetic evidence
+node tools/calibrate-ollama.mjs ./calibration/SESSION_ID.json  # independent replay/arithmetic check
 anchor storage scan
 anchor settings server --start
 ```

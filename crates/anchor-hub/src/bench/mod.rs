@@ -12,6 +12,7 @@
 //! first received output chunk.
 
 mod prompts;
+pub mod calibration;
 pub mod evidence;
 
 pub use prompts::{RepeatsMode, Scenario, CATALOG, HEADLINE_SCENARIO, SUITE_ID, SUITE_VERSION};
@@ -321,7 +322,8 @@ impl Registry {
             server_is_local: crate::is_local_host(&self.host), concurrency: 1,
             connection_policy: "new HTTP client per attempt; connection setup included".into(),
             cache_policy: "unverified; distinct warmup prompt; runtime counters retained".into(),
-            counter_calibration: "unverified engine diagnostics".into(), attempts: plan,
+            counter_calibration: "diagnostic: runtime token/EOS conventions and phase timer boundaries require calibration".into(), attempts: plan,
+            calibration: None,
         })?;
         let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
         let mut index = 0u32;
@@ -416,6 +418,11 @@ impl Registry {
         let plan = &session.config.attempts[plan_index];
         let mut attempt = self.begin_bench_attempt(session, plan_index)?;
         attempt.env_start = Some(capture_env(self, &plan.request.model).await);
+        if session.config.calibration.is_some() {
+            attempt.calibration = Some(calibration::ProbeObservation {
+                residency_before: status::running(self).await.ok(), ..Default::default()
+            });
+        }
         attempt.wall_start_ms = now_ms();
         let mut sampler = LiveSampler::new();
         let generation = ollama::generate_recorded(&self.host, &plan.request, cancel, |_| {
@@ -465,6 +472,14 @@ impl Registry {
             }
         }
         attempt.error = failure.as_ref().map(ToString::to_string);
+        if let (Some(identity), Some(observation)) = (&session.config.calibration, &mut attempt.calibration) {
+            if failure.is_none() {
+                match calibration::tokenize(self, identity, &plan.request, &attempt.events).await {
+                    Ok(tokens) => observation.tokens = Some(tokens),
+                    Err(e) => observation.tokenizer_error = Some(e.to_string()),
+                }
+            }
+        }
         self.finish_bench_attempt(&attempt)?;
         if let Some(error) = failure { return Err(error); }
         let metrics = evidence::recalculate(&attempt, session.formula_version)?;

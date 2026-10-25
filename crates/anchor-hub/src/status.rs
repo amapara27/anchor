@@ -44,7 +44,7 @@ struct PsEntry {
 ///
 /// Mirrored on the frontend as `RunningModel` in `types.ts` — the residency
 /// readout renders these directly.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct RunningModel {
     pub name: String,
     pub digest: Option<String>,

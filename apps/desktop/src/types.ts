@@ -106,22 +106,22 @@ export interface PullProgress {
 /**
  * Timing/throughput stats from a completed generation, mirrored from
  * `anchor_hub::GenerationStats`. Raw nanosecond durations and token counts; the
- * UI derives readable values, e.g. tok/sec = `eval_count / (eval_duration_ns / 1e9)`.
+ * UI derives native diagnostic rates, e.g. `eval_count / (eval_duration_ns / 1e9)`.
  */
 export interface GenerationStats {
   prompt_eval_cached_count?: number;
   ttft_ms?: number;
-  /** Total wall time for the request, in nanoseconds. */
+  /** Engine-internal request duration; diagnostic, not client completion latency. */
   total_duration_ns?: number;
-  /** Time spent loading the model's weights into RAM, in nanoseconds. */
+  /** Engine load/setup duration in ns; diagnostic, not an isolated load interval. */
   load_duration_ns?: number;
-  /** Tokens in the prompt that were evaluated. */
+  /** Logical input count including cached tokens; diagnostic outside calibrated probes. */
   prompt_eval_count?: number;
-  /** Time spent evaluating the prompt, in nanoseconds. */
+  /** Engine prompt-phase ns; diagnostic, can include first-token work. */
   prompt_eval_duration_ns?: number;
-  /** Tokens generated in the response. */
+  /** Engine output count; can include hidden reasoning and EOS tokens. */
   eval_count?: number;
-  /** Time spent generating the response, in nanoseconds. */
+  /** Engine generation-phase ns; diagnostic, can exclude first-token work. */
   eval_duration_ns?: number;
 }
 
@@ -586,6 +586,7 @@ export interface MeasuredRun {
 
 /** Execution evidence summaries, including attempts that produced no result. */
 export interface BenchSessionSummary {
+  protocol?: string;
   id: string;
   model_name: string;
   hw_key: string;
@@ -595,4 +596,34 @@ export interface BenchSessionSummary {
   planned_attempts: number;
   recorded_attempts: number;
   formula_version: number;
+}
+
+export interface CalibrationSummary {
+  session_id: string;
+  model_name: string;
+  runtime_version: string | null;
+  created_at: number;
+  outcome: "running" | "completed" | "failed" | "cancelled" | "timed_out" | "invalid";
+  error: string | null;
+  planned_attempts: number;
+  probe_names: string[];
+  report: {
+    protocol_version: number;
+    engine_counters: string;
+    phase_timing: string;
+    quality: string;
+    reasoning_support: string;
+    scope: string;
+    probes: {
+      attempt_id: string;
+      outcome: CalibrationSummary["outcome"];
+      input_count: string;
+      cache: string;
+      finish: string;
+      stream: string;
+      visible_tokens: number | null;
+      reasoning_tokens: number | null;
+      output_count: string;
+    }[];
+  };
 }

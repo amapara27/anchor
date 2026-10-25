@@ -105,9 +105,28 @@ try{
   assert(evidence.session.config.attempts.some(a=>a.is_warmup));
   assert(evidence.attempts.every(a=>a.events.some(e=>e.kind==='frame')));
   assert(evidence.derived.scenarios.every(s=>s.complete));
+  // Calibration is usable from the GUI and shares real cancellation/persistence.
+  const beforeCalibration=requests.length;
+  slow=true;await click('Validate measurements');
+  await wait(()=>requests.slice(beforeCalibration).some(r=>r.url==='/api/generate'&&r.body.prompt),'calibration request dispatch');
+  await click('Stop validation');
+  await wait(async()=> (await visibleText()).includes('Validation stopped'),'retained calibration cancellation');
+  slow=false;await click('Validate measurements');
+  await wait(async()=> (await visibleText()).includes('Checks recorded'),'GUI calibration completion',45000);
+  assert.match(await visibleText(),/Input counts unverified/,'fixture runtime is never presented as calibrated');
+  const calibrated=await execute(`return window.__TAURI_INTERNALS__.invoke('latest_calibration',{model:${JSON.stringify(catalog[1].id)}});`);
+  assert.equal(calibrated.outcome,'completed');assert.equal(calibrated.report.engine_counters,'diagnostic');
+  assert.equal(calibrated.report.probes.length,7);assert.equal(calibrated.config,undefined);
+  const recalled=await execute(`return window.__TAURI_INTERNALS__.invoke('calibration_report',{id:${JSON.stringify(calibrated.session_id)}});`);
+  assert.equal(recalled.session_id,calibrated.session_id);
+  const rawCalibration=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(calibrated.session_id)},includeContent:true});`);
+  assert.equal(JSON.parse(rawCalibration).results.length,0,'calibration creates no ranking rows');
+  assert.equal(JSON.parse(rawCalibration).derived.calibration.protocol_version,1);
+  await nav('Models');await nav('Benchmarks');
+  assert.match(await visibleText(),/Checks recorded/,'calibration survives navigation');
   // SQLite queries above verify persisted data beyond the component state.
   await request('DELETE','/session/'+session);session=null;child.kill('SIGTERM');
-  success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, SQLite persistence.');
+  success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, calibration cancellation/report/export, SQLite persistence.');
 }catch(error){await writeFile(path.join(scratch,'state.json'),JSON.stringify({requests,page: session ? await execute(`return {url:location.href,text:document.body.innerText,mains:Array.from(document.querySelectorAll('main')).map(e=>({hidden:e.hidden,attributes:e.outerHTML.slice(0,250),text:e.innerText}))}`).catch(String) : null},null,2));await writeFile(path.join(scratch,'native.log'),log);console.error('Native E2E evidence: '+scratch);throw error;}
 finally{
   if(session)await request('DELETE','/session/'+session).catch(()=>{});
