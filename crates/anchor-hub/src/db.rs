@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -337,6 +337,74 @@ const V12: &str = "
     );
 ";
 
+/// Retire the agent and knowledge-base tables without throwing away data that
+/// older installs may still contain. One JSON archive keeps the migration
+/// surface smaller than carrying five permanently queryable legacy schemas.
+const V13: &str = "
+    CREATE TABLE IF NOT EXISTS retired_feature_archive (
+        source_table TEXT NOT NULL,
+        row_key      TEXT NOT NULL,
+        row_json     TEXT NOT NULL,
+        archived_at  INTEGER NOT NULL,
+        PRIMARY KEY (source_table, row_key)
+    );
+    -- A database may have been exported or manually rewound after an earlier
+    -- cleanup. Empty compatibility definitions make this migration idempotent.
+    CREATE TABLE IF NOT EXISTS review_views (run_id TEXT NOT NULL PRIMARY KEY, viewed_at BIGINT NOT NULL);
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, model TEXT NOT NULL, task TEXT NOT NULL,
+        status TEXT NOT NULL, started_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL,
+        tokens INTEGER, detail_json TEXT
+    );
+    CREATE TABLE IF NOT EXISTS agent_memory (
+        id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, scope TEXT NOT NULL,
+        content TEXT NOT NULL, created_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS kb_documents (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, path TEXT,
+        chunks INTEGER NOT NULL DEFAULT 0, added_ms INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+        id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, ord INTEGER NOT NULL,
+        text TEXT NOT NULL, embedding BLOB
+    );
+    INSERT OR IGNORE INTO retired_feature_archive (source_table, row_key, row_json, archived_at)
+        SELECT 'review_views', run_id,
+               json_object('run_id', run_id, 'viewed_at', viewed_at),
+               CAST(strftime('%s', 'now') AS INTEGER) * 1000
+          FROM review_views;
+    INSERT OR IGNORE INTO retired_feature_archive (source_table, row_key, row_json, archived_at)
+        SELECT 'agent_runs', id,
+               json_object('id', id, 'agent_id', agent_id, 'model', model, 'task', task,
+                           'status', status, 'started_ms', started_ms, 'duration_ms', duration_ms,
+                           'tokens', tokens, 'detail_json', detail_json),
+               CAST(strftime('%s', 'now') AS INTEGER) * 1000
+          FROM agent_runs;
+    INSERT OR IGNORE INTO retired_feature_archive (source_table, row_key, row_json, archived_at)
+        SELECT 'agent_memory', id,
+               json_object('id', id, 'agent_id', agent_id, 'scope', scope,
+                           'content', content, 'created_ms', created_ms),
+               CAST(strftime('%s', 'now') AS INTEGER) * 1000
+          FROM agent_memory;
+    INSERT OR IGNORE INTO retired_feature_archive (source_table, row_key, row_json, archived_at)
+        SELECT 'kb_documents', id,
+               json_object('id', id, 'title', title, 'path', path,
+                           'chunks', chunks, 'added_ms', added_ms),
+               CAST(strftime('%s', 'now') AS INTEGER) * 1000
+          FROM kb_documents;
+    INSERT OR IGNORE INTO retired_feature_archive (source_table, row_key, row_json, archived_at)
+        SELECT 'kb_chunks', id,
+               json_object('id', id, 'doc_id', doc_id, 'ord', ord, 'text', text,
+                           'embedding_hex', CASE WHEN embedding IS NULL THEN NULL ELSE hex(embedding) END),
+               CAST(strftime('%s', 'now') AS INTEGER) * 1000
+          FROM kb_chunks;
+    DROP TABLE kb_chunks;
+    DROP TABLE kb_documents;
+    DROP TABLE agent_memory;
+    DROP TABLE agent_runs;
+    DROP TABLE review_views;
+";
+
 /// Reads cached architecture metadata for `tag`, if it was recorded against
 /// this exact `digest`.
 ///
@@ -417,6 +485,9 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 12 {
         tx.execute_batch(V12)?;
+    }
+    if version < 13 {
+        tx.execute_batch(V13)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
@@ -499,6 +570,10 @@ pub fn delete_one(conn: &Connection, id: &str) -> Result<()> {
 /// transaction — a stale sample from a previous run must never linger under
 /// an id whose aggregate has moved on.
 pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &[BenchSample]) -> Result<()> {
+    upsert_bench(conn, r, Some(samples))
+}
+
+fn upsert_bench(conn: &mut Connection, r: &BenchRun, samples: Option<&[BenchSample]>) -> Result<()> {
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO bench_runs (
@@ -580,8 +655,8 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
         ],
     )?;
 
-    tx.execute("DELETE FROM bench_samples WHERE bench_run_id = ?1", [&r.id])?;
-    {
+    if let Some(samples) = samples {
+        tx.execute("DELETE FROM bench_samples WHERE bench_run_id = ?1", [&r.id])?;
         let mut stmt = tx.prepare(
             "INSERT INTO bench_samples (
                 id, bench_run_id, repeat_index, is_warmup, prefill_tps, decode_tps, ttft_ms,
@@ -591,27 +666,21 @@ pub fn upsert_bench_with_samples(conn: &mut Connection, r: &BenchRun, samples: &
         )?;
         for s in samples {
             stmt.execute(rusqlite::params![
-                s.id,
-                s.bench_run_id,
-                s.repeat_index,
-                s.is_warmup,
-                s.prefill_tps,
-                s.decode_tps,
-                s.ttft_ms,
-                s.prompt_eval_count,
-                s.prompt_eval_duration_ns,
-                s.eval_count,
-                s.eval_duration_ns,
-                s.total_duration_ns,
-                s.load_duration_ns,
-                s.wall_start_ms,
-                s.created_at,
-                s.prompt_eval_cached_count,
+                s.id, s.bench_run_id, s.repeat_index, s.is_warmup, s.prefill_tps, s.decode_tps,
+                s.ttft_ms, s.prompt_eval_count, s.prompt_eval_duration_ns, s.eval_count,
+                s.eval_duration_ns, s.total_duration_ns, s.load_duration_ns, s.wall_start_ms,
+                s.created_at, s.prompt_eval_cached_count,
             ])?;
         }
     }
     tx.commit()?;
     Ok(())
+}
+
+/// Stores a new evidence-backed result without duplicating its raw attempts
+/// into the legacy sample table.
+pub fn upsert_bench_without_samples(conn: &mut Connection, r: &BenchRun) -> Result<()> {
+    upsert_bench(conn, r, None)
 }
 
 /// Every column of `bench_runs`, in the order [`row_to_bench`] reads them.

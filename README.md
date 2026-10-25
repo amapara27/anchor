@@ -110,6 +110,8 @@ Evidence record v1 / formula v1 recalculates request-to-first-output, first-answ
 
 Attempt metadata is saved before dispatch and frames are committed when the attempt finalizes. Graceful errors and cancellation retain evidence. A hard process kill can leave an unfinished record and lose that attempt's buffered frames; an unfinished record is not evidence that a process is still running. Memory remains an Ollama residency snapshot, not peak RSS. Replay verifies record/formula versions and recalculates from raw frames, ignoring exported derived values; it is not an authenticity signature or live-runtime calibration.
 
+Evidence-backed suite-v4 results no longer duplicate raw attempts into `bench_samples`; the existing table remains readable for older runs, and `bench samples` reconstructs the compatibility view from replayed evidence. Schema migration V13 archives retired agent and knowledge-base rows in `retired_feature_archive` (embeddings are preserved as hex JSON) before dropping their unused tables.
+
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
   <img src="docs/screenshots/benchmarks.png" alt="Benchmarks">

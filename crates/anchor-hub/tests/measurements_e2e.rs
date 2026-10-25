@@ -143,6 +143,9 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
         assert_eq!(run.flash_attn, None); assert_eq!(run.kv_cache_type, "unknown");
         assert_eq!(run.suite_version, 4);
         assert_eq!(run.quant.as_deref(), Some("F16"), "live quant wins over stale model cache");
+        let conn = rusqlite::Connection::open(fixture.scratch.join("measurements.db")).unwrap();
+        let stored_sample_rows: i64 = conn.query_row("SELECT COUNT(*) FROM bench_samples WHERE bench_run_id = ?1", [&run.id], |row| row.get(0)).unwrap();
+        assert_eq!(stored_sample_rows, 0, "evidence-backed runs do not duplicate raw attempts");
         let samples = registry.bench_samples_for(&run.id).unwrap();
         assert_eq!(samples.len(), run.repeats as usize);
         for sample in samples { assert_eq!(sample.prompt_eval_cached_count, Some(90)); assert!(!sample.is_warmup); assert!(sample.ttft_ms.unwrap() >= 70.0); }
@@ -224,7 +227,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert_eq!(history[0].ttft_ms_median, None); assert_eq!(history[0].flash_attn, None);
     assert_eq!(history[0].kv_cache_type, "unknown"); assert_eq!(history[0].resident_bytes, Some(3_000_000_000));
     assert!(db::bench_runs_for(&conn,&hw,None,Some(anchor_hub::SUITE_ID),None,None).unwrap().is_empty());
-    assert_eq!(upgraded.bench_samples_for(&history[0].id).unwrap()[0].ttft_ms, None);
+    assert!(upgraded.bench_samples_for(&history[0].id).unwrap().is_empty(), "legacy-shaped rows do not synthesize evidence samples");
     drop(conn);
     for (mode, message) in [(1,"completion frame"),(2,"decode measurement"),(3,"loaded 512"),(4,"malformed response"),(6,"cached token count"),(11,"completion frame"),(12,"malformed response"),(13,"malformed response"),(14,"decode measurement"),(16,"loaded digest"),(17,"frozen session identity")] {
         fixture.mode.store(mode, Ordering::Relaxed);
@@ -332,4 +335,30 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert!(stats.ttft_ms.unwrap() >= 70.0); assert_eq!(stats.prompt_eval_cached_count, Some(90));
     fixture.mode.store(1, Ordering::Relaxed);
     assert!(ollama::chat(&fixture.host,&chat,&cancel, |_,_|{}).await.unwrap_err().to_string().contains("completion frame"));
+
+    // V13 archives retired feature rows before removing their old tables.
+    let retired_path = fixture.scratch.join("retired.db");
+    let retired = rusqlite::Connection::open(&retired_path).unwrap();
+    retired.execute_batch("CREATE TABLE review_views (run_id TEXT PRIMARY KEY, viewed_at INTEGER NOT NULL);
+        CREATE TABLE agent_runs (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, model TEXT NOT NULL, task TEXT NOT NULL, status TEXT NOT NULL, started_ms INTEGER NOT NULL, duration_ms INTEGER NOT NULL, tokens INTEGER, detail_json TEXT);
+        CREATE TABLE agent_memory (id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, scope TEXT NOT NULL, content TEXT NOT NULL, created_ms INTEGER NOT NULL);
+        CREATE TABLE kb_documents (id TEXT PRIMARY KEY, title TEXT NOT NULL, path TEXT, chunks INTEGER NOT NULL DEFAULT 0, added_ms INTEGER NOT NULL);
+        CREATE TABLE kb_chunks (id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, ord INTEGER NOT NULL, text TEXT NOT NULL, embedding BLOB);
+        INSERT INTO review_views VALUES ('run-1', 11);
+        INSERT INTO agent_runs VALUES ('agent-1', 'old-agent', 'model', 'task', 'done', 1, 2, 3, '{\"ok\":true}');
+        INSERT INTO agent_memory VALUES ('memory-1', 'old-agent', 'scope', 'content', 4);
+        INSERT INTO kb_documents VALUES ('doc-1', 'title', '/tmp/doc', 1, 5);
+        INSERT INTO kb_chunks VALUES ('chunk-1', 'doc-1', 0, 'text', X'0102');
+        PRAGMA user_version=12;").unwrap();
+    drop(retired);
+    let _ = fixture.registry("retired.db");
+    let retired = rusqlite::Connection::open(&retired_path).unwrap();
+    let archived: i64 = retired.query_row("SELECT COUNT(*) FROM retired_feature_archive", [], |row| row.get(0)).unwrap();
+    assert_eq!(archived, 5);
+    let embedding: String = retired.query_row("SELECT row_json FROM retired_feature_archive WHERE source_table='kb_chunks'", [], |row| row.get(0)).unwrap();
+    assert!(embedding.contains("0102"));
+    for table in ["review_views", "agent_runs", "agent_memory", "kb_documents", "kb_chunks"] {
+        let exists: i64 = retired.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1", [table], |row| row.get(0)).unwrap();
+        assert_eq!(exists, 0, "retired table {table} should be removed");
+    }
 }

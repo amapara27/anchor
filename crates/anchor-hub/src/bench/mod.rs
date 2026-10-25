@@ -17,10 +17,11 @@ pub mod evidence;
 pub use prompts::{RepeatsMode, Scenario, CATALOG, HEADLINE_SCENARIO, SUITE_ID, SUITE_VERSION};
 
 use anchor_core::{BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity};
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use evidence::{BenchSession, Outcome, PlannedAttempt, SessionConfig};
 
-use crate::{ollama, status, GenerateRequest, GenerationStats, Registry, Result};
+use crate::{ollama, status, GenerateRequest, Registry, Result};
 
 /// `OSThermalPressureLevel`'s nominal value — anything above it is real
 /// thermal pressure, not a threshold we picked.
@@ -95,21 +96,12 @@ fn median(mut xs: Vec<f64>) -> Option<f64> {
 }
 
 /// Tokens per second from a generation's own reported counters.
+#[cfg(test)]
 fn tps(count: Option<u64>, duration_ns: Option<u64>) -> Option<f64> {
     match (count, duration_ns) {
         (Some(c), Some(d)) if d > 0 => Some(c as f64 / (d as f64 / 1e9)),
         _ => None,
     }
-}
-
-/// Observed request-to-first-output latency, in milliseconds.
-fn ttft_ms(stats: &GenerationStats) -> Option<f64> {
-    stats.ttft_ms
-}
-
-fn prefill_tps(stats: &GenerationStats) -> Option<f64> {
-    let uncached = stats.prompt_eval_count?.checked_sub(stats.prompt_eval_cached_count?)?;
-    (uncached > 0).then(|| tps(Some(uncached), stats.prompt_eval_duration_ns)).flatten()
 }
 
 fn now_ms() -> i64 {
@@ -165,28 +157,6 @@ fn auto_notes(label: &str, start: &EnvTelemetry) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("; "))
 }
 
-/// Builds one repeat's raw sample row from its generation stats.
-fn sample_from(bench_run_id: &str, repeat_index: u32, is_warmup: bool, wall_start_ms: i64, stats: &GenerationStats) -> BenchSample {
-    BenchSample {
-        id: format!("{bench_run_id}#{repeat_index}"),
-        bench_run_id: bench_run_id.to_string(),
-        repeat_index,
-        is_warmup,
-        prefill_tps: prefill_tps(stats),
-        decode_tps: tps(stats.eval_count, stats.eval_duration_ns),
-        ttft_ms: ttft_ms(stats),
-        prompt_eval_count: stats.prompt_eval_count,
-        prompt_eval_cached_count: stats.prompt_eval_cached_count,
-        prompt_eval_duration_ns: stats.prompt_eval_duration_ns,
-        eval_count: stats.eval_count,
-        eval_duration_ns: stats.eval_duration_ns,
-        total_duration_ns: stats.total_duration_ns,
-        load_duration_ns: stats.load_duration_ns,
-        wall_start_ms,
-        created_at: now_ms(),
-    }
-}
-
 impl Registry {
     /// Benchmark results from machines resembling `hw`, best match first, each
     /// tagged with the tier it matched at.
@@ -209,7 +179,56 @@ impl Registry {
 
     /// Raw per-repeat samples behind a stored run's medians.
     pub fn bench_samples_for(&self, bench_run_id: &str) -> Result<Vec<BenchSample>> {
-        crate::db::bench_samples_for(&self.connect()?, bench_run_id)
+        let conn = self.connect()?;
+        let stored = crate::db::bench_samples_for(&conn, bench_run_id)?;
+        if !stored.is_empty() || !bench_run_id.contains(':') {
+            return Ok(stored);
+        }
+        let is_evidence_backed = conn
+            .query_row(
+                "SELECT suite_id = ?2 AND suite_version >= ?3 FROM bench_runs WHERE id = ?1",
+                rusqlite::params![bench_run_id, SUITE_ID, SUITE_VERSION],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?;
+        if is_evidence_backed != Some(true) {
+            return Ok(stored);
+        }
+        let Some((session_id, scenario_id)) = bench_run_id.split_once(':') else {
+            return Ok(stored);
+        };
+        let evidence = self.bench_evidence(session_id)?;
+        let mut samples = evidence
+            .attempts
+            .iter()
+            .zip(&evidence.derived.attempts)
+            .filter_map(|(attempt, metrics)| {
+                let plan = evidence.session.config.attempts.get(attempt.plan_index)?;
+                (plan.scenario_id == scenario_id
+                    && !plan.is_warmup
+                    && attempt.outcome == evidence::Outcome::Completed)
+                    .then(|| BenchSample {
+                        id: format!("{bench_run_id}#{}", plan.repeat_index),
+                        bench_run_id: bench_run_id.to_string(),
+                        repeat_index: plan.repeat_index,
+                        is_warmup: false,
+                        prefill_tps: metrics.prefill_tps.value,
+                        decode_tps: metrics.decode_tps.value,
+                        ttft_ms: metrics.first_output_ms.value,
+                        prompt_eval_count: metrics.counters.prompt_eval_count,
+                        prompt_eval_cached_count: metrics.counters.prompt_eval_cached_count,
+                        prompt_eval_duration_ns: metrics.counters.prompt_eval_duration_ns,
+                        eval_count: metrics.counters.eval_count,
+                        eval_duration_ns: metrics.counters.eval_duration_ns,
+                        total_duration_ns: metrics.counters.total_duration_ns,
+                        load_duration_ns: metrics.counters.load_duration_ns,
+                        wall_start_ms: attempt.wall_start_ms,
+                        created_at: attempt.wall_start_ms,
+                    })
+            })
+            .collect::<Vec<_>>();
+        samples.sort_by_key(|sample| sample.repeat_index);
+        Ok(samples)
     }
 
     /// Recent benchmark runs on this exact machine, newest first — the
@@ -327,7 +346,6 @@ impl Registry {
                     on_progress(BenchProgress::ScenarioStarted { scenario_id: scenario.id.into(), num_ctx, index, total });
                     let repeat_count = prompts::repeats_for(scenario, repeats);
                     let id = format!("{}:{}", session.id, scenario.id);
-                    let mut samples = Vec::new();
                     let mut attempts = Vec::new();
                     for i in 1..=repeat_count {
                         let (attempt, metrics) = match self.benchmark_attempt(&session, plan_index, cancel, &mut on_progress).await {
@@ -342,7 +360,6 @@ impl Registry {
                         if let Some(d) = metrics.decode_tps.value {
                             on_progress(BenchProgress::Run { index: i, total: repeat_count, decode_tps: d });
                         }
-                        samples.push(sample_from(&id, i, false, attempt.wall_start_ms, &metrics.counters));
                         attempts.push(attempt);
                     }
                     let actual_ctx = attempts[0].observed_context.unwrap();
@@ -374,7 +391,7 @@ impl Registry {
                         ttft_ms_median: summary.ttft_ms_median, env_start: Some(env_start), env_end: Some(env_end),
                         prev_decode_tps_median: prev_decode, prev_ollama_version: prev_version, thermal_label: Some(label), notes,
                     };
-                    crate::db::upsert_bench_with_samples(&mut self.connect()?, &run, &samples)?;
+                    crate::db::upsert_bench_without_samples(&mut self.connect()?, &run)?;
                     on_progress(BenchProgress::ScenarioDone { run: Box::new(run.clone()), index, total });
                     results.push(run);
                 }
