@@ -9,6 +9,7 @@ export interface ScenarioRow {
   run?: BenchRun;
   /** Started but not finished — the row currently being measured. */
   pending?: boolean;
+  state?: "Queued" | "Running" | "Stopped" | "Failed";
 }
 
 /**
@@ -52,7 +53,7 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
             >
               <span className={cell + " flex min-w-0 items-center gap-1.5 text-[13px] text-fg"}>
                 {row?.pending && <span className="size-1.5 shrink-0 animate-pulse-dot rounded-full bg-accent" aria-hidden />}
-                {s.id}
+                <span className="min-w-0">{s.id}{row?.state && <span className={`mt-0.5 block text-[11px] ${row.state === "Failed" || row.state === "Stopped" ? "text-warn" : "text-fg-muted"}`}>{row.state}</span>}</span>
                 {/* Per-scenario, not per-suite: a long run can heat up partway,
                     so only some rows were measured under pressure. */}
                 {["throttled", "pressure"].includes(row?.run?.thermal_label ?? "") && (
@@ -62,11 +63,11 @@ export function ScenarioTable({ rows, onSelect }: { rows: ScenarioRow[]; onSelec
               <span className={cell + " data text-right text-[12px] text-fg-muted"}>{s.promptTokens}</span>
               <span className={cell + " data text-right text-[12px] text-fg-muted"}>{s.genTokens}</span>
               <span className={cell + " data text-right text-[12px] text-fg-subtle"}>{ctx / 1024}k</span>
-              <span className={cell + " data text-right text-[12px] text-fg-muted"}>{row?.run?.ttft_ms_median?.toFixed(0) ?? "—"}</span>
-              <span className={cell + " data text-right text-[12px] text-fg-muted"}>
-                {row?.run?.prefill_tps_median != null ? row.run.prefill_tps_median.toFixed(0) : "—"}
+              <span title={row?.run && row.run.ttft_ms_median == null ? "First-output timing is unavailable for one or more repeats" : undefined} className={cell + " data text-right text-[12px] text-fg-muted"}>{row?.run?.ttft_ms_median?.toFixed(0) ?? (row?.run ? "N/A" : "—")}</span>
+              <span title={row?.run && row.run.prefill_tps_median == null ? "Usable input, cache or timing counters are unavailable for one or more repeats" : undefined} className={cell + " data text-right text-[12px] text-fg-muted"}>
+                {row?.run?.prefill_tps_median != null ? row.run.prefill_tps_median.toFixed(0) : row?.run ? "N/A" : "—"}
               </span>
-              <span className={cell + " data text-right text-[12px] text-fg"}>
+              <span title={row?.run && tps == null ? "Decode needs at least two generated tokens and a supported timer in every planned repeat" : undefined} className={cell + " data text-right text-[12px] text-fg"}>
                 {tps != null ? tps.toFixed(1) : row?.pending ? "…" : row?.run ? "N/A" : "—"}
               </span>
               <span className={cell + " hidden lg:block"}>{tps != null && <Meter fraction={tps / best} height={4} />}</span>

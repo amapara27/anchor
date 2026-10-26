@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { BenchProgress, BenchRepeatsMode, BenchRun, BenchSessionSummary, CalibrationSummary, MatchQuality, BenchRuntime } from "../types";
-import { HEADLINE_SCENARIO, SUITE_ID } from "./scenarios";
+import { HEADLINE_SCENARIO, SCENARIOS_BY_COST, SUITE_ID } from "./scenarios";
 import { MEASUREMENTS_EVENT } from "./useMeasurements";
 import { recordUse } from "./lastUsed";
 
@@ -55,6 +55,9 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
   const [headlineGroups, setHeadlineGroups] = useState<MatchGroup[]>([]);
   const [progress, setProgress] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [runState, setRunState] = useState<"finished" | "stopped" | "failed" | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const stopRequested = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioProgress[]>([]);
@@ -93,13 +96,14 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
     return () => { cancelled = true; };
   }, [modelId, runtime, version]);
 
-  useEffect(() => { setCalibrationError(null); setCalibrationProgress(null); setScenarios([]); setWaveform([]); setError(null); }, [modelId, runtime]);
+  useEffect(() => { setCalibrationError(null); setCalibrationProgress(null); setScenarios([]); setWaveform([]); setError(null); setRunState(null); setRunStartedAt(null); }, [modelId, runtime]);
 
   const calibrate = useCallback((id: string) => {
     if (active.current) return;
     active.current = true;
     const myRun = ++runId.current;
     setCalibrating(true);
+    setStopping(false);
     setCalibration(null);
     setCalibrationError(null);
     setCalibrationProgress("Preparing Ollama…");
@@ -118,6 +122,7 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
         if (runId.current !== myRun) return;
         active.current = false;
         setCalibrating(false);
+        setStopping(false);
         setVersion(v => v + 1);
       });
   }, []);
@@ -198,7 +203,13 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
    *  backend unloads the model and emits its usual `done`, so nothing special
    *  is needed here beyond asking it to stop. */
   const stop = useCallback(() => {
-    invoke("stop_benchmark").catch(e => setError(`Could not stop the measurement: ${String(e)}`));
+    stopRequested.current = true;
+    setStopping(true);
+    invoke("stop_benchmark").catch(e => {
+      stopRequested.current = false;
+      setStopping(false);
+      setError(`Could not stop the measurement: ${String(e)}`);
+    });
   }, []);
 
   const run = useCallback(
@@ -208,6 +219,9 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
       const myRun = ++runId.current;
       recordUse(id); // feeds Storage's last-used column and its stale check
       setRunning(true);
+      setRunState(null);
+      setStopping(false);
+      stopRequested.current = false;
       setError(null);
       setProgress("starting");
       setScenarios([]);
@@ -244,17 +258,21 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
             );
             break;
           case "done":
+            setRunState(stopRequested.current && event.runs.length < SCENARIOS_BY_COST.length ? "stopped" : "finished");
+            setScenarios(ss => [...ss.filter(s => !event.runs.some(r => r.prompt_id === s.scenarioId)), ...event.runs.flatMap((run, i) => run.prompt_id ? [{
+              scenarioId: run.prompt_id, numCtx: run.num_ctx, index: i + 1,
+              total: SCENARIOS_BY_COST.length, run,
+            }] : [])]);
             setProgress(null);
             setRunning(false);
-            setRunStartedAt(null);
             setVersion((v) => v + 1);
             window.dispatchEvent(new Event(MEASUREMENTS_EVENT));
             break;
           case "failed":
+            setRunState("failed");
             setVersion((v) => v + 1);
             setProgress(null);
             setRunning(false);
-            setRunStartedAt(null);
             setError(event.message);
             break;
         }
@@ -262,14 +280,15 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
 
       invoke(runtime === "mlx" ? "run_mlx_suite" : "run_benchmark", { model: id, modelPath: id, repeats, scenario: null, onEvent: channel }).catch((e) => {
         if (runId.current !== myRun) return;
+        setRunState("failed");
         setProgress(null);
         setRunning(false);
-        setRunStartedAt(null);
+        // A failed MLX session may invalidate its earlier provisional rows.
         if (runtime === "mlx") setScenarios([]);
         setError(String(e));
         setVersion((v) => v + 1);
       }).finally(() => {
-        if (runId.current === myRun) { active.current = false; setRunning(false); }
+        if (runId.current === myRun) { active.current = false; setRunning(false); setStopping(false); }
       });
     },
     [runtime],
@@ -280,6 +299,8 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
     headlineGroups,
     progress,
     running,
+    runState,
+    stopping,
     error: error ?? loadError,
     scenarios,
     waveform,

@@ -84,7 +84,7 @@ pub enum Cmd {
     },
     /// Recalculate metrics from an evidence JSON file, without a runtime or database.
     Replay { path: std::path::PathBuf },
-    /// Probe the installed Ollama build. Counters remain diagnostic where unverified.
+    /// Probe the installed Ollama build and record which counters are verified.
     Calibrate {
         model: String,
         /// Use an isolated database here and save the full synthetic-probe evidence JSON.
@@ -154,7 +154,7 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
                     println!("{}: {:?} · input {} · cache {} · finish {} · {}", probe.attempt_id,
                         probe.outcome, probe.input_count, probe.cache, probe.finish, probe.stream);
                 }
-                println!("Engine counts and phase rates remain diagnostic; see the versioned report in the evidence export.");
+                println!("Engine counts and phase rates are runtime-reported; see the evidence report for verified counts and timing limits.");
             }
             if export.session.outcome != anchor_hub::bench::evidence::Outcome::Completed
                 || export.derived.calibration.as_ref().is_some_and(|r| r.probes.iter().any(|p| p.input_count == "mismatch" || p.finish == "length_count_mismatch")) {
@@ -183,7 +183,7 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             }
             // Context-tier warmups and unsuccessful attempts live in session evidence.
             println!("{:>6} {:>12} {:>12} {:>10}", "REPEAT", "PREFILL t/s", "DECODE t/s", "TTFT ms");
-            println!("Engine token counts and phase rates are diagnostic; TTFT is client observed.");
+            println!("Token counts and timing scopes depend on the recorded runtime/method; TTFT is client-observed.");
             for s in &samples {
                 println!(
                     "{:>6} {:>12} {:>12} {:>10}",
@@ -465,7 +465,7 @@ fn print_runs(runs: &[BenchRun], show_match: bool) {
         println!("no benchmark runs yet — try `anchor bench run <model>`");
         return;
     }
-    println!("PREFILL, DECODE and LOAD use diagnostic engine counters; timing scopes are runtime dependent.");
+    println!("PREFILL, DECODE and LOAD use the recorded runtime/method timing scopes; see the benchmark methodology.");
     // Run ids are 200-char composites — useless in a table, so the last column
     // is what actually distinguishes the rows: which machine (for a ranking) or
     // which scenario (for this machine's own history). `--json` carries the id.

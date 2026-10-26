@@ -301,7 +301,7 @@ pub(super) async fn observe_decode_timing(registry: &Registry, version: Option<&
 
 /// Token IDs come from a separately queried matching runner, never from chunk counts.
 pub(super) async fn tokenize(registry: &Registry, identity: &CalibrationIdentity, req: &GenerateRequest, events: &[RawEvent]) -> Result<TokenObservation> {
-    let unsupported = || crate::Error::Ollama("matching local llama-server tokenizer unavailable; counters remain diagnostic".into());
+    let unsupported = || crate::Error::Ollama("matching local llama-server tokenizer unavailable; token counts are unverified".into());
     let model_blob = identity.model_blob.as_ref().ok_or_else(unsupported)?.canonicalize().map_err(|_| unsupported())?;
     if identity.model_fingerprint.is_none() || identity.source_reference.is_none() { return Err(unsupported()); }
     let pid = identity.server_pid.ok_or_else(unsupported)?;

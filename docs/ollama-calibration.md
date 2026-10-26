@@ -24,10 +24,10 @@ The source reference is Ollama release commit [`b2da9e468af2479058ae18c6d908ed29
 | Changed suffix | Llama reused **143/153** tokens. Qwen reported **0/140** despite a shared text prefix. | Cache behavior depends on the model/backend/path. Do not promise prefix reuse from text alone. |
 | Changed leading text | Llama still reused **20/157** tokens from the fixed template prefix; Qwen reported **0/144**. | Changing user text does not prove zero cache reuse. |
 | Length stops | All `length` probes reached their declared cap, including cap 1. | Requested output is a cap; natural short completions remain valid serving observations. |
-| Natural stop/EOS | Both models produced visible `blue`: **1** visible tokenizer token, **2** engine output tokens, finish `stop`. Other stopped probes also had one extra engine token. | Consistent with hidden EOS. Visible retokenization cannot prove sampled token IDs; output count stays diagnostic. `stop` does not distinguish EOS from a stop sequence. |
+| Natural stop/EOS | Both models produced visible `blue`: **1** visible tokenizer token, **2** engine output tokens, finish `stop`. Other stopped probes also had one extra engine token. | Consistent with hidden EOS. Visible retokenization cannot prove sampled token IDs; output count remains runtime-reported. `stop` does not distinguish EOS from a stop sequence. |
 | Reasoning | Qwen cap 256 produced **256** reasoning tokens and **0** answer tokens, finish `length`. | First-output latency exists; first-answer latency is unavailable. Llama does not support thinking. |
 | Stream completion | Every completed probe had one valid terminal frame, then transport closure; the terminal timestamp remained separate from last content. | Protocol completion checked on this path. Failures/missing terminals remain covered by fixture E2E. |
-| One-token timing | Both models reported `eval_count=1`, `eval_duration=1000 ns` while client latency was hundreds/thousands of ms including load. | The resulting 1,000,000 tok/s is a native diagnostic, unsuitable as isolated generation throughput. |
+| One-token timing | Both models reported `eval_count=1`, `eval_duration=1000 ns` while client latency was hundreds/thousands of ms including load. | The resulting 1,000,000 tok/s is a raw runtime rate, unsuitable as isolated generation throughput. |
 
 The pinned backend source explains the one-token result: sampling the first token ends prompt processing, the generation timer starts at that boundary, and generation duration is clamped to at least 1 microsecond. The generation count includes that first token. See [`server-context.cpp`](https://github.com/ggml-org/llama.cpp/blob/161755f29/tools/server/server-context.cpp) around `stats.n_gen += 1` / `update_prompt_last`, and [`server-common.h`](https://github.com/ggml-org/llama.cpp/blob/161755f29/tools/server/server-common.h) around `t_gen_us` / `n_gen_steps`. Ollama maps those fields into native counters in its pinned [`llm/llama_server.go`](https://github.com/ollama/ollama/blob/b2da9e468af2479058ae18c6d908ed29de410684/llm/llama_server.go).
 
@@ -35,7 +35,7 @@ Keep original formulas and raw counters available for formula-1 replay. Formula 
 
 ## Retained evidence and reproducibility
 
-The command freezes the probe plan, records every started probe (including failures/cancellation), saves matching tokenizer requests/responses and raw token IDs, and recalculates the versioned report from those observations. It does not write `bench_runs` or duplicate `bench_samples` rows. Ordinary sessions keep diagnostic counters; a successful calibration does not automatically certify other sessions, contexts, templates or models. Report protocol versions are checked on replay; old exports without calibration fields remain readable.
+The command freezes the probe plan, records every started probe (including failures/cancellation), saves matching tokenizer requests/responses and raw token IDs, and recalculates the versioned report from those observations. It does not write `bench_runs` or duplicate `bench_samples` rows. Ordinary sessions keep raw runtime counters; a successful calibration does not automatically certify other sessions, contexts, templates or models. Report protocol versions are checked on replay; old exports without calibration fields remain readable.
 
 Local raw evidence is under the gitignored `.internal/benchmarking/calibration/` directory:
 
@@ -51,13 +51,13 @@ node tools/calibrate-ollama.mjs ./calibration/SESSION_ID.json
 target/debug/anchor --json bench replay ./calibration/SESSION_ID.json
 ```
 
-Without `--output`, the session uses the regular registry; `bench sessions` lists it and `bench export SESSION_ID --include-content` exports it. With `--output`, both the database and evidence stay in that directory. Calibration files use new random session IDs on every run. The independent Node check invokes actual Rust replay and checks event arithmetic, native diagnostic rate arithmetic, token counts and finish caps against stored raw values.
+Without `--output`, the session uses the regular registry; `bench sessions` lists it and `bench export SESSION_ID --include-content` exports it. With `--output`, both the database and evidence stay in that directory. Calibration files use new random session IDs on every run. The independent Node check invokes actual Rust replay and checks event arithmetic, raw runtime rate arithmetic, token counts and finish caps against stored raw values.
 
-Remaining diagnostic/unverified areas: `/api/chat`, other runtime versions/backends, generated/reasoning/EOS token-level traces, exact prefill/decode/load phase isolation, arbitrary context sizes/templates, native benchmark agreement, concurrency, overhead, task quality and confidence intervals. No public performance comparison is qualified by these probes.
+Remaining unverified areas: `/api/chat`, other runtime versions/backends, generated/reasoning/EOS token-level traces, exact prefill/decode/load phase isolation, arbitrary context sizes/templates, native benchmark agreement, concurrency, overhead, task quality and confidence intervals. No public performance comparison is qualified by these probes.
 
 ## Representative generation follow-up — 2026-10-25
 
-The GUI validation now includes short generation (cap 128), long generation (cap 512) and long input (cap 128), each after an observed unload, in addition to the original probes. All started attempts and original counters remain in the same evidence tables; no ranking rows are created. The report exposes both phase rates explicitly as diagnostics. Older evidence lacks these additional planned probes and remains readable.
+The GUI validation now includes short generation (cap 128), long generation (cap 512) and long input (cap 128), each after an observed unload, in addition to the original probes. All started attempts and original counters remain in the same evidence tables; no ranking rows are created. The report exposes both raw phase rates as runtime-reported observations. Older evidence lacks these additional planned probes and remains readable.
 
 The follow-up checks raw arithmetic, token/cap semantics and observed timing windows across ordinary generation lengths. It does not supply an independent synchronized native timing trace. Current formula-2 cards identify post-first decode and runtime-specific timing, disclose unchecked quality equivalence and omit winner badges. See [the retained rate study](phase-rate-calibration.md).
 

@@ -1019,14 +1019,6 @@ fn bench_sessions(app: AppHandle, limit: u32) -> Result<Vec<anchor_hub::bench::e
     registry(&app)?.bench_session_summaries(limit.min(200)).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-fn export_bench_evidence(app: AppHandle, id: String, include_content: bool) -> Result<String, String> {
-    if !include_content { return Err("Export includes prompts and raw output; content consent is required".into()); }
-    let evidence = registry(&app)?.bench_evidence(&id).map_err(|e| e.to_string())?;
-    // Serialize in Rust so nanosecond counters never pass through JavaScript numbers.
-    serde_json::to_string_pretty(&evidence).map_err(|e| e.to_string())
-}
-
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1120,7 +1112,6 @@ pub fn run() {
             bench_runs_for_model,
             bench_history,
             bench_sessions,
-            export_bench_evidence,
             latest_measurements
         ])
         .build(tauri::generate_context!())

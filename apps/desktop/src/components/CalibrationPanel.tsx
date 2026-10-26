@@ -1,6 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState } from "react";
 import type { CalibrationSummary } from "../types";
-import { exportEvidence } from "../lib/exportEvidence";
 import { formatRelativeTime } from "../lib/format";
 import { GhostButton } from "./PageHeader";
 import { ChevronRightIcon, StopIcon } from "./icons";
@@ -19,7 +18,7 @@ const PROBE_NAMES: Record<string, string> = {
   long_prompt: "Long input",
 };
 
-export function CalibrationResults({ result, initiallyExpanded = false, children }: { result: CalibrationSummary; initiallyExpanded?: boolean; children?: ReactNode }) {
+export function CalibrationResults({ result, initiallyExpanded = false }: { result: CalibrationSummary; initiallyExpanded?: boolean }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   const { probes } = result.report;
   const matched = probes.filter(p => p.input_count === "cross_checked_for_probe").length;
@@ -33,7 +32,6 @@ export function CalibrationResults({ result, initiallyExpanded = false, children
       <p className="mt-1 text-xs text-fg-muted">Ollama {result.runtime_version ?? "version unknown"} · requested 4K context · {formatRelativeTime(result.created_at)}</p>
       {result.error && <p className="mt-2 break-words text-xs text-danger">{result.error}</p>}
     </div>
-    <p className="text-xs text-fg-muted">Raw runtime counters stay separate. Post-first decode needs a supported timing convention. Checks cover this recorded request set.</p>
     {probes.length > 0 && <details className="group/checks" open={expanded} onToggle={e => setExpanded(e.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-fg-muted hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open/checks:rotate-90" />Request details</summary>
       <div className="mt-2 overflow-x-auto rounded-control border border-hair">
@@ -59,9 +57,8 @@ export function CalibrationResults({ result, initiallyExpanded = false, children
       </table>
     </div>
       <p className="mt-2 text-xs text-fg-muted">Answer / reasoning: retokenized text; hidden end tokens may differ. — means unknown.</p>
-      {children}
+      <p className="mt-2 text-xs leading-relaxed text-fg-muted">Raw runtime counters stay separate. Post-first decode needs a supported timing convention. Checks cover this recorded request set.</p>
     </details>}
-    {probes.length === 0 && children}
   </div>;
 }
 
@@ -76,17 +73,6 @@ export function CalibrationPanel({ modelId, result, running, busy, loading, prog
   onRun: () => void;
   onStop: () => void;
 }) {
-  const [includeContent, setIncludeContent] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-  useEffect(() => { setIncludeContent(false); setExportError(null); }, [modelId]);
-  const save = async () => {
-    if (!result) return;
-    setExporting(true); setExportError(null);
-    try { await exportEvidence(result.session_id, includeContent); }
-    catch (e) { setExportError(String(e)); }
-    finally { setExporting(false); }
-  };
   const key = progress?.replace(/^calibrating /, "");
   const message = key && PROBE_NAMES[key] ? `Checking ${PROBE_NAMES[key].toLowerCase()}…` : progress;
   return <section aria-label="Measurement validation" className="min-w-0 border-t border-hair pt-4">
@@ -95,17 +81,11 @@ export function CalibrationPanel({ modelId, result, running, busy, loading, prog
       {running ? <GhostButton onClick={onStop} tone="danger"><StopIcon className="size-3.5" />Stop validation</GhostButton>
         : <GhostButton onClick={onRun} disabled={!modelId || busy}>Validate measurements</GhostButton>}
     </div>
-    <p className="mt-1 max-w-[75ch] text-xs leading-relaxed text-fg-muted">Checks token counts, cache reuse and reported rates across short and long generations. Saves evidence without tuning the model or changing benchmark results.</p>
+    <p className="mt-1 max-w-[75ch] text-xs leading-relaxed text-fg-muted">Checks token counts, cache reuse and reported rates. Saves evidence without tuning the model or changing benchmark results.</p>
     {running && <p role="status" aria-live="polite" className="mt-3 text-sm text-fg">{message ?? "Checking Ollama…"}</p>}
     {!running && progress && <p role="status" className="mt-3 text-xs text-fg-muted">{progress}</p>}
     {error && <p role="alert" className="mt-3 break-words text-xs text-danger">{error} Try again when Ollama is available.</p>}
-    {!running && result?.model_name === modelId && <div className="mt-3"><CalibrationResults key={result.session_id} result={result}>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-xs text-fg-muted"><input type="checkbox" checked={includeContent} onChange={e => setIncludeContent(e.target.checked)} />Include prompts and output</label>
-        <GhostButton className="h-7 text-xs" disabled={!includeContent || exporting} onClick={() => void save()}>{exporting ? "Exporting…" : "Export evidence"}</GhostButton>
-        {exportError && <p role="alert" className="w-full break-words text-xs text-danger">{exportError}</p>}
-      </div>
-    </CalibrationResults></div>}
+    {!running && result?.model_name === modelId && <div className="mt-3"><CalibrationResults key={result.session_id} result={result} /></div>}
     {!running && !result && <p className="mt-3 text-xs text-fg-muted">{loading ? "Loading the last check…" : modelId ? "No validation recorded for this model." : "Install a model to check its measurements."}</p>}
   </section>;
 }

@@ -25,7 +25,7 @@ async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; o
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
-      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
+      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,benchFail:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
       quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:5,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
       gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.noDecode?null:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
@@ -120,12 +120,19 @@ async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; o
             state.sessions.unshift({id,protocol:'ollama_calibration_serving_v1',model_name:args.model,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:11,recorded_attempts:names.length,formula_version:2});
             return result;
           }
-          case 'export_bench_evidence': if(!args.includeContent) throw 'content consent required'; return '{"session":{"formula_version":1},"raw_counter":9007199254740993}';
-          case 'plugin:dialog|save': return '/fixture/evidence.json';
-          case 'plugin:fs|write_file': return;
           case 'latest_measurements': return Object.values(Object.fromEntries(state.runs.map((r:any)=>[r.model_name,r])));
           case 'run_benchmark': {
             state.benchStop=false;emit(args.onEvent,{kind:'status',message:'Warming up'});
+            if(state.benchFail) {
+              const row={...runFor(args.model),id:'partial-'+Date.now(),prompt_id:'classify',prompt_tokens:768,gen_tokens:32,num_ctx:1024};
+              emit(args.onEvent,{kind:'scenario_started',scenario_id:'classify',num_ctx:1024,index:1,total:9});
+              emit(args.onEvent,{kind:'scenario_done',run:row,index:1,total:9});
+              emit(args.onEvent,{kind:'scenario_started',scenario_id:'balanced',num_ctx:2048,index:2,total:9});
+              await sleep(1400);
+              state.runs.push(row);
+              state.sessions.unshift({id:'failed-'+Date.now(),protocol:'ollama_http_serving',model_name:args.model,hw_key:'test',created_at:Date.now(),outcome:'failed',error:'Generation interrupted by the runtime',planned_attempts:21,recorded_attempts:3,formula_version:2});
+              throw 'Generation interrupted by the runtime';
+            }
             if(options.measurements) {emit(args.onEvent,{kind:'sample',chunks_per_sec:12});await sleep(500);}
             await sleep(700);
             const runs=state.benchStop?[]:[runFor(args.model)];state.runs.push(...runs);
@@ -254,6 +261,8 @@ test('unavailable decode retains TTFT and cannot share a fabricated zero',async(
   await page.getByRole('button',{name:'Run suite',exact:true}).click();
   const row=page.getByRole('button').filter({hasText:'balanced'}).filter({hasText:'896'});
   await expect(row).toContainText('N/A');
+  await page.getByText('Unavailable measurements',{exact:false}).click();
+  await expect(page.getByText('N/A is never treated as zero.',{exact:false})).toBeVisible();
   await expect(page.getByRole('region',{name:'Benchmark status'})).toContainText('TTFT 100 ms');
   await row.click();
   await expect(page.getByRole('button',{name:/Share .* result/})).toBeDisabled();
@@ -470,7 +479,7 @@ test('global fit context, per-quant table, quick measure, version flags and copy
   await expect(inspector).toContainText('http://localhost:11434/v1/chat/completions');
 });
 
-test('execution evidence retains cancelled sessions and exports JSON with explicit content consent', async ({page}) => {
+test('execution evidence retains cancelled sessions without adding export controls', async ({page}) => {
   await boot(page);
   await nav(page, 'Benchmark').click();
   await page.getByRole('button', {name:'Run suite',exact:true}).click();
@@ -479,24 +488,16 @@ test('execution evidence retains cancelled sessions and exports JSON with explic
   await page.getByText('Run history', {exact:false}).first().click();
   const evidence = page.getByRole('region', {name:'Execution evidence'});
   await expect(evidence).toContainText('cancelled');
-  const exportButton = evidence.getByRole('button', {name:/Export JSON/}).first();
-  await expect(exportButton).toBeDisabled();
-  await evidence.getByRole('checkbox', {name:'Include prompts and output in exports'}).check();
-  await exportButton.click();
-  await expect.poll(() => page.evaluate(() => (window as any).__e2e.calls.some((c:any) => c.cmd==='plugin:fs|write_file'))).toBe(true);
-  const exportCall = await page.evaluate(() => (window as any).__e2e.calls.find((c:any) => c.cmd==='export_bench_evidence'));
-  expect(exportCall.args.includeContent).toBe(true);
-  expect(exportCall.args.id).toMatch(/^session-/);
   for (const width of [800, 1440]) {
     await page.setViewportSize({width,height:900});
     await expect(evidence).toBeVisible();
-    await expect(evidence.getByRole('checkbox')).toBeVisible();
+    await expect(evidence.getByRole('button', {name:/Export JSON/})).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await evidence.screenshot({path:`test-results/evidence-${width}.png`});
   }
 });
 
-test('GUI calibration runs, explains diagnostics, exports safely and stays in history', async ({page}) => {
+test('GUI calibration runs, explains diagnostics and stays in history', async ({page}) => {
   await boot(page);
   await nav(page,'Benchmark').click();
   const panel=page.getByRole('region',{name:'Measurement validation'});
@@ -519,11 +520,8 @@ test('GUI calibration runs, explains diagnostics, exports safely and stays in hi
   await expect(panel.getByRole('table')).toContainText('Post-first decode · tok/s');
   await expect(panel.getByRole('row').filter({hasText:'One-token limit'})).toContainText('1000000.0');
   await expect(panel.getByRole('row').filter({hasText:'One-token limit'})).toContainText('N/A');
-  const exportButton=panel.getByRole('button',{name:'Export evidence',exact:true});
-  await expect(exportButton).toBeDisabled();
-  await panel.getByRole('checkbox',{name:'Include prompts and output',exact:true}).check();
-  await exportButton.click();
-  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:fs|write_file'))).toBe(true);
+  await expect(panel.getByRole('button',{name:'Export evidence',exact:true})).toHaveCount(0);
+  await expect(panel.getByRole('checkbox',{name:/Include prompts and output/})).toHaveCount(0);
   for(const [width,theme] of [[800,'dark'],[1440,'light']] as const) {
     await page.setViewportSize({width,height:900});
     await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
@@ -566,7 +564,7 @@ test('GUI calibration reports startup failure and allows retry', async ({page}) 
   await expect(panel.getByRole('button',{name:'Validate measurements',exact:true})).toBeEnabled();
 });
 
-test('MLX uses the shared suite, named model picker, runtime scope and evidence export',async({page})=>{
+test('MLX uses the shared suite and named model picker with runtime-scoped history',async({page})=>{
   await boot(page);await nav(page,'Benchmark').click();
   await selectModel(page,'Benchmark runtime','MLX');
   await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('MLX Llama checkpoint');
@@ -582,6 +580,8 @@ test('MLX uses the shared suite, named model picker, runtime scope and evidence 
   await expect(classify).toContainText('32.0');
   await page.getByText('Measurement checks',{exact:true}).click();
   await expect(page.getByText('Client latency includes worker IPC and formatting.',{exact:false})).toBeVisible();
+  await expect(page.getByText('Runtime-reported phase rates; timing boundaries are unverified.',{exact:true})).toBeVisible();
+  await expect(page.getByLabel('Benchmarks view')).not.toContainText(/\bdiagnostic\b/i);
   await page.getByText('Checks and memory windows',{exact:true}).click();
   await expect(page.getByRole('table',{name:'MLX allocator windows'})).toContainText('0 B');
   await page.getByText('Measurement checks',{exact:true}).click();
@@ -595,6 +595,18 @@ test('MLX uses the shared suite, named model picker, runtime scope and evidence 
   await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
   await expect(page.getByText('Same tokenizer and template',{exact:true})).toBeVisible();
   await expect(page.getByText('MLX Llama checkpoint',{exact:true}).first()).toBeVisible();
+  await page.evaluate(()=>{
+    new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes){if(node instanceof HTMLElement && node.textContent?.includes('Post-first-token decode'))(window as any).__cardText=node.textContent;}}).observe(document.body,{childList:true});
+  });
+  await page.getByRole('button',{name:/Share .* result/}).click();
+  const preview=page.getByRole('dialog',{name:'Share benchmark card'});
+  await expect(preview.getByRole('img')).toBeVisible();
+  const cardText=await page.evaluate(()=>(window as any).__cardText);
+  expect(cardText).toContain('MLX benchmark v5');
+  expect(cardText).toContain('Runtime-specific timing · quality equivalence unchecked');
+  expect(cardText).not.toMatch(/diagnostic/i);
+  await preview.screenshot({path:'test-results/mlx-benchmark-share.png'});
+  await preview.getByRole('button',{name:'Close share preview'}).click();
   await selectModel(page,'Benchmark runtime','Ollama');
   await expect(page.getByText('No results for this scenario.',{exact:true})).toBeVisible();
   await selectModel(page,'Benchmark runtime','MLX');
@@ -602,9 +614,8 @@ test('MLX uses the shared suite, named model picker, runtime scope and evidence 
   const evidence=page.getByRole('region',{name:'Execution evidence'});await expect(evidence).toContainText('MLX suite');
   await evidence.getByRole('button',{name:/View checks/}).click();
   await expect(evidence).toContainText('Timing and allocator checks passed');
-  const save=evidence.getByRole('button',{name:/Export JSON/});await expect(save).toBeDisabled();
-  await evidence.getByRole('checkbox',{name:'Include prompts and output in exports',exact:true}).check();await save.click();
-  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:fs|write_file'))).toBe(true);
+  await expect(evidence.getByRole('button',{name:/Export JSON/})).toHaveCount(0);
+  await expect(evidence.getByRole('checkbox',{name:/Include prompts and output/})).toHaveCount(0);
   expect(await page.evaluate(()=>(window as any).__e2e.runs.length)).toBe(0);
 });
 
@@ -617,9 +628,47 @@ test('MLX shared-suite cancellation retains a cancelled execution',async({page})
 
 test('MLX shared-suite startup failure recovers and supports importing a checkpoint',async({page})=>{
   await boot(page,{empty:true,failNative:true});await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
-  await page.getByRole('button',{name:'Run suite',exact:true}).click();await expect(page.getByText(/Install uv and try again/)).toBeVisible();
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('Run could not finish');
+  await page.getByText('Error details',{exact:true}).click();
+  await expect(page.getByText(/Install uv and try again/)).toBeVisible();
   await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
   await selectModel(page,'Benchmark model','Add local checkpoint…');
   await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('Imported Llama checkpoint');
   await expect.poll(()=>page.evaluate(()=>JSON.parse(localStorage.getItem('anchor.mlx-models')??'[]'))).toContain('/local/imported-llama');
+});
+
+test('benchmark setup, progress and partial failure stay clear without reusing old results',async({page})=>{
+  await boot(page);await nav(page,'Benchmark').click();
+  await page.getByRole('button',{name:'Thorough',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Benchmark setup'})).toContainText('3 repeats each');
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();
+  const balanced=page.getByRole('button').filter({hasText:'balanced'}).filter({hasText:'896'});
+  await expect(balanced).toContainText('32.0');
+  await page.evaluate(()=>{(window as any).__e2e.benchFail=true;});
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();
+  await expect(balanced).toContainText('Running');
+  await expect(balanced).not.toContainText('32.0');
+  await expect(page.getByRole('progressbar',{name:'Benchmark scenarios completed'})).toHaveAttribute('aria-valuenow','1');
+  await expect(page.getByRole('combobox',{name:'Benchmark runtime'})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Thorough',exact:true})).toBeDisabled();
+  await expect(page.getByRole('alert')).toContainText('Run could not finish');
+  await expect(balanced).toContainText('Failed');
+  await expect(page.getByRole('region',{name:'Benchmark status'})).toContainText('1 of 9 workloads completed this run');
+  await expect(page.getByRole('button').filter({hasText:'classify'}).filter({hasText:'768'})).toContainText('32.0');
+  await expect(page.getByRole('alert').getByText('Generation interrupted by the runtime',{exact:true})).toBeHidden();
+  await page.getByText('Error details',{exact:true}).click();
+  await expect(page.getByRole('alert').getByText('Generation interrupted by the runtime',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  for(const [width,theme] of [[800,'dark'],[1440,'light']] as const){
+    await page.setViewportSize({width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+    await page.getByRole('heading',{name:'Benchmarks',exact:true}).scrollIntoViewIfNeeded();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:`test-results/benchmark-failure-${width}-${theme}.png`});
+  }
+  await page.getByText('Run history',{exact:false}).first().click();
+  await expect(page.getByText('Needs attention',{exact:true})).toBeVisible();
+  const evidence=page.getByRole('region',{name:'Execution evidence'});
+  await expect(evidence).toContainText('failed');
+  await expect(evidence).toContainText('3/21 attempts saved');
 });

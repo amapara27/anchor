@@ -2,11 +2,19 @@
 
 **Method v5 · Formula 2 · Prompt catalog 1 · Updated October 25, 2026**
 
-Anchor measures how local models respond to a fixed set of text workloads on your machine. The main results are **decode speed after the first token** and **time to first output (TTFT)**, with runtime-specific memory observations and the evidence needed to recalculate each result.
+Anchor runs the same set of text tasks on local models and records how each runtime performs on your Mac. This page explains what the numbers mean, how Anchor collects them, and what you can safely compare.
 
-This document describes the current implementation. A completed benchmark means the recorded execution passed its applicable checks. It does not establish answer quality, isolated GPU performance or a statistically significant winner.
+## The short version
 
-[Workloads](#what-the-suite-runs) · [Execution](#how-a-run-works) · [Metrics](#metrics-and-timing-boundaries) · [Validation](#how-measurements-are-validated) · [Runtime support](#runtime-support-and-limits) · [Reproduction](#inspect-and-reproduce-a-result)
+- **Decode rate** estimates generated tokens per second after the first token. Its timer is runtime-specific.
+- **TTFT** (time to first output) is how long you wait from sending a request until text first appears.
+- **Memory** is reported as a runtime-specific observation; Ollama and MLX values do not mean the same thing.
+- **Ollama and MLX results stay separate.** A completed run passes its applicable data checks, but does not prove answer quality or declare an overall fastest model.
+- **Every session keeps its raw observations locally.** The app shows saved results; the CLI can export and recalculate them.
+
+This is the methodology for the implementation that ships today, not a claim of MLPerf certification or an independent GPU-only measurement.
+
+[Workloads](#what-the-suite-runs) · [A benchmark run](#how-a-run-works) · [Measurements](#metrics-and-timing-boundaries) · [Validation](#how-measurements-are-validated) · [Engine support](#runtime-support-and-limits) · [Recalculate a result](#inspect-and-reproduce-a-result)
 
 ## What the suite runs
 
@@ -97,7 +105,7 @@ Validation has several scopes. A passing arithmetic or streaming check does not 
 | Layer | Checks performed | Limit |
 |---|---|---|
 | HTTP and stored evidence | Controlled streaming fixtures exercise first/last/terminal timing, fragmented/empty frames, reasoning, cache arithmetic, malformed/missing counters, missing terminal frames, context/digest mismatch, cancellation and persistence/export replay | Fixtures validate the collector and calculations, not physical GPU execution |
-| Desktop workflow | Browser and native macOS tests exercise selection, run/stop, saved results, measurement details and export through the actual UI/IPC path | Mocked runtime fixtures are not live model performance |
+| Desktop workflow | Browser and native macOS tests exercise selection, run/stop, saved results, measurement details and validation reports through the UI/IPC path | Mocked runtime fixtures are not live model performance |
 | Installed Ollama | Fixed tokenizer/cache/completion probes; short/long generation and long input; matched local model/runner evidence; formula-2 arithmetic and legacy replay | Scoped to the tested build, models and requests; no independent GPU-only timer |
 | Native MLX | Same-process allocation/reset/release/cache probes; completed-work and auxiliary-stream checks; real text generation, sampled-ID conservation, context/cache/EOS checks, source/checkpoint identity and export replay | Scoped allocator/timing validation; overhead and quality equivalence remain unchecked |
 
@@ -132,7 +140,7 @@ Environment observations include available hardware/macOS information, power and
 
 ## Inspect and reproduce a result
 
-In the app, use **Run history** for executions and outcomes, **View checks** for saved validation reports, and **Export evidence** after explicitly opting to include prompts and output. Full exports can contain private text, token IDs and local filesystem paths; review them before sharing.
+In the app, use **Run history** for executions and outcomes and **View checks** for saved validation reports. For offline inspection, the CLI can export a session with `anchor bench export SESSION_ID --include-content`; full exports can contain private text, token IDs and local filesystem paths, so review them before sharing.
 
 Each session has its own ID and retains its frozen plan, record/formula versions and observed attempts. Evidence includes raw frames, monotonic event offsets, counters, completion/closure events, actual context/model observations and environment snapshots. Runtime-specific tokenizer, binary, source and checkpoint fingerprints are included where collected. Unknown provenance stays unknown. Reruns preserve previous sessions.
 

@@ -56,7 +56,7 @@ for (const [index, attempt] of evidence.attempts.entries()) {
   if (evidence.session.formula_version>=2) close(probe.post_first_decode_tps,metrics.decode_tps.value,'post-first report');
   const cached = raw.prompt_eval_cached_count;
   close(metrics.prefill_tps.value, Number.isSafeInteger(cached) && cached < raw.prompt_eval_count && raw.prompt_eval_duration > 0
-    ? (raw.prompt_eval_count-cached)*1e9/raw.prompt_eval_duration : null, 'native diagnostic prefill');
+    ? (raw.prompt_eval_count-cached)*1e9/raw.prompt_eval_duration : null, 'runtime-reported prefill');
   if (raw.done_reason === 'length') assert.equal(raw.eval_count, plan.request.num_predict, 'reported cap count');
   const tokens = attempt.calibration?.tokens;
   if (tokens) {

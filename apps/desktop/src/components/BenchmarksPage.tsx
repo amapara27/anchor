@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BenchRepeatsMode, BenchRun, BenchRuntime, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel, NativeMlxSummary, MlxModel, MlxSuiteSummary } from "../types";
 import { invoke } from "@tauri-apps/api/core";
-import { exportEvidence } from "../lib/exportEvidence";
 import { CalibrationPanel, CalibrationResults } from "./CalibrationPanel";
 import { NativeMlxResults, MlxSuiteChecks } from "./MlxMeasurementChecks";
 import { useModels } from "../lib/useModels";
@@ -133,6 +132,8 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
     headlineGroups,
     progress,
     running,
+    runState,
+    stopping,
     error,
     scenarios,
     waveform,
@@ -150,6 +151,9 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
   } = useBenchmarks(modelId,runtime);
   useEffect(() => { onBusy?.(running || calibrating); }, [running, calibrating, onBusy]);
   const mlxSession=sessions.find(s=>s.protocol==="mlx_worker_text_v1" && (s.model_key ?? s.model_name)===modelId);
+  const suiteSession = sessions.find(s => (s.model_key ?? s.model_name) === modelId &&
+    (!runState || runStartedAt == null || s.created_at >= runStartedAt) &&
+    (runtime === "mlx" ? s.protocol === "mlx_worker_text_v1" : !s.protocol || s.protocol === "ollama_http_serving"));
   useEffect(()=>{let cancelled=false;setMlxChecks(null);if(runtime==="mlx" && mlxSession)invoke<MlxSuiteSummary>("mlx_suite_report",{id:mlxSession.id}).then(r=>{if(!cancelled)setMlxChecks(r);}).catch(e=>{if(!cancelled)setMlxModelError(String(e));});return()=>{cancelled=true;};},[runtime,mlxSession?.id]);
 
   // `groups` is driven entirely by which view is on screen: the Suite tab is
@@ -196,12 +200,17 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         const live = scenarios.find((x) => x.scenarioId === s.id);
         return {
           scenarioId: s.id,
-          run: live?.run ?? exactLocal.find((r) => r.prompt_id === s.id),
-          pending: live != null && live.run == null,
+          run: running || runState ? live?.run : exactLocal.find((r) => r.prompt_id === s.id),
+          pending: running && live != null && live.run == null,
+          state: live?.run ? undefined : running ? live ? "Running" : "Queued"
+            : runState === "failed" && live ? "Failed" : runState === "stopped" && live ? "Stopped"
+            : undefined,
         };
       }),
-    [exactLocal, scenarios],
+    [exactLocal, scenarios, running, runState],
   );
+  const unavailable = scenarioRows.filter(row => row.run &&
+    (row.run.decode_tps_median == null || row.run.prefill_tps_median == null || row.run.ttft_ms_median == null));
 
   const cardDataForRun = (r: BenchRun): BenchmarkCardData | null => {
     if (r.decode_tps_median == null) return null;
@@ -220,7 +229,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       decodeTps: r.decode_tps_median,
       postFirstDecode: r.suite_version >= 5,
       ttftMs: r.ttft_ms_median,
-      suiteLabel: `${r.suite_id === "anchor-mlx-scenarios" ? "MLX diagnostics" : r.suite_id} v${r.suite_version} · median of ${r.repeats} run${r.repeats === 1 ? "" : "s"}`,
+      suiteLabel: `${r.suite_id === "anchor-mlx-scenarios" ? "MLX benchmark" : r.suite_id} v${r.suite_version} · median of ${r.repeats} run${r.repeats === 1 ? "" : "s"}`,
       dateLabel: new Date(r.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
     };
   };
@@ -243,8 +252,12 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         </>}
       />
 
-      {error && <p className="text-sm text-danger">{error}</p>}
-      {runtime === "mlx" && mlxModelError && <p className="text-sm text-danger">{mlxModelError}</p>}
+      {error && runState !== "failed" && <div role="alert" className="flex flex-col gap-1.5 border-b border-hair pb-4 text-xs">
+        <p className="flex items-center gap-2 font-medium text-danger"><WarningIcon className="size-3.5" />Could not load benchmark data</p>
+        <p className="text-fg-muted">Select another model, then return to reload these results.</p>
+        <details><summary className="cursor-pointer text-fg-muted">Error details</summary><p className="mt-2 whitespace-pre-wrap break-words text-danger">{error}</p></details>
+      </div>}
+      {runtime === "mlx" && mlxModelError && <p role="alert" className="break-words text-xs text-danger">{mlxModelError}</p>}
 
       <div className="flex flex-col gap-4">
         <RunSetupCard
@@ -257,6 +270,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
           installed={installed}
           profile={profile}
           running={running}
+          stopping={stopping}
           calibrating={calibrating}
           repeatsMode={repeatsMode}
           setRepeatsMode={setRepeatsMode}
@@ -269,7 +283,12 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
           waveform={waveform}
           runProgress={runProgress}
           elapsedMs={elapsedMs}
-          mine={mine}
+          mine={runState ? scenarios.find(s => s.scenarioId === HEADLINE_SCENARIO)?.run : mine}
+          runState={runState}
+          stopping={stopping}
+          session={suiteSession}
+          completed={scenarios.filter(s => s.run).length}
+          failureError={runState === "failed" ? error : null}
         />
 
       </div>
@@ -300,7 +319,18 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
               }}
             />
           )}
-
+          {modelId && <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-fg-muted">
+            <span>TTFT in ms · Prefill and decode in tok/s</span>
+            <span>— not measured · N/A unavailable</span>
+          </div>}
+          {unavailable.length > 0 && <details className="group/unavailable text-xs text-fg-muted">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open/unavailable:rotate-90" />Unavailable measurements <span className="data">{unavailable.length}</span></summary>
+            <div className="mt-3 flex max-w-[75ch] flex-col gap-2 leading-relaxed">
+              <p>The response was recorded, but these metrics could not be calculated. N/A is never treated as zero.</p>
+              <ul className="divide-y divide-hair">{unavailable.map(({scenarioId, run}) => <li key={scenarioId} className="flex flex-wrap justify-between gap-x-4 py-1.5"><span className="text-fg">{scenarioId}</span><span>{[run?.ttft_ms_median == null && "TTFT", run?.prefill_tps_median == null && "Prefill", run?.decode_tps_median == null && "Decode"].filter(Boolean).join(" · ")}</span></li>)}</ul>
+              <p>Decode needs at least two generated tokens and a supported timer. Prefill needs usable input, cache and timing counters. Each median requires a value from every planned repeat.</p>
+            </div>
+          </details>}
         </section>
       )}
 
@@ -348,7 +378,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         </ul>
       </details>
       <details className="group border-t border-hair pt-4">
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-subtle">{history.length}</span></summary>
+        <summary className="flex cursor-pointer list-none flex-wrap items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-muted">{sessions.length} session{sessions.length === 1 ? "" : "s"}</span>{sessions.some(s => ["failed", "timed_out", "invalid"].includes(s.outcome)) && <span className="ml-2 flex items-center gap-1 text-xs text-warn"><WarningIcon className="size-3" />Needs attention</span>}</summary>
         <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={mine?.decode_tps_median != null} /></div>
         <SessionEvidence sessions={sessions} />
       </details>
@@ -360,8 +390,6 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
 }
 
 function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
-  const [includeContent, setIncludeContent] = useState(false);
-  const [exporting, setExporting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewed, setViewed] = useState<CalibrationSummary | null>(null);
   const [nativeViewed, setNativeViewed] = useState<NativeMlxSummary | null>(null);
@@ -388,36 +416,19 @@ function SessionEvidence({ sessions }: { sessions: BenchSessionSummary[] }) {
     catch(e) { setError(String(e)); }
     finally { setLoading(null); }
   };
-  const exportSession = async (id: string) => {
-    setExporting(id);
-    setError(null);
-    try {
-      await exportEvidence(id, includeContent);
-    } catch (e) { setError(String(e)); }
-    finally { setExporting(null); }
-  };
   return <section aria-label="Execution evidence" className="mt-4 flex flex-col gap-3">
     <h3 className="text-sm font-medium">Execution evidence</h3>
-    {sessions.some(s=>s.protocol?.startsWith("mlx_")) && <p className="text-xs text-fg-muted">Full MLX exports include model paths, token IDs and generated text.</p>}
-    <label className="flex items-center gap-2 text-xs text-fg-muted">
-      <input type="checkbox" checked={includeContent} onChange={e => setIncludeContent(e.target.checked)} />
-      Include prompts and output in exports
-    </label>
     {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     {sessions.length === 0 ? <p className="text-xs text-fg-muted">No recorded sessions. Earlier results have no raw event trace.</p> : sessions.map(s =>
       <div key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-hair py-2">
         <div className="min-w-0 flex-1">
-          <p className="text-xs"><span className="data break-all">{s.model_name}</span> · {s.protocol === "mlx_worker_text_v1" ? "MLX suite · " : s.protocol === "mlx_native_compute_v1" ? "native validation · " : s.protocol === "ollama_calibration_serving_v1" ? "validation · " : ""}{s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts</p>
-          <p className="data mt-1 break-all text-[11px] text-fg-muted">{s.id} · {formatRelativeTime(s.created_at)} · formula {s.formula_version}</p>
-          {s.error && <p className="mt-1 break-words text-xs text-danger">{s.error}</p>}
+          <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs"><span className="data break-all">{s.model_name}</span><span className={s.outcome === "completed" ? "text-fg-muted" : ["failed", "invalid", "timed_out"].includes(s.outcome) ? "text-danger" : "text-warn"}>{s.outcome === "running" ? "unfinished" : s.outcome.replaceAll("_", " ")}</span></p>
+          <p className="mt-1 text-[11px] text-fg-muted">{s.protocol === "mlx_worker_text_v1" ? "MLX suite" : s.protocol === "mlx_native_compute_v1" ? "Native validation" : s.protocol === "ollama_calibration_serving_v1" ? "Measurement validation" : "Ollama suite"} · <span className="data">{s.recorded_attempts}/{s.planned_attempts}</span> attempts saved · {formatRelativeTime(s.created_at)}</p>
+          <details className="mt-1 text-[11px] text-fg-muted"><summary className="cursor-pointer">Session details</summary><p className="data mt-1 break-all">{s.id} · formula {s.formula_version}</p>{s.error && <p className="mt-1 whitespace-pre-wrap break-words text-danger">{s.error}</p>}</details>
         </div>
         {s.protocol === "ollama_calibration_serving_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={() => void view(s.id)}>{loading === s.id ? "Loading…" : viewed?.session_id === s.id ? "Hide checks" : "View checks"}<span className="sr-only"> {s.id}</span></GhostButton>}
         {s.protocol === "mlx_native_compute_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={() => void view(s.id)}>{loading === s.id ? "Loading…" : nativeViewed?.session_id === s.id ? "Hide MLX result" : "View MLX result"}<span className="sr-only"> {s.id}</span></GhostButton>}
         {s.protocol === "mlx_worker_text_v1" && <GhostButton className="h-7 text-xs" disabled={loading != null} onClick={()=>void view(s.id)}>{loading===s.id ? "Loading…" : mlxViewed?.session_id===s.id ? "Hide checks" : "View checks"}<span className="sr-only"> {s.id}</span></GhostButton>}
-        <GhostButton className="h-7 text-xs" disabled={!includeContent || exporting != null} title={`Export evidence ${s.id}`} onClick={() => void exportSession(s.id)}>
-          {exporting === s.id ? "Exporting…" : "Export JSON"}
-          <span className="sr-only"> {s.id}</span>
-        </GhostButton>
         {viewed?.session_id === s.id && <div className="w-full py-2"><CalibrationResults result={viewed} initiallyExpanded /></div>}
         {nativeViewed?.session_id === s.id && <div className="w-full py-2"><NativeMlxResults result={nativeViewed} /></div>}
         {mlxViewed?.session_id === s.id && <div className="w-full py-2"><MlxSuiteChecks result={mlxViewed} /></div>}
@@ -463,6 +474,7 @@ function RunSetupCard({
   installed,
   profile,
   running,
+  stopping,
   calibrating,
   repeatsMode,
   setRepeatsMode,
@@ -478,15 +490,16 @@ function RunSetupCard({
   installed: LibraryModel[];
   profile: HardwareProfile | null;
   running: boolean;
+  stopping: boolean;
   calibrating: boolean;
   repeatsMode: BenchRepeatsMode;
   setRepeatsMode: (m: BenchRepeatsMode) => void;
   onRun: () => void;
   onStop: () => void;
 }) {
-  return <section aria-label="Benchmark setup" className="flex flex-wrap items-end gap-x-4 gap-y-3">
-    <Select<BenchRuntime> label="Runtime" ariaLabel="Benchmark runtime" value={runtime} onChange={setRuntime} options={[{value:"ollama",label:"Ollama"},{value:"mlx",label:"MLX"}]} disabled={running || calibrating} className="w-[130px]" />
-    <div className="min-w-[220px] max-w-[460px] flex-1">
+  return <section aria-label="Benchmark setup" className="grid grid-cols-[130px_minmax(0,1fr)] items-end gap-x-4 gap-y-3 min-[1100px]:grid-cols-[130px_minmax(220px,1fr)_auto_auto]">
+    <Select<BenchRuntime> label="Runtime" ariaLabel="Benchmark runtime" value={runtime} onChange={setRuntime} options={[{value:"ollama",label:"Ollama"},{value:"mlx",label:"MLX"}]} disabled={running || calibrating} />
+    <div className="min-w-0">
       {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={modelId ?? ""} onChange={setSelectedMlx} options={mlxModels.map(m=>({value:m.path,label:m.name.replace(/^.*\//,"").replaceAll("-"," ")})).concat({value:"__add_mlx__",label:"Add local checkpoint…"})} disabled={running || calibrating} placeholder="Choose a local MLX checkpoint"
         renderValue={o=><span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-ok" /><span className="data truncate text-[12px] font-medium">{o.label}</span></span>}
         renderOption={o=>o.value === "__add_mlx__" ? o.label : <span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-ok" /><span className="data min-w-0 flex-1 truncate">{o.label}</span></span>}
@@ -494,13 +507,14 @@ function RunSetupCard({
         disabled={installed.length === 0 || running || calibrating} variant="field" ariaLabel="Benchmark model"
         placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />}
     </div>
-    <div title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
-      <span className="mb-1.5 block text-xs text-fg-muted">Rigor</span>
+    <div className="w-max" title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
+      <span className="label-caps mb-1.5 block">Repeats</span>
       <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running || calibrating}
         options={[{key:"fast",label:"Fast"},{key:"thorough",label:"Thorough"}]} />
     </div>
-    {running ? <GhostButton onClick={onStop} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />Stop</GhostButton> :
-      <PrimaryButton onClick={onRun} disabled={!modelId || calibrating}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}
+    <div className="justify-self-end">{running ? <GhostButton onClick={onStop} disabled={stopping} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />{stopping ? "Stopping…" : "Stop"}</GhostButton> :
+      <PrimaryButton onClick={onRun} disabled={!modelId || calibrating}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}</div>
+    <p className="col-span-full text-xs text-fg-muted">Nine workloads · {repeatsMode === "thorough" ? "3 repeats each" : "3 repeats for short runs; 1 for long generations"} · warmups excluded from results</p>
   </section>;
 }
 
@@ -514,6 +528,11 @@ function LiveRunCard({
   runProgress,
   elapsedMs,
   mine,
+  runState,
+  stopping,
+  session,
+  completed,
+  failureError,
 }: {
   running: boolean;
   progress: string | null;
@@ -521,15 +540,24 @@ function LiveRunCard({
   runProgress: { index: number; total: number } | null;
   elapsedMs: number;
   mine: BenchRun | undefined;
+  runState: "finished" | "stopped" | "failed" | null;
+  stopping: boolean;
+  session: BenchSessionSummary | undefined;
+  completed: number;
+  failureError: string | null;
 }) {
-  if (!running && !mine) return null;
+  if (!running && !mine && !runState && !session) return null;
+  const interrupted = !running && (runState === "stopped" || runState === "failed" || (session && session.outcome !== "completed"));
   const liveTps = waveform.length ? waveform[waveform.length - 1] : null;
-  const displayTps = running ? liveTps : (mine?.decode_tps_median ?? null);
+  const displayTps = running ? liveTps : interrupted ? null : (mine?.decode_tps_median ?? null);
   const max = Math.max(...waveform, 1);
 
-  const title = running ? "Benchmarking" : "Last decode rate";
+  const title = failureError ? "Run could not finish" : running ? stopping ? "Stopping…" : "Benchmarking"
+    : interrupted ? runState === "stopped" ? "Run stopped" : runState === "failed" ? "Run failed" : session?.outcome === "cancelled" ? "Run stopped" : session?.outcome === "running" ? "Unfinished run" : "Run failed"
+    : mine ? "Last decode rate" : "Run finished";
   const meta = running
     ? (progress ?? "starting")
+    : interrupted ? "Recorded attempts are kept. Run the suite again to retry."
     : mine
       ? `${mine.model_name} · ${formatRelativeTime(mine.updated_at)}`
       : "";
@@ -539,18 +567,24 @@ function LiveRunCard({
   const filledSegments = running ? (runProgress?.index ?? 0) : mine ? totalSegments : 0;
 
   return <section aria-label="Benchmark status" className="flex flex-col gap-3 border-b border-hair pb-4">
+    <p role="status" className="sr-only">{title}{running ? ` · ${progress ?? "Preparing"}` : ""}</p>
+    <div role={failureError ? "alert" : undefined} className="flex flex-col gap-2">
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-      <span className="flex items-center gap-2 text-[13px] font-medium">{running && <span className="size-1.5 rounded-full bg-accent" aria-hidden />}{title}</span>
+      <span className={`flex items-center gap-2 text-[13px] font-medium ${failureError ? "text-danger" : interrupted ? "text-warn" : "text-fg"}`}>{failureError && <WarningIcon className="size-3.5" />}{running && <span className="size-1.5 rounded-full bg-accent" aria-hidden />}{title}</span>
       {displayTps != null && <span className="data text-[15px]">{displayTps.toFixed(1)} <span className="text-xs text-fg-muted">{running ? "chunks/s" : "tok/s"}</span></span>}
-      {!running && mine && displayTps == null && <span className="data text-[15px]">N/A</span>}
-      {!running && mine?.ttft_ms_median != null && <span className="data text-xs text-fg-muted">TTFT {mine.ttft_ms_median.toFixed(0)} ms</span>}
+      {!running && !interrupted && mine && displayTps == null && <span className="data text-[15px]">N/A</span>}
+      {!running && !interrupted && mine?.ttft_ms_median != null && <span className="data text-xs text-fg-muted">TTFT {mine.ttft_ms_median.toFixed(0)} ms</span>}
       <span className="min-w-0 flex-1 text-xs text-fg-muted">{meta}</span>
       {running ? <span className="data text-xs text-fg-muted">{formatElapsed(elapsedMs)}</span> : <ThermalReadout run={mine} />}
+    </div>
+    {failureError && <details className="text-xs text-fg-muted"><summary className="cursor-pointer">Error details</summary><p className="mt-2 whitespace-pre-wrap break-words text-danger">{failureError}</p></details>}
     </div>
     {running && waveform.length > 0 && <div className="flex h-8 items-end gap-px" aria-label="Received response chunks per second">
       {waveform.map((v,i)=><span key={i} className="min-w-px flex-1 bg-accent" style={{height:Math.max(3,Math.min(100,v/max*100))+"%"}} />)}
     </div>}
-    <div role="progressbar" aria-label="Benchmark scenarios completed" aria-valuemin={0} aria-valuemax={totalSegments} aria-valuenow={filledSegments} className={running ? "flex gap-1.5" : "sr-only"}>
+    {running && <div className="flex items-center justify-between text-[11px] text-fg-muted"><span>{filledSegments} of {totalSegments} workloads complete</span><span>{liveTps == null ? "Waiting for output" : "Live chart · received chunks/s"}</span></div>}
+    {!running && runState && <p className="text-xs text-fg-muted">{completed} of {SCENARIOS_BY_COST.length} workloads completed this run</p>}
+    <div role="progressbar" aria-label="Benchmark scenarios completed" aria-valuemin={0} aria-valuemax={totalSegments} aria-valuenow={filledSegments} aria-valuetext={`${filledSegments} of ${totalSegments} workloads complete`} className={running ? "flex gap-1.5" : "hidden"}>
       {Array.from({length:totalSegments},(_,i)=><span key={i} className="h-1 flex-1 bg-hair"><span className="block h-full bg-accent" style={{width:i<filledSegments?"100%":"0%"}} /></span>)}
     </div>
   </section>;
@@ -596,8 +630,8 @@ function HistoryCard({
 
       <div className="flex flex-1 flex-col overflow-y-auto">
         {rows.length === 0 ? (
-          <p className="flex flex-1 items-center justify-center px-5 text-center text-[12.5px] text-fg-muted">
-            No runs yet.
+          <p className="flex flex-1 items-center justify-center px-5 py-5 text-center text-[12.5px] text-fg-muted">
+            No completed scenario results. Started attempts appear below.
           </p>
         ) : (
           rows.map((r, i) => (
@@ -685,7 +719,7 @@ function Group({
                 height={6}
               />
               <span className={`data text-right text-[12.5px] ${mine ? "text-accent-text" : "text-fg"}`}>
-                {r.decode_tps_median != null ? `${r.decode_tps_median.toFixed(1)} t/s` : "—"}
+                {r.decode_tps_median != null ? `${r.decode_tps_median.toFixed(1)} t/s` : "N/A"}
               </span>
               <button
                 type="button"

@@ -28,6 +28,8 @@ Anchor also owns the Ollama server lifecycle: it starts `ollama serve` on launch
 
 Built for developers, students, researchers, and small business operators who want capable AI running locally without touching a command line. Apple Silicon is the primary target.
 
+**Here for the benchmark numbers?** [Read how Anchor measures performance](docs/benchmark-methodology.md), including the timing boundaries, validation checks, and limits of comparisons.
+
 ## Install
 
 **Requirement:** [Ollama](https://ollama.com/download) must be installed. Anchor starts and stops the server for you, but it does not bundle the inference engine.
@@ -100,7 +102,7 @@ Run nine text workloads covering classification, summarization, explanation, cre
 
 The main measurements are **decode speed after the first token** and **TTFT**, the wait from request dispatch to first output. Memory observations retain their runtime-specific scope. The live waveform shows chunks/s. Input sizes are approximate targets and output lengths are caps; actual counts and early stops are saved.
 
-Every session keeps its configuration, raw events, counters, warmups and started attempts, including failures and cancellation. Run history offers evidence export; exported data can be replayed offline with the CLI. Missing measurements stay unavailable. Current method-v5 results use formula 2; older results remain in history. Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims remain unchecked.
+Every session keeps its configuration, raw events, counters, warmups and started attempts, including failures and cancellation. Run history keeps the reports in the app; the CLI can export and replay raw evidence offline. Missing measurements stay unavailable. Current method-v5 results use formula 2; older results remain in history. Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims remain unchecked.
 
 **[Read the benchmark methodology](docs/benchmark-methodology.md)** for the workload table, timing formulas, cache and memory scopes, validation coverage, runtime support limits and reproduction instructions.
 

@@ -25,7 +25,7 @@ Normal `mlx_lm.stream_generate` applies the checkpoint's chat template with thin
 | First output | Rust monotonic dispatch → first nonempty worker text frame; includes IPC, formatting and resident worker work. It is not HTTP or isolated GPU timing. |
 | Completion | Rust dispatch → valid terminal generation frame; worker request closure and final process EOF/success are checked separately. |
 | First answer | Unavailable: answer/reasoning channels are not independently separated. |
-| Prefill / raw decode rates | Raw MLX-LM `prompt_tps` / `generation_tps`, explicitly **diagnostic**. Upstream prompt timing includes first-token work; decode numerator/timer and EOS/consumer conventions differ. Formula 2 keeps these values separate from its headline post-first rate. |
+| Prefill / raw decode rates | Raw MLX-LM `prompt_tps` / `generation_tps`, retained as **runtime-reported observations**. Upstream prompt timing includes first-token work; decode numerator/timer and EOS/consumer conventions differ. Formula 2 keeps these values separate from its headline post-first rate. |
 | Live waveform | Received nonempty chunks per second; not the final decode token rate. |
 | Load allocator peak | Reset before model/tokenizer loading, sampled after resident parameters evaluate and the worker stream synchronizes. Excludes uv/imports, hashing and boundary probes. |
 | Inference allocator peak | Per-request reset after fresh-cache creation, both participating streams drained, unused buffers cleared and active/cache baselines recorded; sampled after normal generation drains both streams. Includes live model allocations, not process RSS, total Mac memory or isolated KV usage. |

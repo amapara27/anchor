@@ -44,15 +44,22 @@ export function NativeMlxResults({result, children}: {result: NativeMlxSummary; 
 
 export function MlxSuiteChecks({result}: {result: MlxSuiteSummary}) {
   const r=result.report;
-  return <div className="flex flex-col gap-2 text-xs text-fg-muted">
-    <p>{result.runtime_version ?? "MLX"} · {r.boundaries_validated ? "Timing and allocator checks passed" : "Measurement checks incomplete"}</p>
-    <p>Normal text generation with a fresh prompt cache.</p>
-    <p>{r.rate_status}.</p>
-    <p>Client latency includes worker IPC and formatting. Quality equivalence and cross-runtime comparisons are unchecked.</p>
-    <p>Load allocator peak: <span className="data">{bytes(r.load_peak_bytes)}</span>. Allocator bytes include resident weights; they are not process RSS or total Mac memory.</p>
+  const rateStatus = r.rate_status === "diagnostic"
+    ? "Runtime-reported phase rates; timing boundaries are unverified"
+    : r.rate_status.replace(/^diagnostic:\s*/i, "Runtime-reported: ");
+  return <div className="flex flex-col gap-3 text-xs text-fg-muted">
+    <p className={r.boundaries_validated ? "font-medium text-fg" : "font-medium text-warn"}>{r.boundaries_validated ? "Timing and allocator checks passed" : "Measurement checks incomplete"}</p>
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 leading-relaxed">
+      <dt>Runtime</dt><dd className="data break-words text-fg">{result.runtime_version ?? "MLX"}</dd>
+      <dt>Prompt cache</dt><dd>Normal text generation with a fresh prompt cache.</dd>
+      <dt>Rate scope</dt><dd>{rateStatus}.</dd>
+      <dt>Latency</dt><dd>Client latency includes worker IPC and formatting.</dd>
+      <dt>Load allocator peak</dt><dd><span className="data text-fg">{bytes(r.load_peak_bytes)}</span> · includes resident weights; not process RSS or total Mac memory.</dd>
+    </dl>
+    <p>Quality equivalence and cross-runtime comparisons are unchecked.</p>
     <details className="group/windows">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open/windows:rotate-90" />Checks and memory windows</summary>
-      <ul className="mt-2 space-y-1">{r.boundary_checks.map(c=><li key={c.name}>{c.name}: {c.passed ? "checked" : "failed"}</li>)}</ul>
+      <ul className="mt-2 max-w-[640px] divide-y divide-hair">{r.boundary_checks.map(c=><li key={c.name} className="flex justify-between gap-4 py-1.5"><span>{c.name}</span><span className={c.passed ? "text-fg" : "text-danger"}>{c.passed ? "checked" : "failed"}</span></li>)}</ul>
       <div className="mt-2 overflow-x-auto rounded-control border border-hair"><table aria-label="MLX allocator windows" className="w-full text-left">
         <thead><tr className="border-b border-hair">{["Attempt", "Active baseline", "Cached baseline", "Inference peak"].map(h=><th className="th whitespace-nowrap px-3 py-2" key={h}>{h}</th>)}</tr></thead>
         <tbody>{r.memory.map(w=><tr key={w.plan_index} className="border-b border-hair last:border-0"><th className="data px-3 py-2 font-normal">{w.plan_index+1}</th><td className="data whitespace-nowrap px-3 py-2">{bytes(w.baseline_active_bytes)}</td><td className="data whitespace-nowrap px-3 py-2">{bytes(w.baseline_cache_bytes)}</td><td className="data whitespace-nowrap px-3 py-2">{bytes(w.peak_bytes)}</td></tr>)}</tbody>

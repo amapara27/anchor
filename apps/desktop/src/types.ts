@@ -106,22 +106,22 @@ export interface PullProgress {
 /**
  * Timing/throughput stats from a completed generation, mirrored from
  * `anchor_hub::GenerationStats`. Raw nanosecond durations and token counts; the
- * UI derives native diagnostic rates, e.g. `eval_count / (eval_duration_ns / 1e9)`.
+ * Benchmark replay derives versioned rates; original counters remain unchanged.
  */
 export interface GenerationStats {
   prompt_eval_cached_count?: number;
   ttft_ms?: number;
-  /** Engine-internal request duration; diagnostic, not client completion latency. */
+  /** Engine-internal request duration; separate from client completion latency. */
   total_duration_ns?: number;
-  /** Engine load/setup duration in ns; diagnostic, not an isolated load interval. */
+  /** Engine load/setup duration in ns; its window is runtime-specific. */
   load_duration_ns?: number;
-  /** Logical input count including cached tokens; diagnostic outside calibrated probes. */
+  /** Logical input count including cached tokens; unverified outside recorded probes. */
   prompt_eval_count?: number;
-  /** Engine prompt-phase ns; diagnostic, can include first-token work. */
+  /** Engine prompt-phase ns; can include first-token work. */
   prompt_eval_duration_ns?: number;
   /** Engine output count; can include hidden reasoning and EOS tokens. */
   eval_count?: number;
-  /** Engine generation-phase ns; diagnostic, can exclude first-token work. */
+  /** Engine generation-phase ns; can exclude first-token work. */
   eval_duration_ns?: number;
 }
 

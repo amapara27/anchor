@@ -1,4 +1,4 @@
-# Phase-rate evidence and diagnostic rankings
+# Phase-rate evidence and validation
 
 The [benchmark methodology](benchmark-methodology.md) is the current reader-facing reference for workloads, metrics and runtime support. This report preserves the earlier raw-counter study alongside the versioned correction.
 
@@ -32,9 +32,9 @@ The inspected source conventions are recorded in [Ollama findings](ollama-calibr
 
 ## Fixed plans and observations
 
-Ollama's validation now uses ten predeclared requests, or eleven when reasoning is supported: unload/repeat/shared/changed-prefix, cap one, natural stop, Unicode, short generation (cap 128), long generation (cap 512), long input (cap 128), and optional reasoning (cap 256). The added three requests each follow an observed unload. The same collector, stored attempts and versioned replay power the GUI validation button. New optional diagnostic prefill/decode report fields are derived from raw events; old exports remain readable. Validation creates no ranking rows and certifies no later session.
+Ollama's validation now uses ten predeclared requests, or eleven when reasoning is supported: unload/repeat/shared/changed-prefix, cap one, natural stop, Unicode, short generation (cap 128), long generation (cap 512), long input (cap 128), and optional reasoning (cap 256). The added three requests each follow an observed unload. The same collector, stored attempts and versioned replay power the GUI validation button. New optional raw prefill/decode report fields are derived from raw events; old exports remain readable. Validation creates no ranking rows and certifies no later session.
 
-Both live Ollama models completed their entire plan, matched each rendered input token count and retained terminal/transport completion. Selected raw diagnostics were:
+Both live Ollama models completed their entire plan, matched each rendered input token count and retained terminal/transport completion. Selected raw runtime observations were:
 
 | Model / request | Input / generated tokens | Reported decode time | Reported decode rate |
 |---|---:|---:|---:|
@@ -51,7 +51,7 @@ These are individual descriptive observations, not a model comparison or stable 
 
 MLX evidence covers all nine normal text workloads on Llama 3.2 1B Instruct, with separately recorded 4-bit and 8-bit checkpoints, 21 retained attempts each including four warmups. Both completed all planned scenarios with conserved sampled IDs, stop/length checks, fresh caches, valid allocator boundaries, final stream drain and unchanged source/checkpoint identity. The 4-bit record predates this follow-up; these are not randomized matched A/B blocks.
 
-For example, the 8-bit balanced request sampled ten tokens, including its terminal EOS. Its upstream diagnostic was **76.04 tok/s**. The observed worker interval after the first sample was **149.014 ms**, containing nine remaining sampled tokens: an explicitly scoped outer-window observation of **60.40 sampled tokens/s**. On the longer reasoning request, the upstream diagnostic was **65.07 tok/s**, versus **64.44 sampled tokens/s** over its outer post-first-sample window (223 remaining sampled tokens). Different intervals and numerators explain why these values cannot simply be treated as identical measurements or as a tolerance test. They do not establish a universal correction.
+For example, the 8-bit balanced request sampled ten tokens, including its terminal EOS. Its upstream rate was **76.04 tok/s**. The observed worker interval after the first sample was **149.014 ms**, containing nine remaining sampled tokens: an explicitly scoped outer-window observation of **60.40 sampled tokens/s**. On the longer reasoning request, the upstream rate was **65.07 tok/s**, versus **64.44 sampled tokens/s** over its outer post-first-sample window (223 remaining sampled tokens). Different intervals and numerators explain why these values cannot simply be treated as identical measurements or as a tolerance test. They do not establish a universal correction.
 
 ## Reproduction and retained evidence
 
@@ -64,7 +64,7 @@ Raw records live in existing session/attempt tables and these gitignored JSON ex
 
 `node tools/calibrate-phase-rates.mjs EXPORT ...` invokes actual Rust replay and checks original rate arithmetic, terminal/cap constraints and MLX sampled-ID conservation. It records input-export SHA-256 values, model/runtime/hardware identities, every attempt/outcome, unknown values, client latency and explicitly named worker outer windows. It does not average different workloads, manufacture durations from MLX rates, discard warmups or infer eligibility from agreement. Combined output is `.internal/benchmarking/phase-rate-validation/study.json` (63 attempts). Original raw evidence remains the source of truth; the study is reproducible analysis, not an authenticity signature.
 
-The separate `tools/calibrate-ollama.mjs` check passed both new Ollama exports and an older seven-probe export, preserving existing fields while accepting additive diagnostic report fields. GPU/SQLite/export replay and corrupted-evidence checks passed on the actual 8-bit MLX checkpoint. Browser E2E checks cover both runtime labels and the actual benchmark PNG's text, including the absence of rank badges.
+The separate `tools/calibrate-ollama.mjs` check passed both new Ollama exports and an older seven-probe export, preserving existing fields while accepting additive raw-rate report fields. GPU/SQLite/export replay and corrupted-evidence checks passed on the actual 8-bit MLX checkpoint. Browser E2E checks cover both runtime labels and the actual benchmark PNG's text, including the absence of rank badges.
 
 ## Result claims
 

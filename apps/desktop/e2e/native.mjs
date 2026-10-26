@@ -98,14 +98,8 @@ try{
   const sessions=await execute("return window.__TAURI_INTERNALS__.invoke('bench_sessions',{limit:10});");
   assert(sessions.some(s=>s.outcome==='cancelled'),'cancelled execution retains a session');
   const complete=sessions.find(s=>s.outcome==='completed');assert(complete);
-  const consent=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(complete.id)},includeContent:false}).then(()=>false,()=>true);`);
-  assert.equal(consent,true,'content export requires explicit consent');
-  const raw=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(complete.id)},includeContent:true});`);
-  assert.equal(typeof raw,'string','integer counters stay in Rust-serialized JSON');
-  const evidence=JSON.parse(raw);assert.equal(evidence.results.length,9);
-  assert(evidence.session.config.attempts.some(a=>a.is_warmup));
-  assert(evidence.attempts.every(a=>a.events.some(e=>e.kind==='frame')));
-  assert(evidence.derived.scenarios.every(s=>s.complete));
+  assert.equal(complete.recorded_attempts,complete.planned_attempts,'completed suite attempts remain persisted');
+  const visible=await visibleText();assert(!visible.includes('Export JSON')&&!visible.includes('Include prompts and output in exports'));
   // Calibration is usable from the GUI and shares real cancellation/persistence.
   const beforeCalibration=requests.length;
   slow=true;await click('Validate measurements');
@@ -120,9 +114,7 @@ try{
   assert.equal(calibrated.report.probes.length,10);assert.equal(calibrated.config,undefined);
   const recalled=await execute(`return window.__TAURI_INTERNALS__.invoke('calibration_report',{id:${JSON.stringify(calibrated.session_id)}});`);
   assert.equal(recalled.session_id,calibrated.session_id);
-  const rawCalibration=await execute(`return window.__TAURI_INTERNALS__.invoke('export_bench_evidence',{id:${JSON.stringify(calibrated.session_id)},includeContent:true});`);
-  assert.equal(JSON.parse(rawCalibration).results.length,0,'calibration creates no ranking rows');
-  assert.equal(JSON.parse(rawCalibration).derived.calibration.protocol_version,1);
+  assert.equal(calibrated.report.probes.length,10,'calibration evidence remains inspectable in-app');
   await nav('Explore');await nav('Benchmark');
   assert.match(await visibleText(),/Checks recorded/,'calibration survives navigation');
   if(process.env.ANCHOR_MLX_E2E_MODEL) {
@@ -139,12 +131,7 @@ try{
     const nativeSummary=await execute('return window.__TAURI_INTERNALS__.invoke("mlx_suite_report",{id:'+JSON.stringify(native.id)+'});');
     assert.equal(nativeSummary.report.boundaries_validated,true);assert.equal(nativeSummary.report.identity_unchanged,true);
     assert.equal(nativeSummary.report.comparison_eligible,false);assert.equal(nativeSummary.config,undefined);
-    const nativeRaw=await execute('return window.__TAURI_INTERNALS__.invoke("export_bench_evidence",{id:'+JSON.stringify(native.id)+',includeContent:true});');
-    const nativeExport=JSON.parse(nativeRaw);assert.equal(nativeExport.derived.scenarios.length,9);assert.equal(nativeExport.results.length,0);
-    assert.match(nativeExport.session.config.mlx.identity.python,/^3\.11\./,'packaged worker uses the pinned Python minor');
-    assert(nativeExport.derived.scenarios.every(s=>s.complete));assert(nativeExport.session.config.attempts.some(a=>a.is_warmup));
-    assert(nativeExport.derived.attempts.every(a=>a.counter_status==='diagnostic'&&a.counters.eval_duration_ns==null));
-    await writeFile(path.join(scratch,'mlx-suite-evidence.json'),nativeRaw);
+    assert.equal(native.recorded_attempts,native.planned_attempts,'MLX attempts remain persisted');
     await click('Measurement checks','summary');
     assert.match(await visibleText(),/Timing and allocator checks passed/);
     await nav('Explore');await nav('Benchmark');
@@ -161,11 +148,11 @@ try{
     await attrClick('Benchmark model');await click(catalog[1].name,'[role="option"]');
     await wait(async()=> (await visibleText()).includes('Checks recorded'),'recalled Ollama validation');
     assert.match(await visibleText(),/Checks recorded/,'Ollama validation remains separate');
-    console.log('Live MLX suite E2E passed: shared GUI → uv → GPU → SQLite → checks/export; Stop and runtime separation.');
+    console.log('Live MLX suite E2E passed: shared GUI → uv → GPU → SQLite → checks; Stop and runtime separation.');
   }
   // SQLite queries above verify persisted data beyond the component state.
   await request('DELETE','/session/'+session);session=null;child.kill('SIGTERM');
-  success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, calibration cancellation/report/export, SQLite persistence.');
+  success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, calibration cancellation/report, SQLite persistence.');
 }catch(error){await writeFile(path.join(scratch,'state.json'),JSON.stringify({requests,page: session ? await execute(`return {url:location.href,text:document.body.innerText,mains:Array.from(document.querySelectorAll('main')).map(e=>({hidden:e.hidden,attributes:e.outerHTML.slice(0,250),text:e.innerText}))}`).catch(String) : null},null,2));await writeFile(path.join(scratch,'native.log'),log);console.error('Native E2E evidence: '+scratch);throw error;}
 finally{
   if(session)await request('DELETE','/session/'+session).catch(()=>{});
