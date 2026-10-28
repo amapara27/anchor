@@ -65,6 +65,11 @@ try{
   await wait(()=>request('GET','/status'),'native WebDriver startup',45000);
   const created=await request('POST','/session',{capabilities:{alwaysMatch:{browserName:'tauri'}}});session=created.sessionId;
   await wait(()=>execute(`return !!document.querySelector('[aria-label='+${JSON.stringify(JSON.stringify('Inspect '+catalog[0].name))}+']')`),'real installed model sync');
+  const mlxCatalog=await execute('return window.__TAURI_INTERNALS__.invoke("mlx_catalog");');
+  assert.equal(mlxCatalog.length,3);assert(mlxCatalog.every(m=>m.revision.length===40&&m.files.length>0));
+  const rejected=await execute('return window.__TAURI_INTERNALS__.invoke("download_mlx_model",{id:"unlisted/model",onEvent:123456}).then(()=>"ALLOWED",e=>String(e));');
+  assert.match(rejected,/Choose a supported MLX model/);
+  await execute('return window.__TAURI_INTERNALS__.invoke("cancel_mlx_download");');
   if(process.env.ANCHOR_MLX_E2E_MODEL) await execute('localStorage.setItem("anchor.mlx-models",'+JSON.stringify(JSON.stringify([process.env.ANCHOR_MLX_E2E_MODEL]))+');return true;');
   await execute(`window.__permissionProbe='pending';window.__TAURI_INTERNALS__.invoke('plugin:fs|read_text_file',{path:${JSON.stringify(path.join(scratch,'registry.db'))}}).then(()=>window.__permissionProbe='ALLOWED',e=>window.__permissionProbe=String(e));return true;`);
   const denied=await wait(()=>execute("return window.__permissionProbe!=='pending' && window.__permissionProbe"),'filesystem permission denial');
@@ -122,7 +127,8 @@ try{
     await nav('Benchmark');await attrClick('Benchmark runtime');await click('MLX','[role="option"]');
     const cached=await execute('return window.__TAURI_INTERNALS__.invoke("mlx_models",{paths:'+JSON.stringify([modelPath])+'});');
     const model=cached.find(m=>m.path===modelPath);assert(model,'local checkpoint appears in the model picker');
-    await attrClick('Benchmark model');await click(model.name.replace(/^.*\//,'').replaceAll('-',' '),'[role="option"]');
+    const curated=mlxCatalog.find(m=>m.path===model.path);
+    await attrClick('Benchmark model');await click(curated?.name??model.name.replace(/^.*\//,'').replaceAll('-',' '),'[role="option"]');
     assert(!(await visibleText()).includes('Measure MLX'),'standalone synthetic panel is removed');
     await click('Run suite');
     await wait(()=>execute('return Array.from(document.querySelectorAll("button")).some(e=>e.textContent.trim()==="Run suite"&&e.getClientRects().length)'),'live nine-scenario MLX text suite',180000);

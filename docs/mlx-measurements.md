@@ -6,9 +6,17 @@ Implemented and exercised on 2026-10-24. The desktop MLX workflow generates real
 
 ## Desktop workflow
 
-Open **Benchmark → Runtime → MLX**, choose a named local model and **Run suite**. Existing Hugging Face cache snapshots appear automatically; **Add local checkpoint…** opens a folder picker and remembers the path. Fast/Thorough, live progress, Stop, Suite, Leaderboard and Run history use the existing interface. Measurement checks run automatically and remain collapsed below results. The old folder-textbox/synthetic-run panel is removed.
+Open **Benchmark → Runtime → MLX**, choose a suggested model, then **Download model → Run suite**. The picker shows download size or **Ready**. Existing Hugging Face cache snapshots appear automatically; **Add local checkpoint…** remains available for other supported local models. Fast/Thorough, live progress, Stop, Suite, Leaderboard and Run history use the existing interface. Measurement checks run automatically and remain collapsed below results.
 
-Initial support is local MLX-LM Llama with a chat template and standard KVCache. No model downloads or remote model code are enabled. A checkpoint without enough context for the formatted prompt plus full output cap fails visibly; input is never silently truncated. The requested context is a logical budget, not a claim that MLX preallocated that many cache slots.
+Initial support is MLX-LM Llama with a chat template and standard KVCache. The curated catalog offers Llama 3.2 1B Instruct in 4-bit/8-bit and 3B Instruct in 4-bit; inclusion is a supported architecture choice, not a performance or quality validation claim. Remote model code remains disabled. A checkpoint without enough context for the formatted prompt plus full output cap fails visibly; input is never silently truncated. The requested context is a logical budget, not a claim that MLX preallocated that many cache slots.
+
+### Managed checkpoint files
+
+[`workers/mlx/models.json`](../workers/mlx/models.json) pins each model's repository, commit, filenames, sizes and SHA-256 (LFS) or Git blob SHA-1 (small files). The separate download worker uses the already locked Hugging Face Hub client to transfer and cache files, then verifies each checksum before returning success. Byte progress, cancellation and retry are available in the benchmark setup; the Activity strip retains cancellation across navigation. Partial transfers remain in the Hub cache for retry. Downloads never start a benchmark automatically.
+
+Files use the standard Hugging Face cache (`HF_HUB_CACHE`, otherwise `HF_HOME/hub`, otherwise `~/.cache/huggingface/hub`) so Anchor can reuse existing checkpoints. A complete cached checkpoint is recognized locally without network access; file presence/size establishes availability, while explicit downloads verify the pinned checksums. The optional model card is not required to run an already cached checkpoint. Source/license links open the pinned repository. Catalog downloads use public access without implicit Hugging Face credentials. Missing uv, offline or disk errors remain recoverable; local-folder import is still available.
+
+Downloads, checksum verification and environment preparation happen outside inference timing and allocator windows. The inference worker remains offline and records the actual checkpoint/tokenizer/template file hashes as before. Catalog pins do not establish equality with Ollama artifacts or add a new quality/timing qualification. No SQLite migration or benchmark formula change is involved.
 
 ## Reproducible worker and requests
 

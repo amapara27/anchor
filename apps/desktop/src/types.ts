@@ -553,6 +553,14 @@ export interface BenchRun {
 export type BenchRepeatsMode = "thorough" | "fast";
 export type BenchRuntime = "ollama" | "mlx";
 export interface MlxModel {name: string; path: string;}
+export interface MlxCatalogModel {
+  id: string;
+  name: string;
+  revision: string;
+  files: {name: string; bytes: number; sha256: string | null; git_sha1: string | null}[];
+  path: string | null;
+}
+export interface MlxDownloadProgress {status: string; completed: number; total: number;}
 
 /** Streamed progress from a running benchmark (`anchor_hub::BenchProgress`). */
 export type BenchProgress =

@@ -55,6 +55,7 @@ struct ServerState {
     chats: Mutex<std::collections::HashMap<String, std::sync::Arc<AtomicBool>>>,
     bench_cancel: AtomicBool,
     comparison_cancel: AtomicBool,
+    mlx_download: Mutex<Option<std::sync::Arc<AtomicBool>>>,
 }
 
 /// Builds a [`Registry`] backed by `registry.db` in the app's data directory.
@@ -816,6 +817,41 @@ fn calibration_report(app: AppHandle, id: String) -> Result<anchor_hub::bench::c
 }
 
 #[tauri::command]
+async fn mlx_catalog() -> Result<Vec<anchor_hub::bench::mlx_catalog::CatalogModel>, String> {
+    tauri::async_runtime::spawn_blocking(anchor_hub::bench::mlx_catalog::catalog)
+        .await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn download_mlx_model(
+    app: AppHandle,
+    id: String,
+    on_event: Channel<anchor_hub::bench::mlx_catalog::DownloadProgress>,
+) -> Result<anchor_hub::bench::mlx::NativeModel, String> {
+    let root = data_dir(&app).map_err(|e| e.to_string())?.join("mlx-worker");
+    let cancel = std::sync::Arc::new(AtomicBool::new(false));
+    {
+        let state = app.state::<ServerState>();
+        let mut active = state.mlx_download.lock().unwrap();
+        if active.is_some() { return Err("An MLX download is already running".into()); }
+        *active = Some(cancel.clone());
+    }
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        anchor_hub::bench::mlx_catalog::download(&id, &root, &cancel, |p| { let _ = on_event.send(p); })
+            .map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string());
+    *app.state::<ServerState>().mlx_download.lock().unwrap() = None;
+    result?
+}
+
+#[tauri::command]
+fn cancel_mlx_download(app: AppHandle) {
+    if let Some(flag) = app.state::<ServerState>().mlx_download.lock().unwrap().as_ref() {
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+#[tauri::command]
 async fn mlx_models(
     paths: Option<Vec<std::path::PathBuf>>,
 ) -> Result<Vec<anchor_hub::bench::mlx::NativeModel>, String> {
@@ -1103,6 +1139,9 @@ pub fn run() {
             latest_calibration,
             calibration_report,
             mlx_models,
+            mlx_catalog,
+            download_mlx_model,
+            cancel_mlx_download,
             choose_mlx_model,
             run_mlx_suite,
             native_mlx_report,

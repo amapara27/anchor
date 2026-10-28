@@ -14,6 +14,7 @@ mod prompts;
 pub mod calibration;
 pub mod evidence;
 pub mod mlx;
+pub mod mlx_catalog;
 pub mod mlx_suite;
 
 pub use prompts::{RepeatsMode, Scenario, CATALOG, HEADLINE_SCENARIO, SUITE_ID, SUITE_VERSION};

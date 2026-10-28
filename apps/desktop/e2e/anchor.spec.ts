@@ -1,11 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
 const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/profiles/models.json', import.meta.url), 'utf8')).slice(0, 3);
+const mlxCatalog = JSON.parse(fs.readFileSync(new URL('../../../workers/mlx/models.json', import.meta.url), 'utf8'));
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
-  await page.addInitScript(({catalog, options}) => {
+async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
+  await page.addInitScript(({catalog, mlxCatalog, options}) => {
     const w = window as any;
     let sequence = 0;
     const callbacks = new Map<number, Function>();
@@ -24,8 +25,10 @@ async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; o
     const hardware = {chip:'Apple M4',arch:'aarch64',memory_bytes:16*1024**3,total_cores:10,performance_cores:4,
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
+    const savedMlx: string[] = JSON.parse(localStorage.getItem('anchor.mlx-models')??'[]');
+    const restoredMlx = mlxCatalog.filter((m:any)=>savedMlx.includes('/local/'+m.id.replaceAll('/','--'))).map((m:any)=>({name:m.id,path:'/local/'+m.id.replaceAll('/','--')}));
     const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
-      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],version:'0.12',chatStop:false,compareStop:false,benchStop:false,benchFail:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
+      runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],mlxModels:options.emptyMlx?restoredMlx:[{name:'MLX Llama checkpoint',path:'/local/mlx-llama'}],mlxDownloadStop:false,mlxDownloadFail:false,version:'0.12',chatStop:false,compareStop:false,benchStop:false,benchFail:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
       quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:5,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
       gen_tokens:1024,num_ctx:2048,repeats:1,decode_tps_median:options.noDecode?null:options.measurements?21:32,prefill_tps_median:options.measurements?1000:200,ttft_ms_median:options.measurements?80:100,
@@ -85,7 +88,19 @@ async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; o
           case 'bench_runs_for_model': return state.runs.filter((r:any)=>!args.model||r.model_name===args.model);
           case 'bench_history': return state.runs;
           case 'bench_sessions': return state.sessions;
-          case 'mlx_models': return [{name:'MLX Llama checkpoint',path:'/local/mlx-llama'}];
+          case 'mlx_models': return structuredClone(state.mlxModels);
+          case 'mlx_catalog': return mlxCatalog.map((m:any)=>({...m,path:state.mlxModels.find((local:any)=>local.name===m.id)?.path??null}));
+          case 'download_mlx_model': {
+            state.mlxDownloadStop=false;
+            const model=mlxCatalog.find((m:any)=>m.id===args.id),total=model.files.reduce((n:number,f:any)=>n+f.bytes,0);
+            emit(args.onEvent,{status:'Downloading model.safetensors',completed:Math.floor(total/3),total});
+            await sleep(1300);
+            if(state.mlxDownloadStop)throw 'cancelled';
+            if(state.mlxDownloadFail)throw 'Network connection lost';
+            emit(args.onEvent,{status:'Verifying model.safetensors',completed:total,total});await sleep(200);
+            const local={name:model.id,path:'/local/'+model.id.replaceAll('/','--')};state.mlxModels.push(local);return local;
+          }
+          case 'cancel_mlx_download':state.mlxDownloadStop=true;return;
           case 'native_mlx_report': return null;
           case 'choose_mlx_model': return {name:'Imported Llama checkpoint',path:'/local/imported-llama'};
           case 'mlx_suite_report': return state.nativeRuns.find((r:any)=>r.session_id===args.id);
@@ -148,7 +163,7 @@ async function boot(page: Page, options: {empty?: boolean; noDecode?: boolean; o
         }
       },
     };
-  }, {catalog,options});
+  }, {catalog,mlxCatalog,options});
   await page.goto('/');
   await expect(page.getByRole('heading',{name:'Models',exact:true})).toBeVisible();
 }
@@ -671,4 +686,51 @@ test('benchmark setup, progress and partial failure stay clear without reusing o
   const evidence=page.getByRole('region',{name:'Execution evidence'});
   await expect(evidence).toContainText('failed');
   await expect(evidence).toContainText('3/21 attempts saved');
+});
+
+test('curated MLX models download, cancel across navigation, retry and become benchmark-ready', async({page}) => {
+  await boot(page, {emptyMlx:true});await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
+  const setup=page.getByRole('region',{name:'Benchmark setup'});
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('Llama 3.2 1B Instruct · 4-bit');
+  await expect(setup.getByText(/download · Apple Silicon/)).toBeVisible();
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toHaveCount(0);
+  await page.getByRole('combobox',{name:'Benchmark model'}).click();
+  await expect(page.getByRole('option')).toHaveCount(4);
+  await expect(page.getByRole('option').filter({hasText:'8-bit'})).toBeVisible();
+  await page.setViewportSize({width:800,height:700});
+  await page.screenshot({path:'test-results/mlx-catalog-800-dark.png',animations:'disabled'});
+  await page.keyboard.press('Escape');
+  await setup.getByRole('button',{name:'Download model',exact:true}).click();
+  await expect(page.getByRole('progressbar',{name:'MLX model download'})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toBeDisabled();
+  await page.screenshot({path:'test-results/mlx-download-800-dark.png',animations:'disabled'});
+  await nav(page,'Explore').click();
+  await page.getByRole('button',{name:'Cancel MLX download',exact:true}).click();
+  await nav(page,'Benchmark').click();
+  await expect(setup).toContainText('Download cancelled. Retry to reuse cached files.');
+  await expect(setup.getByRole('button',{name:'Download model',exact:true})).toBeEnabled();
+  await page.evaluate(()=>{(window as any).__e2e.mlxDownloadFail=true;});
+  await setup.getByRole('button',{name:'Download model',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('MLX model setup could not finish');
+  await expect(page.getByText('Network connection lost',{exact:false})).not.toBeVisible();
+  await page.getByText('Error details',{exact:true}).click();
+  await expect(page.getByText('Network connection lost',{exact:false})).toBeVisible();
+  await page.evaluate(()=>{(window as any).__e2e.mlxDownloadFail=false;});
+  await setup.getByRole('button',{name:'Download model',exact:true}).click();
+  await expect(setup).toContainText('Model ready. Run the suite when you’re ready.');
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Cancel MLX download',exact:true})).toHaveCount(0);
+  await page.setViewportSize({width:1440,height:900});
+  await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
+  await page.getByRole('combobox',{name:'Benchmark model'}).click();
+  await expect(page.getByRole('option').filter({hasText:'4-bit'}).first()).toContainText('Ready');
+  await page.screenshot({path:'test-results/mlx-catalog-1440-light.png',animations:'disabled'});
+  await page.keyboard.press('Escape');
+  await setup.getByRole('button',{name:'Run suite',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.filter((c:any)=>c.cmd==='run_mlx_suite').length)).toBe(1);
+  expect(await page.evaluate(()=>(window as any).__e2e.calls.find((c:any)=>c.cmd==='run_mlx_suite').args.modelPath)).toBe('/local/mlx-community--Llama-3.2-1B-Instruct-4bit');
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeVisible();
+  await page.reload();await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('Llama 3.2 1B Instruct · 4-bit');
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
 });

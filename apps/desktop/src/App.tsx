@@ -28,6 +28,7 @@ function Workspace() {
   const [modelsTab, setModelsTab] = useState<ModelsTab>("installed");
   const [comparisonBusy, setComparisonBusy] = useState(false);
   const [benchmarkBusy, setBenchmarkBusy] = useState(false);
+  const [mlxDownload, setMlxDownload] = useState<string | null>(null);
   const quick = useQuickMeasure();
   const [jobError, setJobError] = useState("");
   const stopJob = (command: string) => { void invoke(command).catch(e=>setJobError(String(e))); };
@@ -87,12 +88,13 @@ function Workspace() {
        page === "chat" ? <ChatWorkspace /> :
        <div className="scrollbar-slim min-w-0 flex-1 overflow-y-auto"><div className="tool-page">
          {page === "storage" && <StoragePage />}
-         {page === "benchmarks" && <BenchmarksPage openModel={benchModel} onBusy={setBenchmarkBusy} />}
+         {page === "benchmarks" && <BenchmarksPage openModel={benchModel} onBusy={setBenchmarkBusy} onDownloadChange={setMlxDownload} />}
          {page === "settings" && <SettingsPage />}
        </div></div>}
     </main>)}
     </div>
-    {(Object.keys(downloads).length > 0 || runningIds.size > 0 || comparisonBusy || benchmarkBusy || quick.running || jobError) && <div role="status" aria-label="Activity" className="flex shrink-0 flex-wrap gap-4 border-t border-hair bg-chrome px-5 py-2 text-xs">
+    {(Object.keys(downloads).length > 0 || runningIds.size > 0 || comparisonBusy || benchmarkBusy || mlxDownload || quick.running || jobError) && <div role="status" aria-label="Activity" className="flex shrink-0 flex-wrap gap-4 border-t border-hair bg-chrome px-5 py-2 text-xs">
+      {mlxDownload && <span>Downloading {mlxDownload} <button onClick={() => stopJob("cancel_mlx_download")} className="text-accent-text">Cancel MLX download</button></span>}
       {comparisonBusy && <span>Comparison running <button onClick={() => stopJob("stop_comparison")} className="text-accent-text">Stop comparison</button></span>}
       {(benchmarkBusy || quick.running) && <span>{quick.running && !benchmarkBusy ? `Measuring ${quick.running}` : "Benchmark running"} <button onClick={() => stopJob("stop_benchmark")} className="text-accent-text">Stop benchmark</button></span>}
       {jobError && <span role="alert">{jobError}<button onClick={()=>setJobError("")}>Dismiss</button></span>}

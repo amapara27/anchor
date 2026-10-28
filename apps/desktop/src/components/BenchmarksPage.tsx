@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, BenchRuntime, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel, NativeMlxSummary, MlxModel, MlxSuiteSummary } from "../types";
+import type { BenchRepeatsMode, BenchRun, BenchRuntime, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel, NativeMlxSummary, MlxSuiteSummary } from "../types";
 import { invoke } from "@tauri-apps/api/core";
 import { CalibrationPanel, CalibrationResults } from "./CalibrationPanel";
 import { NativeMlxResults, MlxSuiteChecks } from "./MlxMeasurementChecks";
 import { useModels } from "../lib/useModels";
+import { useMlxModels } from "../lib/useMlxModels";
 import { useHardwareProfile } from "../lib/useHardwareProfile";
 import { useBenchmarks, MATCH_LABEL, type MatchGroup } from "../lib/useBenchmarks";
 import { formatBytes, formatRelativeTime } from "../lib/format";
@@ -101,31 +102,23 @@ function ThermalReadout({ run }: { run: BenchRun | undefined }) {
  * The Community tab has no backend — there is no results server to publish to
  * or read from — so it says so rather than showing invented runs.
  */
-export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; nonce: number} | null; onBusy?: (busy: boolean) => void}) {
+export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel?: {id: string; nonce: number} | null; onBusy?: (busy: boolean) => void; onDownloadChange?: (name: string | null) => void}) {
   const { models } = useModels();
   const { profile } = useHardwareProfile();
   const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
   const [selected, setSelected] = useState<string | null>(null);
   const [runtime, setRuntime] = useState<BenchRuntime>("ollama");
-  const [mlxModels, setMlxModels] = useState<MlxModel[]>([]);
-  const [selectedMlx, setSelectedMlx] = useState<string | null>(null);
-  const [mlxModelError, setMlxModelError] = useState<string | null>(null);
+  const mlx = useMlxModels();
   const [mlxChecks, setMlxChecks] = useState<MlxSuiteSummary | null>(null);
-  useEffect(() => {let cancelled=false;let paths:unknown=[];try{paths=JSON.parse(localStorage.getItem("anchor.mlx-models")??"[]");}catch{}
-    invoke<MlxModel[]>("mlx_models",{paths:Array.isArray(paths)?paths.filter((p):p is string=>typeof p==="string").slice(0,20):[]}).then(m=>{if(!cancelled)setMlxModels(m);}).catch(e=>{if(!cancelled)setMlxModelError(String(e));});return()=>{cancelled=true;};},[]);
-  const chooseMlx=async (id:string)=>{
-    if(id!=="__add_mlx__"){setSelectedMlx(id);setMlxModelError(null);return;}
-    setMlxModelError(null);
-    try{const model=await invoke<MlxModel|null>("choose_mlx_model");if(model){setMlxModels(models=>{const next=models.filter(m=>m.path!==model.path).concat(model);localStorage.setItem("anchor.mlx-models",JSON.stringify(next.map(m=>m.path).slice(-20)));return next;});setSelectedMlx(model.path);}}
-    catch(e){setMlxModelError(String(e));}
-  };
+  const downloadName = mlx.download ? mlx.curated?.name ?? "MLX model" : null;
+  useEffect(() => { onDownloadChange?.(downloadName); }, [downloadName, onDownloadChange]);
   useEffect(() => { if(openModel) {setSelected(openModel.id);setRuntime("ollama");} }, [openModel]);
   const [tab, setTab] = useState<BenchTab>("suite");
   const [repeatsMode, setRepeatsMode] = useState<BenchRepeatsMode>("fast");
   const [scenarioFilter, setScenarioFilter] = useState(HEADLINE_SCENARIO);
   const [shareCard, setShareCard] = useState<{ data: BenchmarkCardData; url: string } | null>(null);
 
-  const modelId = runtime === "mlx" ? selectedMlx ?? mlxModels[0]?.path ?? null : selected ?? installed[0]?.id ?? null;
+  const modelId = runtime === "mlx" ? mlx.modelPath : selected ?? installed[0]?.id ?? null;
   const suiteId=runtime === "mlx" ? "anchor-mlx-scenarios" : SUITE_ID;
   const {
     groups,
@@ -154,7 +147,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
   const suiteSession = sessions.find(s => (s.model_key ?? s.model_name) === modelId &&
     (!runState || runStartedAt == null || s.created_at >= runStartedAt) &&
     (runtime === "mlx" ? s.protocol === "mlx_worker_text_v1" : !s.protocol || s.protocol === "ollama_http_serving"));
-  useEffect(()=>{let cancelled=false;setMlxChecks(null);if(runtime==="mlx" && mlxSession)invoke<MlxSuiteSummary>("mlx_suite_report",{id:mlxSession.id}).then(r=>{if(!cancelled)setMlxChecks(r);}).catch(e=>{if(!cancelled)setMlxModelError(String(e));});return()=>{cancelled=true;};},[runtime,mlxSession?.id]);
+  useEffect(()=>{let cancelled=false;setMlxChecks(null);if(runtime==="mlx" && mlxSession)invoke<MlxSuiteSummary>("mlx_suite_report",{id:mlxSession.id}).then(r=>{if(!cancelled)setMlxChecks(r);}).catch(e=>{if(!cancelled)mlx.setError(String(e));});return()=>{cancelled=true;};},[runtime,mlxSession?.id]);
 
   // `groups` is driven entirely by which view is on screen: the Suite tab is
   // about one model's nine scenarios, while the Leaderboard ranks every model
@@ -257,15 +250,18 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
         <p className="text-fg-muted">Select another model, then return to reload these results.</p>
         <details><summary className="cursor-pointer text-fg-muted">Error details</summary><p className="mt-2 whitespace-pre-wrap break-words text-danger">{error}</p></details>
       </div>}
-      {runtime === "mlx" && mlxModelError && <p role="alert" className="break-words text-xs text-danger">{mlxModelError}</p>}
+      {runtime === "mlx" && mlx.error && <div role="alert" className="space-y-1 text-xs">
+        <p className="text-danger">MLX model setup could not finish.</p>
+        <p className="text-fg-muted">Retry the download, choose another model or import a local folder.</p>
+        <details><summary className="cursor-pointer text-fg-muted">Error details</summary><p className="mt-2 break-words text-danger">{mlx.error}</p></details>
+      </div>}
 
       <div className="flex flex-col gap-4">
         <RunSetupCard
           modelId={modelId}
           runtime={runtime}
           setRuntime={setRuntime}
-          mlxModels={mlxModels}
-          setSelectedMlx={id=>void chooseMlx(id)}
+          mlx={mlx}
           setSelected={setSelected}
           installed={installed}
           profile={profile}
@@ -309,7 +305,7 @@ export function BenchmarksPage({openModel, onBusy}: {openModel?: {id: string; no
       {tab === "suite" && (
         <section className="flex flex-col gap-3">
           {!modelId ? (
-            <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">{runtime === "mlx" ? "Choose a compatible local MLX Llama checkpoint to run the suite." : "Install a model to benchmark it."}</p>
+            <p className="rounded-card border border-dashed border-hair2 px-4 py-10 text-center text-sm text-fg-muted">{runtime === "mlx" ? "Choose an MLX model above. Anchor downloads the files before you run the suite." : "Install a model to benchmark it."}</p>
           ) : (
             <ScenarioTable
               rows={scenarioRows}
@@ -468,7 +464,7 @@ function SegToggle<T extends string>({
  *  benchmark, in one place near the top instead of split across the header
  *  and a tab. */
 function RunSetupCard({
-  runtime, setRuntime, mlxModels, setSelectedMlx,
+  runtime, setRuntime, mlx,
   modelId,
   setSelected,
   installed,
@@ -483,8 +479,7 @@ function RunSetupCard({
 }: {
   runtime: BenchRuntime;
   setRuntime: (runtime: BenchRuntime)=>void;
-  mlxModels: MlxModel[];
-  setSelectedMlx: (path: string)=>void;
+  mlx: ReturnType<typeof useMlxModels>;
   modelId: string | null;
   setSelected: (id: string) => void;
   installed: LibraryModel[];
@@ -497,23 +492,48 @@ function RunSetupCard({
   onRun: () => void;
   onStop: () => void;
 }) {
+  const locked = running || calibrating || mlx.download != null;
+  const mlxOptions = [
+    ...mlx.catalog.map(m => ({value: m.id, label: m.name, group: "Suggested for MLX", ready: m.path != null, bytes: m.files.reduce((n, f) => n + f.bytes, 0)})),
+    ...mlx.models.filter(m => !mlx.catalog.some(c => c.path === m.path)).map(m => ({value: m.path, label: m.name.replace(/^.*\//, "").replaceAll("-", " "), group: "Local models", ready: true, bytes: 0})),
+    {value: "__add_mlx__", label: "Add local checkpoint…", group: "", ready: false, bytes: 0},
+  ];
+  const modelLabel = (value: string, label: string, option: boolean) => {
+    const item = mlxOptions.find(o => o.value === value);
+    if (value === "__add_mlx__") return label;
+    return <span className="flex min-w-0 items-center gap-2">
+      <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${item?.ready ? "bg-ok" : "bg-fg-subtle/40"}`} />
+      <span className="data min-w-0 flex-1 truncate text-[12px] font-medium">{label}</span>
+      {option && <span className="shrink-0 text-xs text-fg-muted">{item?.ready ? "Ready" : item?.bytes ? formatBytes(item.bytes) : "Download"}</span>}
+    </span>;
+  };
   return <section aria-label="Benchmark setup" className="grid grid-cols-[130px_minmax(0,1fr)] items-end gap-x-4 gap-y-3 min-[1100px]:grid-cols-[130px_minmax(220px,1fr)_auto_auto]">
-    <Select<BenchRuntime> label="Runtime" ariaLabel="Benchmark runtime" value={runtime} onChange={setRuntime} options={[{value:"ollama",label:"Ollama"},{value:"mlx",label:"MLX"}]} disabled={running || calibrating} />
+    <Select<BenchRuntime> label="Runtime" ariaLabel="Benchmark runtime" value={runtime} onChange={setRuntime} options={[{value:"ollama",label:"Ollama"},{value:"mlx",label:"MLX"}]} disabled={locked} />
     <div className="min-w-0">
-      {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={modelId ?? ""} onChange={setSelectedMlx} options={mlxModels.map(m=>({value:m.path,label:m.name.replace(/^.*\//,"").replaceAll("-"," ")})).concat({value:"__add_mlx__",label:"Add local checkpoint…"})} disabled={running || calibrating} placeholder="Choose a local MLX checkpoint"
-        renderValue={o=><span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-ok" /><span className="data truncate text-[12px] font-medium">{o.label}</span></span>}
-        renderOption={o=>o.value === "__add_mlx__" ? o.label : <span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-ok" /><span className="data min-w-0 flex-1 truncate">{o.label}</span></span>}
+      {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={mlx.curated?.id ?? mlx.value} onChange={id => void mlx.choose(id)} options={mlxOptions} disabled={locked || mlx.loading} placeholder={mlx.loading ? "Finding MLX models…" : "Choose an MLX model"}
+        renderValue={o => modelLabel(o.value, o.label, false)}
+        renderOption={o => modelLabel(o.value, o.label, true)}
       /> : <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
-        disabled={installed.length === 0 || running || calibrating} variant="field" ariaLabel="Benchmark model"
+        disabled={installed.length === 0 || locked} variant="field" ariaLabel="Benchmark model"
         placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />}
     </div>
     <div className="w-max" title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
       <span className="label-caps mb-1.5 block">Repeats</span>
-      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={running || calibrating}
+      <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={locked}
         options={[{key:"fast",label:"Fast"},{key:"thorough",label:"Thorough"}]} />
     </div>
-    <div className="justify-self-end">{running ? <GhostButton onClick={onStop} disabled={stopping} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />{stopping ? "Stopping…" : "Stop"}</GhostButton> :
-      <PrimaryButton onClick={onRun} disabled={!modelId || calibrating}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}</div>
+    <div className="justify-self-end">{mlx.download ? <GhostButton onClick={() => void mlx.cancel()} disabled={mlx.cancelling} tone="danger">{mlx.cancelling ? "Cancelling…" : "Cancel download"}</GhostButton> : running ? <GhostButton onClick={onStop} disabled={stopping} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />{stopping ? "Stopping…" : "Stop"}</GhostButton> : runtime === "mlx" && mlx.curated && !modelId ?
+      <PrimaryButton onClick={() => void mlx.start()} disabled={locked || mlx.loading}><DownloadIcon className="size-3.5" />Download model</PrimaryButton> :
+      <PrimaryButton onClick={onRun} disabled={!modelId || locked}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}</div>
+    {runtime === "mlx" && mlx.curated && <p className="col-span-full flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-muted">
+      <span>{modelId ? "Ready locally" : `${formatBytes(mlx.curated.files.reduce((n, f) => n + f.bytes, 0))} download`} · Apple Silicon · uv required</span>
+      <button className="text-accent-text hover:underline" onClick={() => void openUrl(`https://huggingface.co/${mlx.curated!.id}/tree/${mlx.curated!.revision}`)}>Model source & license</button>
+    </p>}
+    {runtime === "mlx" && mlx.download && <div className="col-span-full space-y-2" role="status" aria-label="MLX download">
+      <div className="flex flex-wrap justify-between gap-2 text-xs text-fg-muted"><span>{mlx.download.status}</span><span className="data">{formatBytes(mlx.download.completed)} / {formatBytes(mlx.download.total)}</span></div>
+      <div role="progressbar" aria-label="MLX model download" aria-valuemin={0} aria-valuemax={mlx.download.total} aria-valuenow={mlx.download.completed} className="h-1 overflow-hidden rounded-sm bg-inset"><div className="h-full bg-accent" style={{width: `${mlx.download.total ? 100 * mlx.download.completed / mlx.download.total : 0}%`}} /></div>
+    </div>}
+    {runtime === "mlx" && mlx.notice && <p role="status" className="col-span-full text-xs text-fg-muted">{mlx.notice}</p>}
     <p className="col-span-full text-xs text-fg-muted">Nine workloads · {repeatsMode === "thorough" ? "3 repeats each" : "3 repeats for short runs; 1 for long generations"} · warmups excluded from results</p>
   </section>;
 }

@@ -106,7 +106,7 @@ Every session keeps its configuration, raw events, counters, warmups and started
 
 **[Read the benchmark methodology](docs/benchmark-methodology.md)** for the workload table, timing formulas, cache and memory scopes, validation coverage, runtime support limits and reproduction instructions.
 
-Ollama's **Measurement validation → Validate measurements** checks token counts, cache reuse, representative generations and response completion below the results. MLX runs timing/allocator checks automatically with its suite. MLX requires [uv](https://docs.astral.sh/uv/) and a local supported Llama checkpoint; Anchor creates a locked worker environment without downloading weights. See [Ollama findings](docs/ollama-calibration.md) and [MLX findings](docs/mlx-measurements.md) for detailed runtime observations.
+Ollama's **Measurement validation → Validate measurements** checks token counts, cache reuse, representative generations and response completion below the results. MLX runs timing/allocator checks automatically with its suite. On Apple Silicon, install [uv](https://docs.astral.sh/uv/), choose **Runtime → MLX**, select a suggested model and click **Download model**, then **Run suite**. Anchor handles the checkpoint files, verifies their pinned checksums and creates the locked worker environment. Existing cached models and local-folder import remain available. See [Ollama findings](docs/ollama-calibration.md) and [MLX findings](docs/mlx-measurements.md) for runtime limits.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">

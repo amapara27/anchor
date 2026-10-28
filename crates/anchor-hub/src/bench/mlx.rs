@@ -47,12 +47,22 @@ pub fn local_model(path: &Path) -> Result<NativeModel> {
         &std::fs::read(path.join("config.json")).map_err(|e| invalid(e.to_string()))?,
     )?;
     if config["model_type"] != "llama"
+        || !path.join("tokenizer_config.json").is_file()
+        || !(path.join("tokenizer.json").is_file() || path.join("tokenizer.model").is_file())
         || !std::fs::read_dir(&path)
             .map_err(|e| invalid(e.to_string()))?
             .flatten()
             .any(|f| f.path().extension().is_some_and(|e| e == "safetensors"))
     {
-        return Err(invalid("Choose a local MLX-compatible Llama checkpoint containing config.json and safetensors weights"));
+        return Err(invalid("Choose a complete MLX-compatible Llama checkpoint with config.json, tokenizer files and safetensors weights"));
+    }
+    let index = path.join("model.safetensors.index.json");
+    if index.is_file() {
+        let index: Value = serde_json::from_slice(&std::fs::read(index).map_err(|e| invalid(e.to_string()))?)?;
+        if !index["weight_map"].as_object().is_some_and(|weights| !weights.is_empty() && weights.values().all(|v|
+            v.as_str().is_some_and(|name| Path::new(name).file_name().and_then(|n| n.to_str()) == Some(name) && path.join(name).is_file()))) {
+            return Err(invalid("The MLX checkpoint is missing weight shards"));
+        }
     }
     let name = path
         .ancestors()
@@ -72,35 +82,36 @@ pub fn local_model(path: &Path) -> Result<NativeModel> {
 }
 
 pub fn cached_models() -> Vec<NativeModel> {
-    let Some(home) = std::env::var_os("HOME") else {
+    if std::env::var_os("HOME").is_none() {
         return Vec::new();
-    };
-    let cache = std::env::var_os("HF_HUB_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HF_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(home).join(".cache/huggingface"))
-                .join("hub")
-        });
+    }
+    let cache = hub_cache();
     let mut models = Vec::new();
     for repo in std::fs::read_dir(cache).into_iter().flatten().flatten() {
         if !repo.file_name().to_string_lossy().starts_with("models--") {
             continue;
         }
         for snapshot in std::fs::read_dir(repo.path().join("snapshots"))
-            .into_iter()
-            .flatten()
-            .flatten()
+            .into_iter().flatten().flatten()
         {
-            let path = snapshot.path();
-            if let Ok(model) = local_model(&path) {
+            if let Ok(model) = local_model(&snapshot.path()) {
                 models.push(model);
             }
         }
     }
     models.sort_by(|a, b| a.path.cmp(&b.path));
     models
+}
+
+pub(super) fn hub_cache() -> PathBuf {
+    std::env::var_os("HF_HUB_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::var_os("HF_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/huggingface"))
+                .join("hub")
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -555,10 +566,14 @@ pub(super) struct Worker {
 }
 impl Worker {
     pub(super) fn spawn(root: &Path) -> Result<Self> {
+        Self::spawn_script(root, "worker.py", false)
+    }
+    pub(super) fn spawn_script(root: &Path, script: &str, online: bool) -> Result<Self> {
         std::fs::create_dir_all(root).map_err(|e| invalid(e.to_string()))?;
         for (name, contents) in [
             ("worker.py", WORKER),
             ("suite.py", SUITE_WORKER),
+            ("download.py", include_str!("../../../../workers/mlx/download.py")),
             ("pyproject.toml", PROJECT),
             ("uv.lock", LOCK),
             (".python-version", PYTHON_VERSION),
@@ -578,7 +593,7 @@ impl Worker {
             .arg(root)
             .args(["--python", PYTHON_VERSION.trim()])
             .args(["python", "-u"])
-            .arg(root.join("worker.py"))
+            .arg(root.join(script))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -587,10 +602,15 @@ impl Worker {
             .env_remove("PYTHONHOME")
             .env_remove("VIRTUAL_ENV")
             .env_remove("CONDA_PREFIX")
-            .env("HF_HUB_OFFLINE", "1")
+            .env("HF_HUB_OFFLINE", if online { "0" } else { "1" })
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("HF_HUB_DISABLE_TELEMETRY", "1")
             .env("UV_NO_PROGRESS", "1");
+        if online {
+            command.env("HF_ENDPOINT", "https://huggingface.co")
+                .env("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+                .env("HF_HUB_DISABLE_XET", "1");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
