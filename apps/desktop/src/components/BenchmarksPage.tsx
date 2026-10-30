@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { BenchRepeatsMode, BenchRun, BenchRuntime, BenchSessionSummary, CalibrationSummary, HardwareProfile, LibraryModel, NativeMlxSummary, MlxSuiteSummary } from "../types";
+import type { BenchRepeatsMode, BenchRun, BenchRuntime, BenchSessionSummary, CalibrationSummary, DownloadState, HardwareProfile, LibraryModel, NativeMlxSummary, MlxSuiteSummary } from "../types";
 import { invoke } from "@tauri-apps/api/core";
 import { CalibrationPanel, CalibrationResults } from "./CalibrationPanel";
 import { NativeMlxResults, MlxSuiteChecks } from "./MlxMeasurementChecks";
@@ -103,7 +103,7 @@ function ThermalReadout({ run }: { run: BenchRun | undefined }) {
  * or read from — so it says so rather than showing invented runs.
  */
 export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel?: {id: string; nonce: number} | null; onBusy?: (busy: boolean) => void; onDownloadChange?: (name: string | null) => void}) {
-  const { models } = useModels();
+  const { models, downloads, startDownload, cancelDownload } = useModels();
   const { profile } = useHardwareProfile();
   const installed = useMemo(() => models.filter((m) => m.status === "installed"), [models]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -119,6 +119,15 @@ export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel
   const [shareCard, setShareCard] = useState<{ data: BenchmarkCardData; url: string } | null>(null);
 
   const modelId = runtime === "mlx" ? mlx.modelPath : selected ?? installed[0]?.id ?? null;
+  const changeRuntime = (next: BenchRuntime) => {
+    if (next === "mlx") {
+      const counterpart = mlx.catalog.find(m => m.ollama_id === modelId);
+      if (counterpart && (selected != null || counterpart.path)) void mlx.choose(counterpart.id);
+    } else if (mlx.curated?.ollama_id && models.some(m => m.id === mlx.curated?.ollama_id)) {
+      setSelected(mlx.curated.ollama_id);
+    }
+    setRuntime(next);
+  };
   const suiteId=runtime === "mlx" ? "anchor-mlx-scenarios" : SUITE_ID;
   const {
     groups,
@@ -260,10 +269,13 @@ export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel
         <RunSetupCard
           modelId={modelId}
           runtime={runtime}
-          setRuntime={setRuntime}
+          setRuntime={changeRuntime}
           mlx={mlx}
           setSelected={setSelected}
-          installed={installed}
+          ollamaModels={models.filter(m => m.status === "installed" || mlx.catalog.some(c => c.ollama_id === m.id))}
+          ollamaDownload={modelId ? downloads[modelId] : undefined}
+          onDownload={() => modelId && startDownload(modelId)}
+          onCancelDownload={() => modelId && cancelDownload(modelId)}
           profile={profile}
           running={running}
           stopping={stopping}
@@ -355,7 +367,7 @@ export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel
         </div>
       )}
 
-      {runtime === "ollama" && <CalibrationPanel modelId={modelId} result={calibration} running={calibrating} busy={running}
+      {runtime === "ollama" && <CalibrationPanel modelId={installed.some(m => m.id === modelId) ? modelId : null} result={calibration} running={calibrating} busy={running}
         loading={calibrationLoading} progress={calibrationProgress} error={calibrationError}
         onRun={() => modelId && calibrate(modelId)} onStop={stop} />}
 
@@ -467,7 +479,10 @@ function RunSetupCard({
   runtime, setRuntime, mlx,
   modelId,
   setSelected,
-  installed,
+  ollamaModels,
+  ollamaDownload,
+  onDownload,
+  onCancelDownload,
   profile,
   running,
   stopping,
@@ -482,7 +497,10 @@ function RunSetupCard({
   mlx: ReturnType<typeof useMlxModels>;
   modelId: string | null;
   setSelected: (id: string) => void;
-  installed: LibraryModel[];
+  ollamaModels: LibraryModel[];
+  ollamaDownload?: DownloadState;
+  onDownload: () => void;
+  onCancelDownload: () => void;
   profile: HardwareProfile | null;
   running: boolean;
   stopping: boolean;
@@ -492,7 +510,9 @@ function RunSetupCard({
   onRun: () => void;
   onStop: () => void;
 }) {
-  const locked = running || calibrating || mlx.download != null;
+  const ollamaDownloading = runtime === "ollama" && (ollamaDownload?.status === "downloading" || ollamaDownload?.status === "verifying");
+  const ollamaReady = ollamaModels.some(m => m.id === modelId && m.status === "installed");
+  const locked = running || calibrating || mlx.download != null || ollamaDownloading;
   const mlxOptions = [
     ...mlx.catalog.map(m => ({value: m.id, label: m.name, group: "Suggested for MLX", ready: m.path != null, bytes: m.files.reduce((n, f) => n + f.bytes, 0)})),
     ...mlx.models.filter(m => !mlx.catalog.some(c => c.path === m.path)).map(m => ({value: m.path, label: m.name.replace(/^.*\//, "").replaceAll("-", " "), group: "Local models", ready: true, bytes: 0})),
@@ -513,16 +533,17 @@ function RunSetupCard({
       {runtime === "mlx" ? <Select label="Model" ariaLabel="Benchmark model" value={mlx.curated?.id ?? mlx.value} onChange={id => void mlx.choose(id)} options={mlxOptions} disabled={locked || mlx.loading} placeholder={mlx.loading ? "Finding MLX models…" : "Choose an MLX model"}
         renderValue={o => modelLabel(o.value, o.label, false)}
         renderOption={o => modelLabel(o.value, o.label, true)}
-      /> : <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={installed} profile={profile}
-        disabled={installed.length === 0 || locked} variant="field" ariaLabel="Benchmark model"
-        placeholder={installed.length === 0 ? "No models installed" : "Choose a model…"} />}
+      /> : <ModelSelect label="Model" value={modelId ?? ""} onChange={setSelected} models={ollamaModels} profile={profile}
+        disabled={ollamaModels.length === 0 || locked} variant="field" ariaLabel="Benchmark model"
+        placeholder="Choose a model…" />}
     </div>
     <div className="w-max" title={repeatsMode === "thorough" ? "Three repeats per scenario" : "Long generations run once; other scenarios run three times"}>
       <span className="label-caps mb-1.5 block">Repeats</span>
       <SegToggle value={repeatsMode} onChange={setRepeatsMode} disabled={locked}
         options={[{key:"fast",label:"Fast"},{key:"thorough",label:"Thorough"}]} />
     </div>
-    <div className="justify-self-end">{mlx.download ? <GhostButton onClick={() => void mlx.cancel()} disabled={mlx.cancelling} tone="danger">{mlx.cancelling ? "Cancelling…" : "Cancel download"}</GhostButton> : running ? <GhostButton onClick={onStop} disabled={stopping} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />{stopping ? "Stopping…" : "Stop"}</GhostButton> : runtime === "mlx" && mlx.curated && !modelId ?
+    <div className="justify-self-end">{mlx.download ? <GhostButton onClick={() => void mlx.cancel()} disabled={mlx.cancelling} tone="danger">{mlx.cancelling ? "Cancelling…" : "Cancel download"}</GhostButton> : ollamaDownloading ? <GhostButton tone="danger" onClick={onCancelDownload}>Cancel download</GhostButton> : running ? <GhostButton onClick={onStop} disabled={stopping} tone="danger" title="Stop the suite — keeps the scenarios already measured"><StopIcon className="size-3.5" />{stopping ? "Stopping…" : "Stop"}</GhostButton> : runtime === "ollama" && modelId && !ollamaReady ?
+      <PrimaryButton onClick={onDownload} disabled={locked}><DownloadIcon className="size-3.5" />Download model</PrimaryButton> : runtime === "mlx" && mlx.curated && !modelId ?
       <PrimaryButton onClick={() => void mlx.start()} disabled={locked || mlx.loading}><DownloadIcon className="size-3.5" />Download model</PrimaryButton> :
       <PrimaryButton onClick={onRun} disabled={!modelId || locked}><PlayIcon className="size-3.5" />Run suite</PrimaryButton>}</div>
     {runtime === "mlx" && mlx.curated && <p className="col-span-full flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-fg-muted">
@@ -534,6 +555,8 @@ function RunSetupCard({
       <div role="progressbar" aria-label="MLX model download" aria-valuemin={0} aria-valuemax={mlx.download.total} aria-valuenow={mlx.download.completed} className="h-1 overflow-hidden rounded-sm bg-inset"><div className="h-full bg-accent" style={{width: `${mlx.download.total ? 100 * mlx.download.completed / mlx.download.total : 0}%`}} /></div>
     </div>}
     {runtime === "mlx" && mlx.notice && <p role="status" className="col-span-full text-xs text-fg-muted">{mlx.notice}</p>}
+    {ollamaDownloading && <p role="status" className="col-span-full text-xs text-fg-muted">Downloading model · {Math.round(ollamaDownload.progress * 100)}%</p>}
+    {runtime === "ollama" && ollamaDownload?.error && <p role="alert" className="col-span-full text-xs text-danger">{ollamaDownload.error}</p>}
     <p className="col-span-full text-xs text-fg-muted">Nine workloads · {repeatsMode === "thorough" ? "3 repeats each" : "3 repeats for short runs; 1 for long generations"} · warmups excluded from results</p>
   </section>;
 }

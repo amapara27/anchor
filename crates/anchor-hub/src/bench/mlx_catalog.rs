@@ -22,6 +22,8 @@ pub struct CatalogModel {
     pub id: String,
     pub name: String,
     pub revision: String,
+    #[serde(default)]
+    pub ollama_id: Option<String>,
     pub files: Vec<ModelFile>,
     #[serde(default)]
     pub path: Option<PathBuf>,

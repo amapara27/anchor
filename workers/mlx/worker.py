@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import queue
+import re
 import sys
 import threading
 import time
@@ -33,8 +34,8 @@ def digest(path):
 
 def checkpoint(path):
     config = json.loads((path / "config.json").read_text())
-    if config.get("model_type") != "llama":
-        raise ValueError("This worker currently supports MLX-LM Llama checkpoints only")
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", config.get("model_type", "")):
+        raise ValueError("The checkpoint must name a built-in MLX-LM model type")
     if not list(path.glob("*.safetensors")):
         raise ValueError("Choose a local MLX checkpoint with safetensors weights")
     files = [p for p in sorted(path.iterdir()) if p.is_file() and p.suffix in (".json", ".safetensors", ".model", ".tiktoken", ".jinja", ".txt")]
@@ -160,11 +161,20 @@ def inference(mx, model, make_prompt_cache, stream, prompt_ids, decode_ids):
 
 def main():
     request = json.loads(sys.stdin.readline())
-    if request.get("protocol_version") != PROTOCOL:
+    suite = request.get("mode") == "suite"
+    protocol = request.get("protocol_version")
+    if protocol not in ((1, 2) if suite else (1,)):
         raise ValueError("Unsupported MLX worker protocol")
     path = Path(request["model_path"]).expanduser().resolve(strict=True)
     files, config = checkpoint(path)
-    suite = request.get("mode") == "suite"
+    if not suite and config["model_type"] != "llama":
+        raise ValueError("The legacy synthetic validator supports Llama only; use Run suite for other models")
+    text_config = config.get("text_config", config)
+    capacity = next((text_config.get(key) for key in ("max_position_embeddings", "max_sequence_length", "seq_length", "max_seq_len", "n_positions")
+                     if isinstance(text_config.get(key), int) and text_config[key] > 0), None)
+    vocab_size = text_config.get("vocab_size", config.get("vocab_size"))
+    if capacity is None or not isinstance(vocab_size, int) or vocab_size <= 0:
+        raise ValueError("The checkpoint must report its context capacity and vocabulary size")
     if not suite and (not 0 < request["prompt_tokens"] <= 2048 or not 0 < request["decode_steps"] <= 256 or not 1 <= request["repeats"] <= 10):
         raise ValueError("Native workload exceeds the supported bounds")
     if not suite and request["prompt_tokens"] + request["decode_steps"] > config.get("max_position_embeddings", 0):
@@ -173,14 +183,17 @@ def main():
         import mlx.core as mx
         from mlx_lm import load
         from mlx_lm.models.cache import make_prompt_cache
-        import mlx_lm.models.llama as llama
         import mlx_lm.models.cache as cache_module
         import mlx_lm.utils as utils
+        utils._get_classes(config)
     if not mx.metal.is_available():
         raise ValueError("Native MLX measurements require an Apple Silicon GPU")
     stream = mx.new_stream(mx.gpu)
     versions = {name: importlib.metadata.version(name) for name in ("mlx", "mlx-lm", "transformers")}
-    source_paths = {name: Path(module.__file__) for name, module in (("worker", sys.modules[__name__]), ("mlx_core", mx), ("llama", llama), ("cache", cache_module), ("loader", utils))}
+    source_paths = {name: Path(module.__file__) for name, module in (("worker", sys.modules[__name__]), ("mlx_core", mx), ("cache", cache_module), ("loader", utils))}
+    # Shared architecture helpers also affect generation and must be fingerprinted.
+    source_paths.update({"mlx_lm/" + str(p.relative_to(Path(utils.__file__).parent)): p
+                         for p in Path(utils.__file__).parent.rglob("*.py")})
     source_paths.update(lock=Path(__file__).with_name("uv.lock"), project=Path(__file__).with_name("pyproject.toml"), suite=Path(__file__).with_name("suite.py"), python_version=Path(__file__).with_name(".python-version"))
     source_paths["generator"] = Path(utils.__file__).with_name("generate.py")
     for binary in (Path(mx.__file__).parent / "lib").glob("*"):
@@ -190,10 +203,10 @@ def main():
     identity = dict(model_files=files, model_digest=hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest(),
                     versions=versions, python=platform.python_version(), platform=platform.platform(), sources=sources,
                     device=mx.device_info(), quantization=config.get("quantization"), model_type=config["model_type"],
-                    context_capacity=config["max_position_embeddings"], vocab_size=config["vocab_size"], stream=str(stream), worker_pid=os.getpid())
+                    context_capacity=capacity, vocab_size=vocab_size, stream=str(stream), worker_pid=os.getpid())
     tokenizer_files = [f for f in files if "token" in f["name"] or f["name"].endswith((".jinja", ".model", ".tiktoken")) or f["name"] == "merges.txt"]
     identity["tokenizer_fingerprint"] = hashlib.sha256(json.dumps(tokenizer_files, sort_keys=True).encode()).hexdigest()
-    emit("manifest", protocol_version=PROTOCOL, identity=identity)
+    emit("manifest", protocol_version=protocol, identity=identity)
     if json.loads(sys.stdin.readline()) != {"run": True}:
         raise ValueError("Missing frozen-plan acknowledgement")
     threading.Thread(target=watch_parent, daemon=True).start()

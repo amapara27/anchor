@@ -404,7 +404,7 @@ impl EvidenceExport {
             return Ok(Recalculated { attempts:Vec::new(), scenarios:Vec::new(), calibration:None, native:Some(super::mlx::recalculate(self)?), mlx:None });
         }
         let is_mlx=self.session.config.protocol==super::mlx_suite::PROTOCOL || self.session.config.mlx.is_some();
-        if is_mlx && (self.session.config.protocol!=super::mlx_suite::PROTOCOL || self.session.config.mlx.as_ref().is_none_or(|m|m.protocol_version!=1)) {
+        if is_mlx && (self.session.config.protocol!=super::mlx_suite::PROTOCOL || self.session.config.mlx.as_ref().is_none_or(|m|!matches!(m.protocol_version,1|2))) {
             return Err(crate::Error::Native("unsupported MLX text protocol".into()));
         }
         let mut metrics: Vec<_> = self.attempts.iter().map(|a| if is_mlx {super::mlx_suite::metrics(a,&self.session)} else {recalculate(a, self.session.formula_version)}).collect::<Result<_>>()?;

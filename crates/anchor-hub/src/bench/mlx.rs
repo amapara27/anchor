@@ -46,7 +46,7 @@ pub fn local_model(path: &Path) -> Result<NativeModel> {
     let config: Value = serde_json::from_slice(
         &std::fs::read(path.join("config.json")).map_err(|e| invalid(e.to_string()))?,
     )?;
-    if config["model_type"] != "llama"
+    if !config["model_type"].as_str().is_some_and(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         || !path.join("tokenizer_config.json").is_file()
         || !(path.join("tokenizer.json").is_file() || path.join("tokenizer.model").is_file())
         || !std::fs::read_dir(&path)
@@ -54,7 +54,7 @@ pub fn local_model(path: &Path) -> Result<NativeModel> {
             .flatten()
             .any(|f| f.path().extension().is_some_and(|e| e == "safetensors"))
     {
-        return Err(invalid("Choose a complete MLX-compatible Llama checkpoint with config.json, tokenizer files and safetensors weights"));
+        return Err(invalid("Choose a complete MLX-LM checkpoint with a built-in model type, config.json, tokenizer files and safetensors weights"));
     }
     let index = path.join("model.safetensors.index.json");
     if index.is_file() {

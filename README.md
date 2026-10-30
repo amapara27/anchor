@@ -106,7 +106,7 @@ Every session keeps its configuration, raw events, counters, warmups and started
 
 **[Read the benchmark methodology](docs/benchmark-methodology.md)** for the workload table, timing formulas, cache and memory scopes, validation coverage, runtime support limits and reproduction instructions.
 
-Ollama's **Measurement validation → Validate measurements** checks token counts, cache reuse, representative generations and response completion below the results. MLX runs timing/allocator checks automatically with its suite. On Apple Silicon, install [uv](https://docs.astral.sh/uv/), choose **Runtime → MLX**, select a suggested model and click **Download model**, then **Run suite**. Anchor handles the checkpoint files, verifies their pinned checksums and creates the locked worker environment. Existing cached models and local-folder import remain available. See [Ollama findings](docs/ollama-calibration.md) and [MLX findings](docs/mlx-measurements.md) for runtime limits.
+Ollama's **Measurement validation → Validate measurements** checks token counts, cache reuse, representative generations and response completion below the results. MLX runs timing/allocator checks automatically with its suite. Benchmark setup offers **64 paired catalog entries** across Ollama and MLX for text-generation benchmarks, including Qwen 3–3.8, Gemma 3/4 and Ministral 3. Runtime-specific downloads preserve an explicitly selected model across runtime switches. On Apple Silicon, install [uv](https://docs.astral.sh/uv/), choose **MLX → model → Download model → Run suite**. Anchor handles checkpoint files, verifies pinned checksums and creates the locked worker environment. Existing cached models and local-folder import remain available. Catalog parity does not imply identical artifacts, image/audio benchmark support or compatibility with every model in either engine; see [Ollama findings](docs/ollama-calibration.md) and [current catalog coverage and limits](docs/mlx-measurements.md#catalog-review--october-29-2026).
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
@@ -244,7 +244,7 @@ Conventions worth knowing before contributing:
 ## Currently supported
 
 - **macOS**, Apple Silicon as the primary target. Intel Macs build and run but are untested.
-- **[Ollama](https://ollama.com)** for interactive inference and serving benchmarks; optional **MLX-LM Llama** real-text benchmarks on Apple Silicon, with runtime-scoped results.
+- **[Ollama](https://ollama.com)** for interactive inference and serving benchmarks; optional **MLX-LM text models** on Apple Silicon, with runtime-scoped results and a shared curated text catalog.
 - **Desktop app and CLI**, sharing one database, released separately: `v*` tags for the app, `cli-v*` for the CLI.
 
 ## In the pipeline

@@ -1,11 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
-const catalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/profiles/models.json', import.meta.url), 'utf8')).slice(0, 3);
+const fullCatalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/profiles/models.json', import.meta.url), 'utf8'));
+const catalog = fullCatalog.slice(0, 3);
 const mlxCatalog = JSON.parse(fs.readFileSync(new URL('../../../workers/mlx/models.json', import.meta.url), 'utf8'));
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
+async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
   await page.addInitScript(({catalog, mlxCatalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -163,7 +164,7 @@ async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; n
         }
       },
     };
-  }, {catalog,mlxCatalog,options});
+  }, {catalog:options.fullCatalog?fullCatalog:catalog,mlxCatalog,options});
   await page.goto('/');
   await expect(page.getByRole('heading',{name:'Models',exact:true})).toBeVisible();
 }
@@ -695,7 +696,7 @@ test('curated MLX models download, cancel across navigation, retry and become be
   await expect(setup.getByText(/download · Apple Silicon/)).toBeVisible();
   await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toHaveCount(0);
   await page.getByRole('combobox',{name:'Benchmark model'}).click();
-  await expect(page.getByRole('option')).toHaveCount(4);
+  await expect(page.getByRole('option')).toHaveCount(mlxCatalog.length+1);
   await expect(page.getByRole('option').filter({hasText:'8-bit'})).toBeVisible();
   await page.setViewportSize({width:800,height:700});
   await page.screenshot({path:'test-results/mlx-catalog-800-dark.png',animations:'disabled'});
@@ -733,4 +734,51 @@ test('curated MLX models download, cancel across navigation, retry and become be
   await page.reload();await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
   await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('Llama 3.2 1B Instruct · 4-bit');
   await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+});
+
+test('shared text catalog keeps the chosen model across runtimes and downloads through either backend', async({page}) => {
+  await boot(page,{fullCatalog:true});await nav(page,'Benchmark').click();
+  const legacyVision=new Set(['llava:7b','llava:13b','llama3.2-vision:11b']);
+  const textModels=fullCatalog.filter((m:any)=>!legacyVision.has(m.id)&&!m.capabilities.includes('embedding'));
+  expect([...new Set(mlxCatalog.map((m:any)=>m.ollama_id))].sort()).toEqual(textModels.map((m:any)=>m.id).sort());
+  const qwen=fullCatalog.find((m:any)=>m.id==='qwen2.5:7b');
+  await selectModel(page,'Benchmark model',qwen.name);
+  const setup=page.getByRole('region',{name:'Benchmark setup'});
+  await expect(page.getByRole('button',{name:'Validate measurements',exact:true})).toBeDisabled();
+  await expect(setup.getByRole('button',{name:'Download model',exact:true})).toBeEnabled();
+  await selectModel(page,'Benchmark runtime','MLX');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(qwen.name+' · 4-bit');
+  await selectModel(page,'Benchmark runtime','Ollama');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(qwen.name);
+  await setup.getByRole('button',{name:'Download model',exact:true}).click();
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Validate measurements',exact:true})).toBeEnabled();
+  await selectModel(page,'Benchmark runtime','MLX');
+  await expect(setup.getByRole('button',{name:'Download model',exact:true})).toBeEnabled();
+  await setup.getByRole('button',{name:'Download model',exact:true}).click();
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  await selectModel(page,'Benchmark runtime','Ollama');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(qwen.name);
+  await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as any).__e2e.calls.filter((c:any)=>c.cmd==='run_mlx_suite'||c.cmd==='run_benchmark').length)).toBe(0);
+});
+
+test('current Qwen and Gemma generations are paired, downloadable and selectable across runtimes', async({page}) => {
+  await boot(page,{fullCatalog:true});await nav(page,'Benchmark').click();
+  const setup=page.getByRole('region',{name:'Benchmark setup'});
+  for(const id of ['qwen3:0.6b','qwen3.5:0.8b','gemma3:270m','gemma4:e2b','qwen3.8:27b']){
+    const profile=fullCatalog.find((m:any)=>m.id===id),pair=mlxCatalog.find((m:any)=>m.ollama_id===id);
+    expect(profile).toBeDefined();expect(pair).toBeDefined();expect(pair.revision).toMatch(/^[a-f0-9]{40}$/);
+    await selectModel(page,'Benchmark model',profile.name);
+    await expect(setup.getByRole('button',{name:'Download model',exact:true})).toBeEnabled();
+    await selectModel(page,'Benchmark runtime','MLX');
+    await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(pair.name);
+    await setup.getByRole('button',{name:'Download model',exact:true}).click();
+    await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+    await selectModel(page,'Benchmark runtime','Ollama');
+    await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText(profile.name);
+    await setup.getByRole('button',{name:'Download model',exact:true}).click();
+    await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  }
+  expect(await page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='run_mlx_suite'||c.cmd==='run_benchmark'))).toBe(false);
 });

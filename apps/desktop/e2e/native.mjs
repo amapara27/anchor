@@ -66,8 +66,9 @@ try{
   const created=await request('POST','/session',{capabilities:{alwaysMatch:{browserName:'tauri'}}});session=created.sessionId;
   await wait(()=>execute(`return !!document.querySelector('[aria-label='+${JSON.stringify(JSON.stringify('Inspect '+catalog[0].name))}+']')`),'real installed model sync');
   const mlxCatalog=await execute('return window.__TAURI_INTERNALS__.invoke("mlx_catalog");');
-  assert.equal(mlxCatalog.length,3);assert(mlxCatalog.every(m=>m.revision.length===40&&m.files.length>0));
-  const rejected=await execute('return window.__TAURI_INTERNALS__.invoke("download_mlx_model",{id:"unlisted/model",onEvent:123456}).then(()=>"ALLOWED",e=>String(e));');
+  const expectedMlx=JSON.parse(await readFile(path.join(root,'workers/mlx/models.json'),'utf8'));
+  assert.deepEqual(mlxCatalog.map(m=>m.id),expectedMlx.map(m=>m.id));assert(mlxCatalog.every(m=>m.revision.length===40&&m.files.length>0));
+  const rejected=await execute('return window.__TAURI_INTERNALS__.invoke("download_mlx_model",{id:"unlisted/model",onEvent:"__CHANNEL__:123456"}).then(()=>"ALLOWED",e=>String(e));');
   assert.match(rejected,/Choose a supported MLX model/);
   await execute('return window.__TAURI_INTERNALS__.invoke("cancel_mlx_download");');
   if(process.env.ANCHOR_MLX_E2E_MODEL) await execute('localStorage.setItem("anchor.mlx-models",'+JSON.stringify(JSON.stringify([process.env.ANCHOR_MLX_E2E_MODEL]))+');return true;');

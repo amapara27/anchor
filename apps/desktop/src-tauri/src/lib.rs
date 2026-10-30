@@ -878,7 +878,7 @@ async fn choose_mlx_model(
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
-        .set_title("Choose a local MLX Llama checkpoint")
+        .set_title("Choose a local MLX-LM checkpoint")
         .pick_folder(move |path| {
             let _ = tx.send(path);
         });

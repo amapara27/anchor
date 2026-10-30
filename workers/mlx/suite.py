@@ -43,18 +43,20 @@ def run_suite(request, path, files, config, identity, source_paths, mx, stream, 
                     raise ValueError("Checkpoint changed while loading")
             req = plan["request"]
             cap, context = req["num_predict"], req["num_ctx"]
-            if not 0 < cap <= 4096 or not 0 < context <= config["max_position_embeddings"] or req["temperature"] != 0:
+            if not 0 < cap <= 4096 or not 0 < context <= identity["context_capacity"] or req["temperature"] != 0:
                 raise ValueError("Unsupported sampling/output/context configuration")
-            rendered = tokenizer.apply_chat_template([{"role": "user", "content": req["prompt"]}], tokenize=False, add_generation_prompt=True, enable_thinking=False)
+            rendered = tokenizer.apply_chat_template([{"role": "user", "content": req["prompt"]}], tokenize=False, add_generation_prompt=True, enable_thinking=False) if tokenizer.chat_template else req["prompt"]
             ids = tokenizer.encode(rendered, add_special_tokens=False)
             if not ids or len(ids) + cap > context:
                 raise ValueError("Formatted input plus output cap exceeds the requested context; truncation is disabled")
             cache = make_prompt_cache(model)
-            if not cache or any(type(c).__name__ != "KVCache" or c.offset != 0 for c in cache):
-                raise ValueError("A fresh standard KVCache is required")
+            if not cache or any(not c.empty() or getattr(c, "offset", 0) != 0 for c in cache):
+                raise ValueError("Each request requires a fresh, empty model-native cache")
+            cache_types = [type(c).__module__ + "." + type(c).__name__ for c in cache]
             template = json.dumps(tokenizer.chat_template, sort_keys=True)
             emit("mlx_input", request=req, ids=ids, rendered=rendered, context=context, model_digest=identity["model_digest"],
-                 cache_offsets=[c.offset for c in cache], template_sha256=hashlib.sha256(template.encode()).hexdigest(), generator_sha256=generation_hash)
+                 cache_offsets=[getattr(c, "offset", None) for c in cache], cache_empty=[c.empty() for c in cache], cache_types=cache_types,
+                 template_sha256=hashlib.sha256(template.encode()).hexdigest(), generator_sha256=generation_hash)
             for s in streams:
                 mx.synchronize(s)
             mx.clear_cache()
@@ -76,9 +78,10 @@ def run_suite(request, path, files, config, identity, source_paths, mx, stream, 
                 raise ValueError("Missing or inconsistent generation counters")
             emit("generation", response="", done=True, done_reason=final.finish_reason,
                  prompt_eval_count=len(ids), prompt_eval_cached_count=0, eval_count=final.generation_tokens, total_duration=elapsed,
-                 mlx=dict(protocol_version=1, prompt_tps=final.prompt_tps, generation_tps=final.generation_tps,
+                 mlx=dict(protocol_version=request["protocol_version"], prompt_tps=final.prompt_tps, generation_tps=final.generation_tps,
                           token_ids=samples, eos_token_ids=list(tokenizer.eos_token_ids), memory=scoped,
-                          upstream_peak_memory_gb=final.peak_memory, cache_offsets=[c.offset for c in cache]))
+                          upstream_peak_memory_gb=final.peak_memory, cache_offsets=[getattr(c, "offset", None) for c in cache],
+                          cache_types=[type(c).__module__ + "." + type(c).__name__ for c in cache]))
             del cache, final, response
             gc.collect()
             emit("attempt_finished", plan_index=index, outcome="completed")

@@ -68,6 +68,7 @@ fn count(v: &Value, key: &str) -> Option<u64> {
 }
 
 pub fn metrics(a: &Attempt, session: &BenchSession) -> Result<AttemptMetrics> {
+    let protocol = session.config.mlx.as_ref().map(|c| c.protocol_version).unwrap_or(0);
     let plan = &session.config.attempts[a.plan_index];
     let mut canonical = a.clone();
     canonical.events.retain(|e| match &e.kind {
@@ -159,8 +160,17 @@ pub fn metrics(a: &Attempt, session: &BenchSession) -> Result<AttemptMetrics> {
         .as_ref()
         .and_then(|c| c.identity.as_ref());
     let vocab = identity.and_then(|id| count(id, "vocab_size"));
-    if let Some(v) = input {
+    if let Some(v) = input.as_ref() {
         let ids = v["ids"].as_array();
+        let fresh_cache = v["cache_offsets"].as_array().is_some_and(|offsets| {
+            !offsets.is_empty() && if protocol == 1 {
+                offsets.iter().all(|v| v == 0)
+            } else {
+                offsets.iter().all(|v| v.is_null() || v.as_u64() == Some(0))
+                    && v["cache_empty"].as_array().is_some_and(|empty| empty.len() == offsets.len() && empty.iter().all(|v| v == true))
+                    && v["cache_types"].as_array().is_some_and(|types| types.len() == offsets.len() && types.iter().all(|v| v.as_str().is_some_and(|s| s.starts_with("mlx_lm."))))
+            }
+        });
         if v["request"] != serde_json::to_value(&plan.request)?
             || v["model_digest"] != session.config.model_digest
             || v["context"].as_u64() != plan.request.num_ctx.map(u64::from)
@@ -178,9 +188,7 @@ pub fn metrics(a: &Attempt, session: &BenchSession) -> Result<AttemptMetrics> {
                 })
                 .zip(plan.request.num_ctx)
                 .is_none_or(|(n, c)| n > c as u64)
-            || !v["cache_offsets"]
-                .as_array()
-                .is_some_and(|a| !a.is_empty() && a.iter().all(|v| v == 0))
+            || !fresh_cache
             || ids.map(|ids| ids.len() as u64) != m.counters.prompt_eval_count
             || m.counters.prompt_eval_cached_count != Some(0)
             || plan
@@ -215,7 +223,13 @@ pub fn metrics(a: &Attempt, session: &BenchSession) -> Result<AttemptMetrics> {
             m.validation_errors.push("invalid_allocator_window".into());
         }
         let n = m.counters.eval_count;
-        if native["protocol_version"] != 1
+        if protocol == 2 && (input.as_ref().is_none_or(|v| native["cache_types"] != v["cache_types"])
+            || !native["cache_offsets"].as_array().is_some_and(|offsets|
+                native["cache_types"].as_array().is_some_and(|types| types.len() == offsets.len())
+                && offsets.iter().all(|v| v.is_null() || v.as_u64().is_some()))) {
+            m.validation_errors.push("invalid_mlx_cache_evidence".into());
+        }
+        if native["protocol_version"] != protocol
             || !native["token_ids"].as_array().is_some_and(|ids| {
                 *ids == tokens
                     && ids
@@ -311,7 +325,7 @@ pub fn report(export: &EvidenceExport, metrics: &mut [AttemptMetrics]) -> MlxRep
         }
     }
     MlxReport {
-        protocol_version: 1,
+        protocol_version: export.session.config.mlx.as_ref().map(|c| c.protocol_version).unwrap_or(0),
         boundary_checks: checks,
         boundaries_validated: valid,
         identity_unchanged: unchanged,
@@ -503,7 +517,7 @@ impl Registry {
         let handshake: Result<()> = (|| {
             let w = worker.as_mut().map_err(|e| error(e.to_string()))?;
             w.send(
-                &json!({"protocol_version":1,"mode":"suite","model_path":path,"attempts":plans}),
+                &json!({"protocol_version":2,"mode":"suite","model_path":path,"attempts":plans}),
             )?;
             let line = w
                 .next(cancel, Instant::now() + Duration::from_secs(300))?
@@ -511,7 +525,7 @@ impl Registry {
             rejected = Some(line.clone());
             let v: Value = serde_json::from_slice(&line)?;
             if v["kind"] != "manifest"
-                || v["protocol_version"] != 1
+                || v["protocol_version"] != 2
                 || !v["identity"]["model_digest"].is_string()
             {
                 return Err(error(v["error"].as_str().unwrap_or("invalid MLX manifest")));
@@ -532,7 +546,7 @@ impl Registry {
             });
         let session=self.begin_bench_session(SessionConfig{protocol:PROTOCOL.into(),suite_id:SUITE_ID.into(),suite_version:SUITE_VERSION,prompt_version:prompts::PROMPT_CATALOG_VERSION,hw:hw.clone(),install_id:install.into(),model_name:name,
             model_digest:identity.as_ref().and_then(|v|v["model_digest"].as_str()).unwrap_or("unverified").into(),quant:identity.as_ref().and_then(|v|v["quantization"]["bits"].as_u64()).map(|b|format!("{b}-bit")),runtime_version:identity.as_ref().map(|v|format!("MLX {} / MLX-LM {}",v["versions"]["mlx"].as_str().unwrap_or("unknown"),v["versions"]["mlx-lm"].as_str().unwrap_or("unknown"))),
-            server_is_local:true,concurrency:1,connection_policy:"resident worker; each framed request closes at attempt_finished; client latency includes IPC/formatting, not HTTP".into(),cache_policy:"fresh KVCache per request; one distinct warmup per context; no prefix reuse".into(),counter_calibration:"post-first sampled-token worker clock through terminal stream drain; TTFT separate; upstream rates retained independently".into(),attempts:plans,calibration:None,native:None,mlx:Some(MlxConfig{protocol_version:1,model_path:path,identity})})?;
+            server_is_local:true,concurrency:1,connection_policy:"resident worker; each framed request closes at attempt_finished; client latency includes IPC/formatting, not HTTP".into(),cache_policy:"fresh empty model-native cache per request; one distinct warmup per context; no prefix reuse".into(),counter_calibration:"post-first sampled-token worker clock through terminal stream drain; TTFT separate; upstream rates retained independently".into(),attempts:plans,calibration:None,native:None,mlx:Some(MlxConfig{protocol_version:2,model_path:path,identity})})?;
         let mut attempt = self.begin_bench_attempt(&session, 0)?;
         attempt.env_start = Some(anchor_system::telemetry::snapshot());
         attempt.events.push(RawEvent {

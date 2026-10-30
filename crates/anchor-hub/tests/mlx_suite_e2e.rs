@@ -119,11 +119,16 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
             .collect();
         let input = f.iter().find(|f| f["kind"] == "mlx_input").unwrap();
         let terminal = f.iter().find(|f| f["done"] == true).unwrap();
-        assert!(input["cache_offsets"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|v| v == 0));
+        let offsets = input["cache_offsets"].as_array().unwrap();
+        let empty = input["cache_empty"].as_array().unwrap();
+        let types = input["cache_types"].as_array().unwrap();
+        assert!(!types.is_empty());
+        assert_eq!(types.len(), offsets.len());
+        assert_eq!(empty.len(), types.len());
+        assert!(empty.iter().all(|v| v == true));
+        assert!(offsets.iter().all(|v| v.is_null() || v == 0));
+        assert!(types.iter().all(|v| v.as_str().unwrap().starts_with("mlx_lm.")));
+        assert_eq!(terminal["mlx"]["cache_types"], input["cache_types"]);
         assert_eq!(
             m.counters.prompt_eval_count,
             Some(input["ids"].as_array().unwrap().len() as u64)
@@ -188,6 +193,17 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
         .is_empty());
     replay.session.config.mlx.as_mut().unwrap().protocol_version += 1;
     assert!(replay.recalculate().is_err());
+    let mut reused = export.clone();
+    for e in &mut reused.attempts[1].events {
+        if let EventKind::Frame { bytes } = &mut e.kind {
+            let mut f: Value = serde_json::from_slice(bytes).unwrap();
+            if f["kind"] == "mlx_input" {
+                f["cache_empty"][0] = json!(false);
+                *bytes = serde_json::to_vec(&f).unwrap();
+            }
+        }
+    }
+    assert!(reused.recalculate().unwrap().scenarios.iter().any(|s| !s.complete), "a reused native cache must reject results");
     let mut corrupt = export.clone();
     for e in &mut corrupt.attempts[1].events {
         if let EventKind::Frame { bytes } = &mut e.kind {

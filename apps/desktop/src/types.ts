@@ -557,6 +557,7 @@ export interface MlxCatalogModel {
   id: string;
   name: string;
   revision: string;
+  ollama_id?: string | null;
   files: {name: string; bytes: number; sha256: string | null; git_sha1: string | null}[];
   path: string | null;
 }
