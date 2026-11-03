@@ -259,6 +259,3 @@ struct RawDisplay {
     /// `"spdisplays_builtin"` for the integrated Apple Silicon GPU.
     sppci_bus: Option<String>,
 }
-
-#[cfg(test)]
-mod tests;

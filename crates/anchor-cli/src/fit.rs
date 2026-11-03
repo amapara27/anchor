@@ -216,6 +216,3 @@ pub fn print_breakdown(model: &Model) -> Result<(), String> {
     print(&subject, &breakdown);
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

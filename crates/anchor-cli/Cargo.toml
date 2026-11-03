@@ -11,6 +11,9 @@ repository.workspace = true
 name = "anchor"
 path = "src/main.rs"
 
+[features]
+e2e = []
+
 [dependencies]
 anchor-core = { workspace = true }
 anchor-hub = { workspace = true }

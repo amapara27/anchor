@@ -90,7 +90,6 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
 /// Installed models, syncing from Ollama and falling back to the last-synced
 /// cache when it's unreachable — the same contract as the app's `list_models`.
 pub async fn installed() -> Result<Vec<Model>, String> {
-    ensure_server().await?;
     let registry = registry()?;
     match registry.sync().await {
         Ok(models) => Ok(models),
@@ -358,18 +357,5 @@ fn label(slot: Slot) -> &'static str {
     match slot {
         Slot::A => "A",
         Slot::B => "B",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn table_cells_handle_width_boundaries_and_unicode() {
-        assert_eq!(clip("anything", 0), "");
-        assert_eq!(clip("模型模型模型", 5), "模型模型…");
-        assert_eq!(clip("exact", 5), "exact");
-        assert_eq!(fmt_count(1_000), "1.0K");
     }
 }

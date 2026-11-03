@@ -60,18 +60,3 @@ pub fn sparkline(values: &[f64], width: usize) -> String {
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn progress_widgets_handle_empty_and_out_of_range_input() {
-        for fraction in [-1.0, 0.0, 0.5, 1.0, 42.0, f64::NAN] {
-            assert_eq!(bar(fraction, 20).chars().count(), 20);
-        }
-        assert_eq!(sparkline(&[], 12), "");
-        assert_eq!(sparkline(&[0.0, 0.0], 12), "▁▁");
-        assert_eq!(sparkline(&[0.0, 50.0, 100.0], 2), "▅█");
-    }
-}

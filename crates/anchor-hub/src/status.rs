@@ -81,32 +81,3 @@ pub async fn running(registry: &Registry) -> Result<Vec<RunningModel>> {
         })
         .collect())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_ps_wire_shape() {
-        // Trimmed real `GET /api/ps` body; a missing field must stay None.
-        let body = r#"{"models":[
-            {"name":"llama3:latest","size":6979321856,"size_vram":5368709120,"context_length":8192},
-            {"name":"qwen3:8b"}
-        ]}"#;
-        let resp: PsResponse = serde_json::from_str(body).unwrap();
-        assert_eq!(resp.models.len(), 2);
-        assert_eq!(resp.models[0].name, "llama3:latest");
-        assert_eq!(resp.models[0].size_vram, Some(5368709120));
-        assert_eq!(resp.models[0].size, Some(6979321856));
-        assert_eq!(resp.models[0].context_length, Some(8192));
-        assert_eq!(resp.models[1].size_vram, None);
-        assert_eq!(resp.models[1].size, None);
-        assert_eq!(resp.models[1].context_length, None);
-    }
-
-    #[test]
-    fn empty_body_yields_no_models() {
-        let resp: PsResponse = serde_json::from_str("{}").unwrap();
-        assert!(resp.models.is_empty());
-    }
-}

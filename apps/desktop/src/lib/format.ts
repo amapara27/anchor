@@ -50,7 +50,7 @@ export function formatDuration(ns: number | null | undefined): string {
 // counts, no parameter counts, no token counts. Judging whether a published tag
 // fits means reading them back, so these are the inverse of the formatters
 // above. They live here, not in the browse component, because they are real
-// logic and engine.selfcheck.ts pins them.
+// logic covered by the model browser and fit E2E flows.
 
 const SIZE_UNITS: Record<string, number> = { KB: 1e3, MB: 1e6, GB: 1e9, TB: 1e12 };
 

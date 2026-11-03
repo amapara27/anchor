@@ -171,6 +171,3 @@ fn is_ollama_process(pid: u32) -> bool {
                 .is_some_and(|name| name == "ollama")
         })
 }
-
-#[cfg(test)]
-mod tests;

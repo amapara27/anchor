@@ -1,7 +1,10 @@
 //! Round-trip tests for the SQLite cache. Kept in their own file so the storage
 //! logic stays readable and these are easy to grow or drop later.
 
-use super::*;
+use anchor_hub::db::*;
+use anchor_core::{ArchMeta, BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity, MatchQuality, Model, ModelStatus};
+use rusqlite::Connection;
+const SCHEMA_VERSION: i64 = 13;
 
 fn model(id: &str, status: ModelStatus) -> Model {
     Model {
@@ -133,7 +136,7 @@ fn bench(id: &str, hw: HwIdentity, tps: f64) -> BenchRun {
         flash_attn: Some(false),
         ollama_version: Some("0.24.0".to_string()),
         suite_id: "anchor-scenarios".to_string(),
-        suite_version: crate::bench::SUITE_VERSION,
+        suite_version: anchor_hub::bench::SUITE_VERSION,
         prefill_tps_median: Some(900.0),
         decode_tps_median: Some(tps),
         load_ms: Some(1200),
@@ -250,7 +253,7 @@ fn a_newer_run_supersedes_the_old_one_on_the_same_machine() {
     // The old run is from the previous suite version; the new one is current.
     let mut old = bench("old", mine.clone(), 42.0);
     old.prompt_id = Some("balanced".to_string());
-    old.suite_version = crate::bench::SUITE_VERSION - 1;
+    old.suite_version = anchor_hub::bench::SUITE_VERSION - 1;
     let mut new = bench("new", mine.clone(), 51.0);
     new.prompt_id = Some("balanced".to_string());
     new.updated_at = old.updated_at + 1;
@@ -605,7 +608,7 @@ fn append_message_never_moves_updated_ms_backwards() {
 #[test]
 fn replace_library_refuses_to_wipe_the_cache_with_an_empty_scrape() {
     let mut conn = in_memory();
-    let entries = vec![crate::library::LibraryEntry {
+    let entries = vec![anchor_hub::library::LibraryEntry {
         name: "llama3.1".to_string(),
         description: "a model".to_string(),
         capabilities: vec!["tools".to_string()],
@@ -627,7 +630,7 @@ fn replace_library_refuses_to_wipe_the_cache_with_an_empty_scrape() {
 
 #[test]
 fn concurrent_first_launch_migrates_once() {
-    let dir = std::env::temp_dir().join(format!("anchor-migrate-{}-{}", std::process::id(), crate::rand_hex(6).unwrap()));
+    let dir = std::env::temp_dir().join(format!("anchor-migrate-{}-{}", std::process::id(), anchor_hub::rand_hex(6).unwrap()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("registry.db");
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));

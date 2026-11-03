@@ -125,6 +125,3 @@ fn parse_free_memory_bytes(raw: &str) -> Option<u64> {
         .ok()?;
     Some(free_pages * page_size)
 }
-
-#[cfg(test)]
-mod tests;

@@ -2,7 +2,7 @@
 //
 //   node --experimental-strip-types apps/desktop/src/lib/kv.verify.ts [model...]
 //
-// Unlike engine.selfcheck.ts this needs a server and real models, so it is not
+// This optional research verifier needs a server and real models, so it is not
 // part of the normal build gate — run it when the KV formula changes, or when a
 // new architecture shows up that the formula hasn't been proven against.
 //

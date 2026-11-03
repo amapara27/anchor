@@ -9,6 +9,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "test:e2e": "node scripts/test-e2e.mjs",
     "dev": "pnpm --filter @anchor/desktop tauri dev",
     "dev:web": "pnpm --filter @anchor/desktop dev",
     "build": "pnpm --filter @anchor/desktop tauri build",

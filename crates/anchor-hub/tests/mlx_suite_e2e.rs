@@ -22,7 +22,9 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
         .unwrap();
     let model =
         PathBuf::from(std::env::var_os("ANCHOR_MLX_E2E_MODEL").expect("set ANCHOR_MLX_E2E_MODEL"));
-    let dir = root.join(".internal/benchmarking/mlx-suite-validation");
+    let dir = std::env::var_os("ANCHOR_E2E_ARTIFACT_DIR")
+        .map(|p| PathBuf::from(p).join("mlx-evidence"))
+        .unwrap_or_else(|| root.join(".internal/benchmarking/mlx-suite-validation"));
     std::fs::create_dir_all(&dir).unwrap();
     let registry = Registry::open(dir.join("registry.db")).unwrap();
     let hw = HwIdentity::from_profile(&anchor_system::Profiler::profile_now());

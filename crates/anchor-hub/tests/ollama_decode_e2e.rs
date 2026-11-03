@@ -12,7 +12,9 @@ async fn post_first_decode_uses_the_observed_backend_and_retains_raw_counters() 
         .join("../..")
         .canonicalize()
         .unwrap();
-    let dir = root.join(".internal/benchmarking/decode-validation/ollama");
+    let dir = std::env::var_os("ANCHOR_E2E_ARTIFACT_DIR")
+        .map(|p| PathBuf::from(p).join("ollama-evidence"))
+        .unwrap_or_else(|| root.join(".internal/benchmarking/decode-validation/ollama"));
     std::fs::create_dir_all(&dir).unwrap();
     let registry = Registry::open_with_host(dir.join("registry.db"), &host).unwrap();
     let hw = HwIdentity::from_profile(&anchor_system::Profiler::profile_now());

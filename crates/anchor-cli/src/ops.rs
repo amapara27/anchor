@@ -244,17 +244,3 @@ fn presets(cmd: PresetCmd, json: bool) -> Result<(), String> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Every numeric column shares one em-dash placeholder, so a missing figure
-    // reads as "not reported" rather than as a real zero.
-    #[test]
-    fn a_missing_value_renders_as_an_em_dash() {
-        assert_eq!(opt(None::<u64>), "—");
-        assert_eq!(opt(Some(0)), "0", "zero is a real reading, not a gap");
-        assert_eq!(opt(Some(42)), "42");
-    }
-}

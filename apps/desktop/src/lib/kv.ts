@@ -14,14 +14,14 @@
 // up to 5x elsewhere. `estimateKvBytesPerToken` keeps that old behaviour as the
 // fallback for when metadata is unavailable.
 //
-// Pure and dependency-free, like fit.ts, so the selfcheck and the live verifier
+// Pure and dependency-free, like fit.ts, so the UI and the live verifier
 // can both import it directly.
 //
 // MIRRORED IN RUST: `crates/anchor-core/src/fit.rs` carries the same math for
 // the CLI (`anchor fit`) and anything else headless. The GUI keeps this copy
 // because it recomputes on every context-slider tick, which an IPC round-trip
-// would make janky. The two are pinned by fixtures — engine.selfcheck.ts here,
-// the `#[cfg(test)]` block there. Change both, or neither.
+// would make janky. The same reference fixtures run through CLI and rendered
+// inspector E2E flows. Change both engines, or neither.
 import type { ArchMeta } from "../types";
 
 /**

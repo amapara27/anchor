@@ -971,6 +971,3 @@ impl From<reqwest::Error> for Error {
         if timed_out { Error::Timeout(message) } else { Error::Http(message) }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -129,6 +129,7 @@ function useModelsState() {
         })
         .finally(() => {
           inFlight.current.delete(id);
+          if (canceled.current.has(id)) clearDownload(id);
           // Always re-list, whatever the outcome. This used to be skipped for a
           // canceled id, so a pull that finished before the cancel landed left
           // the model on disk and invisible until some other refresh.
@@ -145,9 +146,9 @@ function useModelsState() {
       // transfer. Partial blobs stay, so re-pulling resumes rather than restarts.
       canceled.current.add(modelId);
       invoke("cancel_download", { id: modelId }).catch(() => {});
-      clearDownload(modelId);
+      // Keep the control until finally releases inFlight, so retry cannot be ignored.
     },
-    [clearDownload],
+    [],
   );
 
   const removeModel = useCallback(

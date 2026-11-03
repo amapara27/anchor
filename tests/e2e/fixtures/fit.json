@@ -1,0 +1,8 @@
+[
+  {"name":"Llama GQA","arch":{"architecture":"llama","block_count":16,"head_count":32,"head_count_kv":8,"key_length":64,"value_length":64},"windows":[[8192,268435456],[32768,1073741824]]},
+  {"name":"Phi MHA nonbinding window","arch":{"architecture":"phi3","block_count":32,"head_count":32,"head_count_kv":32,"embedding_length":3072,"sliding_window":262144},"windows":[[8192,3221225472],[32768,12884901888]]},
+  {"name":"Gemma 2 sliding window","arch":{"architecture":"gemma2","block_count":26,"head_count":8,"head_count_kv":4,"key_length":256,"value_length":256,"sliding_window":4096},"windows":[[8192,708837376]]},
+  {"name":"Gemma 3 floored split","arch":{"architecture":"gemma3","block_count":34,"head_count":8,"head_count_kv":4,"key_length":256,"value_length":256,"sliding_window":1024},"windows":[[8192,411041792],[32768,914358272]]},
+  {"name":"Gemma 4 shared KV layers","arch":{"architecture":"gemma4","block_count":42,"head_count":8,"head_count_kv":2,"key_length":512,"value_length":512,"key_length_swa":256,"value_length_swa":256,"sliding_window":512,"shared_kv_layers":18},"windows":[[8192,197132288],[32768,599785472]]},
+  {"name":"DeepSeek MLA decompressed cache","arch":{"architecture":"deepseek2","block_count":27,"head_count":16,"head_count_kv":16,"key_length":192,"value_length":128},"windows":[[32768,9059696640]]}
+]

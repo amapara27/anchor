@@ -311,13 +311,13 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
         BenchProgress::Status { message } => {
             current = message.clone();
             waveform.clear();
-            progress_line(&format!("{} {message}", crate::ui::spinner()));
+            if !json { progress_line(&format!("{} {message}", crate::ui::spinner())); }
         }
         BenchProgress::Run {
             index,
             total,
             decode_tps,
-        } => progress_line(&format!("  {current} · run {index}/{total} · {decode_tps:.1} tok/s")),
+        } => if !json { progress_line(&format!("  {current} · run {index}/{total} · {decode_tps:.1} tok/s")); },
         BenchProgress::ScenarioStarted {
             scenario_id,
             num_ctx,
@@ -326,7 +326,7 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
         } => {
             current = format!("{index}/{total} {scenario_id} @ {num_ctx} ctx");
             waveform.clear();
-            progress_line(&format!("{} {current}", crate::ui::spinner()));
+            if !json { progress_line(&format!("{} {current}", crate::ui::spinner())); }
         }
         BenchProgress::ScenarioDone { run, index, total } => {
             let rate = run
@@ -348,7 +348,7 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
         BenchProgress::Done { runs } => finished = runs,
         BenchProgress::Failed { message } => eprintln!("\n{message}"),
         BenchProgress::Sample { chunks_per_sec: tps } => {
-            if !animated {
+            if json || !animated {
                 return;
             }
             waveform.push(tps);
@@ -511,131 +511,4 @@ fn match_suffix(quality: Option<anchor_core::MatchQuality>) -> &'static str {
 
 fn opt1(v: Option<f64>) -> String {
     v.map(|v| format!("{v:.1}")).unwrap_or_else(|| "—".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anchor_core::MatchQuality;
-
-    #[test]
-    fn a_missing_measurement_renders_as_an_em_dash() {
-        assert_eq!(opt1(None), "—");
-        assert_eq!(opt1(Some(42.06)), "42.1", "rates are shown to one decimal");
-        assert_eq!(opt1(Some(0.0)), "0.0", "zero is a real reading, not a gap");
-    }
-
-    // The chip alone means "this machine's own run". Every borrowed row has to
-    // carry its distance, or a ranking would present another machine's numbers
-    // as if they were yours.
-    #[test]
-    fn only_this_machines_own_runs_are_unqualified() {
-        assert_eq!(match_suffix(None), "");
-        for q in [
-            MatchQuality::Exact,
-            MatchQuality::SameChipMemory,
-            MatchQuality::SameFamily,
-        ] {
-            assert!(
-                match_suffix(Some(q)).starts_with(' '),
-                "{q:?} must be labelled and separated from the chip name"
-            );
-        }
-    }
-
-    #[test]
-    fn each_match_tier_is_labelled_distinctly() {
-        let labels = [
-            match_suffix(Some(MatchQuality::Exact)),
-            match_suffix(Some(MatchQuality::SameChipMemory)),
-            match_suffix(Some(MatchQuality::SameFamily)),
-        ];
-        let mut seen = labels.to_vec();
-        seen.sort_unstable();
-        seen.dedup();
-        assert_eq!(seen.len(), labels.len(), "tiers must not share a label");
-    }
-
-    // The CLI's own flag enum has to map onto the engine's mode one-for-one;
-    // a wrong arm here silently changes how many repeats a benchmark runs.
-    #[test]
-    fn the_repeats_flag_maps_onto_the_engines_mode() {
-        assert_eq!(RepeatsMode::from(Repeats::Thorough), RepeatsMode::Thorough);
-        assert_eq!(RepeatsMode::from(Repeats::Fast), RepeatsMode::Fast);
-    }
-
-    fn run_with(thermal: Option<&str>, on_ac: bool) -> BenchRun {
-        let mut r = BenchRun {
-            id: "r".into(),
-            hw: anchor_core::HwIdentity {
-                hw_key: "hw".into(),
-                chip_key: "chip".into(),
-                chip: "Apple M4".into(),
-                cpu_cores: None,
-                gpu_cores: None,
-                memory_gb: None,
-                os_version: None,
-            },
-            model_name: "m".into(),
-            model_digest: "d".into(),
-            quant: None,
-            num_ctx: 2048,
-            kv_cache_type: "f16".into(),
-            flash_attn: Some(false),
-            ollama_version: None,
-            suite_id: "anchor-scenarios".into(),
-            suite_version: 2,
-            prefill_tps_median: None,
-            decode_tps_median: None,
-            load_ms: None,
-            resident_bytes: None,
-            repeats: 1,
-            install_id: "i".into(),
-            rating: None,
-            review: None,
-            visible: true,
-            created_at: 0,
-            updated_at: 0,
-            source: anchor_core::BenchSource::Local,
-            synced_at: None,
-            match_quality: None,
-            prompt_id: None,
-            prompt_version: None,
-            ttft_ms_median: None,
-            env_start: None,
-            env_end: None,
-            prev_decode_tps_median: None,
-            prev_ollama_version: None,
-            thermal_label: thermal.map(str::to_string),
-            notes: None,
-        };
-        r.env_start = Some(anchor_core::EnvTelemetry {
-            thermal_pressure_pct: None,
-            thermal_level: Some(0),
-            on_ac_power: Some(on_ac),
-            uptime_secs: None,
-            free_memory_bytes: None,
-            resident_model_count: None,
-        });
-        r
-    }
-
-    // A rate is only comparable against a run measured under the same
-    // conditions, so a clean suite has to say so rather than staying silent.
-    #[test]
-    fn the_conditions_line_reports_a_clean_run_and_a_hot_one() {
-        assert_eq!(conditions_line(&[]), None);
-        assert_eq!(
-            conditions_line(&[run_with(Some("unknown"), true)]),
-            None,
-            "no readable thermal state says nothing at all"
-        );
-        assert_eq!(
-            conditions_line(&[run_with(Some("sustained"), true)]).as_deref(),
-            Some("thermal nominal at scenario boundaries")
-        );
-        let hot = conditions_line(&[run_with(Some("throttled"), false), run_with(Some("sustained"), false)]).unwrap();
-        assert!(hot.starts_with("thermal pressure observed at boundaries of 1 of 2 scenarios"), "{hot}");
-        assert!(hot.ends_with("ran on battery"), "{hot}");
-    }
 }

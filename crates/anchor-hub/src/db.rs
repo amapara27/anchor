@@ -1325,6 +1325,3 @@ fn status_from_str(s: &str) -> ModelStatus {
         _ => ModelStatus::Installed,
     }
 }
-
-#[cfg(test)]
-mod tests;

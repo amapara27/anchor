@@ -220,6 +220,3 @@ pub async fn fetch_model_info(tag: &str) -> Result<Map<String, Value>> {
     }
     Err(Error::Ollama(format!("could not read GGUF header for {tag}")))
 }
-
-#[cfg(test)]
-mod tests;

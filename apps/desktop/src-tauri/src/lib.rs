@@ -205,23 +205,23 @@ async fn download_model(
     id: String,
     on_event: Channel<PullProgress>,
 ) -> Result<(), String> {
-    ensure_server(&app).await?;
-    let registry = registry(&app)?;
-
     let cancel = std::sync::Arc::new(AtomicBool::new(false));
     let state = app.state::<ServerState>();
-    state.pulls.lock().unwrap().insert(id.clone(), cancel.clone());
-
-    let result = registry
-        .pull(&id, &cancel, |progress| {
-            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
-            let _ = on_event.send(progress);
-        })
-        .await;
+    {
+        let mut pulls = state.pulls.lock().unwrap();
+        if pulls.contains_key(&id) { return Err("This model is already downloading".into()); }
+        pulls.insert(id.clone(), cancel.clone());
+    }
+    let result = async {
+        ensure_server(&app).await?;
+        if cancel.load(Ordering::Relaxed) { return Err("cancelled".into()); }
+        registry(&app)?.pull(&id, &cancel, |progress| { let _ = on_event.send(progress); })
+            .await.map_err(|e| e.to_string())
+    }.await;
 
     // Owned by this pull, so it goes whichever way the pull ended.
     state.pulls.lock().unwrap().remove(&id);
-    result.map_err(|e| e.to_string())
+    result
 }
 
 /// Stops an in-flight download.

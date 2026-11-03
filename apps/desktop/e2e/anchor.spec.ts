@@ -1,12 +1,16 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
+const fitCases = JSON.parse(fs.readFileSync(new URL('../../../tests/e2e/fixtures/fit.json', import.meta.url), 'utf8'));
 const fullCatalog = JSON.parse(fs.readFileSync(new URL('../../../crates/anchor-core/profiles/models.json', import.meta.url), 'utf8'));
 const catalog = fullCatalog.slice(0, 3);
 const mlxCatalog = JSON.parse(fs.readFileSync(new URL('../../../workers/mlx/models.json', import.meta.url), 'utf8'));
+const pageErrors = new WeakMap<Page, string[]>();
+test.beforeEach(({page}) => { const errors: string[] = []; pageErrors.set(page, errors); page.on('pageerror', error => errors.push(error.stack ?? error.message)); });
+test.afterEach(({page}) => { expect(pageErrors.get(page) ?? [], 'uncaught renderer errors').toEqual([]); });
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
+async function boot(page: Page, options: {availableUpdate?: boolean; updateCheckFails?: boolean; fitCase?: any; empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
   await page.addInitScript(({catalog, mlxCatalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -21,14 +25,14 @@ async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; f
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     const models = catalog.slice(0, 2).map((p: any, i: number) => ({
       id:p.id,name:p.name,family:p.family,size_bytes:options.measurements ? (i===0 ? 16e9 : 4.9e9) : (i+1)*1024**3,status:'installed',parameter_size:options.measurements?'8B':'1.2B',
-      quantization:options.measurements?'F16':'Q8_0',context_tokens:131072,modified_at:new Date().toISOString(),publisher:p.publisher,arch:options.measurements?{architecture:"llama",block_count:16,head_count_kv:8,key_length:64,value_length:64}:null,
+      quantization:options.measurements?'F16':'Q8_0',context_tokens:131072,modified_at:new Date().toISOString(),publisher:p.publisher,arch:options.fitCase ? options.fitCase.arch : options.measurements?{architecture:"llama",block_count:16,head_count_kv:8,key_length:64,value_length:64}:null,
     }));
     const hardware = {chip:'Apple M4',arch:'aarch64',memory_bytes:16*1024**3,total_cores:10,performance_cores:4,
       efficiency_cores:6,gpu_cores:10,os_version:'26.0',apple_silicon:true,model_name:'Mac'};
     const stats = options.measurements ? {eval_count:42,eval_duration_ns:2e9,prompt_eval_count:100,prompt_eval_cached_count:90,prompt_eval_duration_ns:1e7,ttft_ms:80,total_duration_ns:3e9,load_duration_ns:2e9} : {eval_count:32,eval_duration_ns:1e9,prompt_eval_count:20,prompt_eval_duration_ns:1e8,total_duration_ns:2e9,load_duration_ns:0};
     const savedMlx: string[] = JSON.parse(localStorage.getItem('anchor.mlx-models')??'[]');
     const restoredMlx = mlxCatalog.filter((m:any)=>savedMlx.includes('/local/'+m.id.replaceAll('/','--'))).map((m:any)=>({name:m.id,path:'/local/'+m.id.replaceAll('/','--')}));
-    const state = w.__e2e = {models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
+    const state = w.__e2e = {updateFail:true,models:options.empty?[]:models,calls:[] as any[],conversations:[] as any[],messages:{} as any,
       runs:[] as any[],sessions:[] as any[],calibrations:[] as any[],nativeRuns:[] as any[],mlxRows:[] as any[],mlxModels:options.emptyMlx?restoredMlx:[{name:'MLX Llama checkpoint',path:'/local/mlx-llama'}],mlxDownloadStop:false,mlxDownloadFail:false,version:'0.12',chatStop:false,compareStop:false,benchStop:false,benchFail:false,offline:options.offline??false,presets:[{id:'default',name:'Default',system:null,num_ctx:null,temperature:null,top_p:null,model:null,created_ms:0}]};
     const runFor = (model: string) => ({id:'run-'+Date.now(),model_name:model,model_digest:model,hw:{...hardware,key:'test'},
       quant:'Q8_0',suite_id:'anchor-scenarios',suite_version:5,prompt_id:'balanced',prompt_version:1,prompt_tokens:896,
@@ -54,6 +58,7 @@ async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; f
           case 'running_models': return [];
           case 'list_presets': return structuredClone(state.presets);
           case 'save_preset': state.presets=state.presets.filter((p:any)=>p.id!==args.preset.id).concat(args.preset); return;
+          case 'delete_preset': state.presets=state.presets.filter((p:any)=>p.id!==args.id);state.conversations.forEach((c:any)=>{if(c.preset_id===args.id)c.preset_id=null;});return;
           case 'set_conversation_preset': { const c=state.conversations.find((c:any)=>c.id===args.id); if(c)c.preset_id=args.presetId; return; }
           case 'list_conversations': return structuredClone(state.conversations);
           case 'create_conversation': {const c={id:'chat-'+(++sequence),title:'New chat',model:args.model,preset_id:args.presetId,created_ms:Date.now(),updated_ms:Date.now()};state.conversations.unshift(c);state.messages[c.id]=[];return c;}
@@ -159,7 +164,9 @@ async function boot(page: Page, options: {empty?: boolean; emptyMlx?: boolean; f
           case 'stop_benchmark':state.benchStop=true;return;
           case 'scan_storage':return {root:'/test/models',blobs_bytes:3*1024**3,manifests_bytes:100,orphaned_bytes:0,dedup_savings_bytes:0,orphaned_blobs:[],unreadable_manifests:0};
           case 'unload_model': return;
-          case 'plugin:updater|check': return null;
+          case 'plugin:updater|check': if(options.updateCheckFails)throw 'fixture endpoint unavailable';return options.availableUpdate?{rid:42,currentVersion:'0.2.0',version:'0.3.0',body:'Fixture update',rawJson:{}}:null;
+          case 'plugin:updater|download_and_install': emit(args.onEvent,{event:'Started',data:{contentLength:100}});await sleep(150);if(state.updateFail)throw 'fixture package download failed';emit(args.onEvent,{event:'Progress',data:{chunkLength:100}});return;
+          case 'restart_app': return;
           default: throw new Error('Unhandled E2E command: '+cmd);
         }
       },
@@ -263,12 +270,12 @@ test('model → benchmark handoff, cancellation, completion and stored results',
   expect(cardText).toContain('Post-first-token decode');
   expect(cardText).toContain('Runtime-specific timing · quality equivalence unchecked');
   expect(cardText).not.toMatch(/#\d+ on/);
-  await preview.screenshot({path:'test-results/diagnostic-share.png'});
+  await preview.screenshot({path:test.info().outputPath('diagnostic-share.png')});
   await preview.getByRole('button',{name:'Close share preview'}).click();
   for(const width of [800,1440]){
     await page.setViewportSize({width,height:900});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    await page.screenshot({path:`test-results/diagnostic-ranking-${width}.png`});
+    await page.screenshot({path:test.info().outputPath(`diagnostic-ranking-${width}.png`)});
   }
 });
 
@@ -302,7 +309,7 @@ for(const width of [800,1000]) test('minimum/default window fits core controls a
   const rect=await row.boundingBox();expect(rect!.x+rect!.width).toBeLessThanOrEqual(width);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
   await row.click();await expect(page.getByRole('button',{name:'Try model'})).toBeVisible();
-  await page.screenshot({path:'test-results/models-'+width+'.png',fullPage:true});
+  await page.screenshot({path:test.info().outputPath('models-')+width+'.png',fullPage:true});
 });
 
 test('selected inspector brings actions into view and New chat starts an empty thread by keyboard', async({page})=>{
@@ -339,7 +346,7 @@ for (const [width,height,theme] of [[1440,900,'dark'],[1000,700,'light'],[800,60
       const main=page.locator('main:visible');
       expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       expect(await main.evaluate(el=>el.scrollWidth <= el.clientWidth)).toBe(true);
-      await page.screenshot({path:'test-results/revamp-'+width+'-'+theme+'-'+name+'.png'});
+      await page.screenshot({path:test.info().outputPath('revamp-'+width+'-'+theme+'-'+name+'.png')});
     };
     expect(await page.getByRole('navigation',{name:'Tools'}).getByRole('button').evaluateAll(buttons=>buttons.map(button=>button.getAttribute('aria-label')))).toEqual(['Explore','Benchmark','Try','Compare','Storage','Settings']);
     await capture('models');
@@ -483,7 +490,7 @@ test('global fit context, per-quant table, quick measure, version flags and copy
   await expect(row).toContainText('stale');
   await expect(inspector).toContainText('Measured on Ollama 0.11 (now 0.12)');
   await expect(inspector).toContainText('-20% vs Ollama 0.10');
-  await page.screenshot({path:'test-results/features-inspector.png',fullPage:true});
+  await page.screenshot({path:test.info().outputPath('features-inspector.png'),fullPage:true});
 
   await inspector.getByRole('button',{name:'Re-measure',exact:true}).click();
   await inspector.getByRole('button',{name:'Stop',exact:true}).click();
@@ -509,7 +516,7 @@ test('execution evidence retains cancelled sessions without adding export contro
     await expect(evidence).toBeVisible();
     await expect(evidence.getByRole('button', {name:/Export JSON/})).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await evidence.screenshot({path:`test-results/evidence-${width}.png`});
+    await evidence.screenshot({path:test.info().outputPath(`evidence-${width}.png`)});
   }
 });
 
@@ -542,10 +549,10 @@ test('GUI calibration runs, explains diagnostics and stays in history', async ({
     await page.setViewportSize({width,height:900});
     await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    await panel.screenshot({path:`test-results/calibration-${width}-${theme}.png`});
+    await panel.screenshot({path:test.info().outputPath(`calibration-${width}-${theme}.png`)});
     await panel.getByText('Request details',{exact:true}).click();
     await page.getByText('Method',{exact:true}).click();
-    await page.screenshot({path:`test-results/benchmarks-clean-${width}-${theme}.png`});
+    await page.screenshot({path:test.info().outputPath(`benchmarks-clean-${width}-${theme}.png`)});
     await page.getByText('Method',{exact:true}).click();
     await panel.getByText('Request details',{exact:true}).click();
   }
@@ -606,7 +613,7 @@ test('MLX uses the shared suite and named model picker with runtime-scoped histo
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await expect(classify.getByText('32.0',{exact:true})).toBeInViewport();
     await expect(classify.getByText('100',{exact:true})).toBeInViewport();
-    await page.screenshot({path:'test-results/mlx-shared-suite-'+width+'-'+theme+'.png'});
+    await page.screenshot({path:test.info().outputPath('mlx-shared-suite-')+width+'-'+theme+'.png'});
   }
   await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
   await expect(page.getByText('Same tokenizer and template',{exact:true})).toBeVisible();
@@ -621,7 +628,7 @@ test('MLX uses the shared suite and named model picker with runtime-scoped histo
   expect(cardText).toContain('MLX benchmark v5');
   expect(cardText).toContain('Runtime-specific timing · quality equivalence unchecked');
   expect(cardText).not.toMatch(/diagnostic/i);
-  await preview.screenshot({path:'test-results/mlx-benchmark-share.png'});
+  await preview.screenshot({path:test.info().outputPath('mlx-benchmark-share.png')});
   await preview.getByRole('button',{name:'Close share preview'}).click();
   await selectModel(page,'Benchmark runtime','Ollama');
   await expect(page.getByText('No results for this scenario.',{exact:true})).toBeVisible();
@@ -680,7 +687,7 @@ test('benchmark setup, progress and partial failure stay clear without reusing o
     await page.setViewportSize({width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
     await page.getByRole('heading',{name:'Benchmarks',exact:true}).scrollIntoViewIfNeeded();
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    await page.screenshot({path:`test-results/benchmark-failure-${width}-${theme}.png`});
+    await page.screenshot({path:test.info().outputPath(`benchmark-failure-${width}-${theme}.png`)});
   }
   await page.getByText('Run history',{exact:false}).first().click();
   await expect(page.getByText('Needs attention',{exact:true})).toBeVisible();
@@ -699,12 +706,12 @@ test('curated MLX models download, cancel across navigation, retry and become be
   await expect(page.getByRole('option')).toHaveCount(mlxCatalog.length+1);
   await expect(page.getByRole('option').filter({hasText:'8-bit'})).toBeVisible();
   await page.setViewportSize({width:800,height:700});
-  await page.screenshot({path:'test-results/mlx-catalog-800-dark.png',animations:'disabled'});
+  await page.screenshot({path:test.info().outputPath('mlx-catalog-800-dark.png'),animations:'disabled'});
   await page.keyboard.press('Escape');
   await setup.getByRole('button',{name:'Download model',exact:true}).click();
   await expect(page.getByRole('progressbar',{name:'MLX model download'})).toBeVisible();
   await expect(page.getByRole('combobox',{name:'Benchmark model'})).toBeDisabled();
-  await page.screenshot({path:'test-results/mlx-download-800-dark.png',animations:'disabled'});
+  await page.screenshot({path:test.info().outputPath('mlx-download-800-dark.png'),animations:'disabled'});
   await nav(page,'Explore').click();
   await page.getByRole('button',{name:'Cancel MLX download',exact:true}).click();
   await nav(page,'Benchmark').click();
@@ -725,7 +732,7 @@ test('curated MLX models download, cancel across navigation, retry and become be
   await page.evaluate(()=>{document.documentElement.dataset.theme='light';});
   await page.getByRole('combobox',{name:'Benchmark model'}).click();
   await expect(page.getByRole('option').filter({hasText:'4-bit'}).first()).toContainText('Ready');
-  await page.screenshot({path:'test-results/mlx-catalog-1440-light.png',animations:'disabled'});
+  await page.screenshot({path:test.info().outputPath('mlx-catalog-1440-light.png'),animations:'disabled'});
   await page.keyboard.press('Escape');
   await setup.getByRole('button',{name:'Run suite',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.filter((c:any)=>c.cmd==='run_mlx_suite').length)).toBe(1);
@@ -781,4 +788,65 @@ test('current Qwen and Gemma generations are paired, downloadable and selectable
     await expect(setup.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
   }
   expect(await page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='run_mlx_suite'||c.cmd==='run_benchmark'))).toBe(false);
+});
+
+for(const c of fitCases){
+  test('fit inspector renders measured architecture reference: '+c.name,async({page})=>{
+    await boot(page,{fitCase:c});
+    await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
+    const inspector=page.getByRole('region',{name:'Model inspector'});
+    await inspector.getByText('Memory breakdown & model details',{exact:true}).click();
+    for(const [ctx,bytes] of c.windows){
+      await page.getByLabel('Fit context').selectOption(String(ctx));
+      await expect.poll(()=>inspector.locator('dt').filter({hasText:'KV cache at'}).evaluate(el=>el.nextElementSibling?.textContent)).toBe((bytes/1024**3).toFixed(1)+' GiB');
+      await expect.poll(()=>inspector.locator('dt').filter({hasText:'Compute buffer'}).evaluate(el=>el.nextElementSibling?.textContent)).toBe((ctx*4096/1024**3).toFixed(2)+' GiB');
+    }
+    await expect(inspector).not.toContainText('KV cache size is estimated from parameter count.');
+  });
+}
+
+test('command palette navigates by keyboard and opens a model',async({page})=>{
+  await boot(page);await page.getByRole('button',{name:'Search or run a command'}).click();
+  const search=page.getByRole('textbox',{name:'Command palette search'});await expect(search).toBeFocused();
+  await search.fill('Go to Benchmarks');await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading',{name:'Benchmarks',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Search or run a command'}).click();await search.fill(catalog[0].name);await page.keyboard.press('Enter');
+  await expect(page.getByRole('region',{name:'Model inspector'})).toContainText(catalog[0].name);
+  await page.getByRole('button',{name:'Search or run a command'}).click();await page.keyboard.press('Escape');await expect(search).toHaveCount(0);
+});
+
+test('settings preset create edit apply delete and appearance persist across navigation',async({page})=>{
+  await boot(page);await nav(page,'Settings').click();await page.getByRole('button',{name:'Cream',exact:false}).click();
+  await expect.poll(()=>page.evaluate(()=>localStorage.getItem('anchor.theme'))).toBe('light');
+  await page.getByRole('navigation',{name:'Settings sections'}).getByRole('button',{name:'Inference presets',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Delete',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'New',exact:true}).click();await page.getByLabel('Name',{exact:true}).fill('Concise test');
+  await page.getByRole('textbox',{name:/^System prompt/}).fill('Answer briefly.');await page.getByRole('button',{name:'Save',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.presets.find((p:any)=>p.name==='Concise test')?.system)).toBe('Answer briefly.');
+  const presetId=await page.evaluate(()=>(window as any).__e2e.presets.find((p:any)=>p.name==='Concise test').id);
+  await nav(page,'Try').click();await selectModel(page,'Inference preset','Concise test');await page.getByRole('textbox',{name:'Message',exact:true}).fill('Use this preset');await page.getByRole('button',{name:'Send message'}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.conversations[0]?.preset_id)).toBe(presetId);
+  await nav(page,'Settings').click();await expect(page.getByLabel('Name',{exact:true})).toHaveValue('Concise test');
+  await page.getByRole('button',{name:'Delete',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Cancel',exact:true}).click();await expect(page.getByLabel('Name',{exact:true})).toHaveValue('Concise test');
+  await page.getByRole('button',{name:'Delete',exact:true}).click();await page.getByRole('alertdialog').getByRole('button',{name:'Delete',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.presets.length)).toBe(1);
+});
+
+test('update notice can be dismissed without an install',async({page})=>{
+  await boot(page,{availableUpdate:true});await expect(page.getByText('Anchor 0.3.0',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Dismiss update notice'}).click();await expect(page.getByText('Anchor 0.3.0',{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:updater|download_and_install'||c.cmd==='restart_app'))).toBe(false);
+});
+
+test('update failure offers retry and restart occurs only after successful installation response',async({page})=>{
+  await boot(page,{availableUpdate:true});await page.getByRole('button',{name:'Update and restart',exact:true}).click();
+  await expect(page.getByText('Update failed — fixture package download failed',{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='restart_app'))).toBe(false);
+  await page.evaluate(()=>(window as any).__e2e.updateFail=false);await page.getByRole('button',{name:'Retry',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.filter((c:any)=>c.cmd==='restart_app').length)).toBe(1);
+});
+
+test('unavailable update endpoint stays silent while the app remains usable',async({page})=>{
+  await boot(page,{updateCheckFails:true});await expect(page.getByRole('button',{name:'Update and restart'})).toHaveCount(0);
+  await nav(page,'Benchmark').click();await expect(page.getByRole('heading',{name:'Benchmarks',exact:true})).toBeVisible();
 });

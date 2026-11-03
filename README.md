@@ -222,21 +222,24 @@ All state — the registry, conversations and benchmark runs — lives under the
 pnpm dev                                     # run the app (Vite on :1420)
 pnpm --filter @anchor/desktop build          # typecheck + frontend build (fast, no Rust)
 cargo run -p anchor-cli -- models ls         # run the CLI from the workspace
-cargo test -p anchor-cli -p anchor-core -p anchor-hub -p anchor-system   # logic tests, no webview
-node --experimental-strip-types \
-  apps/desktop/src/lib/engine.selfcheck.ts   # the frontend's memory-fit fixtures
-pnpm --filter @anchor/desktop test:e2e      # browser, HTTP/SQLite measurements, native IPC
-pnpm --filter @anchor/desktop test:e2e:measurements # headless HTTP/SQLite measurements
+pnpm test:e2e                                # full app, including real Ollama + MLX
+pnpm test:e2e --profile fixtures             # model-free local workflows + native app
+pnpm test:e2e --profile ci                   # build, persistence, measurements, CLI, browser, release refusal
+pnpm test:e2e --only native                  # targeted reproduction + required build
 ```
 
-E2E tests require macOS, Rust, pnpm and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). They run the real interface and native IPC against an isolated Ollama HTTP fixture and temporary database; they do not download model weights or touch your installed models.
+**[Testing map and agent repair loop](docs/testing.md)** documents every stage, important code owners, failure artifacts, targeted reruns and manual limits. This single runner replaces the unit-test/self-check entry points and is used by CI. Reports live in `.internal/testing/`; failed, blocked and narrower passes stay distinct.
 
-Opt-in MLX E2E reads a local checkpoint on an Apple GPU: set `ANCHOR_MLX_E2E_MODEL` to its directory and run `cargo test -p anchor-hub --test mlx_suite_e2e -- --ignored --nocapture`. With the same variable, `pnpm --filter @anchor/desktop test:e2e:native` also checks the real GUI → uv worker → GPU → SQLite path and Stop. Real-text suite artifacts stay in `.internal/benchmarking/mlx-suite-validation/`; the separate legacy synthetic harness is exercised with `--test mlx_e2e` and retains artifacts in `.internal/benchmarking/mlx-validation/`; normal tests remain model-free. Worker dependencies live in `workers/mlx/{pyproject.toml,uv.lock}`; `requirements.txt` is the generated hash-pinned export. Regenerate it with `uv export --project workers/mlx --frozen --no-dev --no-emit-project --output-file workers/mlx/requirements.txt` after changing the lock.
+Full local acceptance requires Apple Silicon/macOS, Rust, pnpm, uv, Ollama, network access and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). Fixture scopes use isolated HTTP/database/filesystem data; full acceptance also downloads small models into disposable caches and exercises actual runtime/GPU paths. Your installed models and normal app database are untouched. Signing, notarization and actual updater installation remain separate manual checks.
+
+Opt-in MLX E2E reads a local checkpoint on an Apple GPU: set `ANCHOR_MLX_E2E_MODEL` to its directory and run `cargo test -p anchor-hub --test mlx_suite_e2e -- --ignored --nocapture`. With the same variable, `pnpm --filter @anchor/desktop test:e2e:native` also checks the real GUI → uv worker → GPU → SQLite path and Stop. Real-text suite artifacts stay in `.internal/benchmarking/mlx-suite-validation/`; the separate legacy synthetic harness is exercised with `--test mlx_e2e` and retains artifacts in `.internal/benchmarking/mlx-validation/`; fixture scopes remain model-free. Worker dependencies live in `workers/mlx/{pyproject.toml,uv.lock}`; `requirements.txt` is the generated hash-pinned export. Regenerate it with `uv export --project workers/mlx --frozen --no-dev --no-emit-project --output-file workers/mlx/requirements.txt` after changing the lock.
+
+To exercise a first-time MLX install, run `ANCHOR_MLX_DOWNLOAD_E2E=1 pnpm --filter @anchor/desktop test:e2e:native` on Apple Silicon with uv and network access. This downloads Gemma 3 270M (about 191 MB) through the actual app into an empty temporary Hugging Face cache, cancels during the weight transfer using Activity, retries, independently checks every pinned checksum, and runs all nine workloads plus Stop through native IPC. It ignores `ANCHOR_MLX_E2E_MODEL`, preserves your usual model cache, and removes its temporary checkpoint after success. JSON results and a screenshot remain in `.internal/benchmarking/mlx-download-validation/`; failed runs retain their temporary directory for inspection. The separate ignored `mlx_download_e2e` remains a cached-file corruption/repair check, not a clean-install test. Neither live test runs in normal CI.
 
 Conventions worth knowing before contributing:
 
 - Domain logic goes in `crates/*`, never in `src-tauri` or `anchor-cli`. Both front-ends delegate.
-- The memory-fit math exists twice on purpose: `anchor_core::fit` (Rust) and `apps/desktop/src/lib/kv.ts` + `fit.ts` (TS, so the context slider recomputes without IPC). Their test fixtures mirror each other — change both, or neither.
+- The memory-fit math exists twice on purpose: `anchor_core::fit` (Rust) and `apps/desktop/src/lib/kv.ts` + `fit.ts` (TS, so the context slider recomputes without IPC). Both run against shared reference fixtures through CLI and rendered inspector E2E — change both, or neither.
 - Frontend types in `apps/desktop/src/types.ts` mirror the Rust serde types — keep them in sync.
 - Tailwind v4 via the Vite plugin. There is no `tailwind.config.js` or `postcss.config.js`.
 - SQLite migrations are append-only: never edit a shipped `V*` constant, add the next one.

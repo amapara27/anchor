@@ -276,6 +276,3 @@ fn parse_count(raw: &str) -> u64 {
     };
     number.parse::<f64>().map_or(0, |n| (n * scale) as u64)
 }
-
-#[cfg(test)]
-mod tests;
