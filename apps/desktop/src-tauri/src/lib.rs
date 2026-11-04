@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use anchor_core::{BenchRun, HardwareProfile, HwIdentity, Model, StorageScan};
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::{
-    BenchProgress, ChatMessage, ChatRequest, CompareEvent, Conversation, GenerationStats, Preset,
+    BenchProgress, ChatEvent, CompareEvent, Conversation, GenerationStats, Preset,
     PullProgress, Registry, RepeatsMode, StoredMessage,
 };
 use anchor_system::Profiler;
@@ -256,6 +256,7 @@ async fn compare_models(
     ensure_server(&app).await?;
     let registry = registry(&app)?;
     let _run = state.compare_lock.lock().await;
+    let _work = registry.try_work_lock().map_err(|e| e.to_string())?;
     registry
         .compare_cancellable(&model_a, &model_b, &prompt, &state.comparison_cancel, |event| {
             // Best-effort: a dropped channel (UI navigated away) shouldn't error.
@@ -268,33 +269,6 @@ async fn compare_models(
 #[tauri::command]
 fn stop_comparison(app: AppHandle) {
     app.state::<ServerState>().comparison_cancel.store(true, Ordering::Relaxed);
-}
-
-/// Keep-alive for chat: weights stay resident between turns so a follow-up
-/// doesn't reload the model. Evicted on leaving chat / switching model (the
-/// frontend calls `unload_model`).
-const CHAT_KEEP_ALIVE_SECS: i64 = 300;
-
-/// Chars of the first user message kept as a conversation's auto-title.
-const CHAT_TITLE_LEN: usize = 60;
-
-/// One streamed event from [`run_chat`]. Mirrored on the frontend as `ChatEvent`.
-#[derive(Clone, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ChatEvent {
-    /// The model isn't resident yet, so the wait before the first token is a
-    /// load from disk rather than generation. Only sent for a cold model.
-    Loading { model: String },
-    /// One streamed response delta.
-    Token { text: String },
-    /// One streamed reasoning delta (thinking-capable models only).
-    Thinking { text: String },
-    /// The assistant turn finished; carries the full text (authoritative — a
-    /// thinking model may stream nothing and only produce it here), the reasoning
-    /// (empty if none), and stats.
-    Result { response: String, thinking: String, stats: GenerationStats },
-    /// The turn failed (the user message is still persisted for a retry).
-    Failed { message: String },
 }
 
 /// Streams one assistant turn for a conversation.
@@ -360,121 +334,19 @@ async fn chat_turn(
     if cancel.load(Ordering::Relaxed) {
         return stopped_early(on_event);
     }
-    let registry = registry(app)?;
-
-    // First message in an empty conversation names it (and it may switch models).
-    let prior = registry.messages_for(conversation_id).map_err(|e| e.to_string())?;
-    if prior.is_empty() {
-        let title: String = content.trim().chars().take(CHAT_TITLE_LEN).collect();
-        let _ = registry.rename_conversation(conversation_id, if title.is_empty() { "New chat" } else { &title });
-    }
-    let _ = registry.set_conversation_model(conversation_id, &model);
-
-    // Persist the user turn, then build the message array from full history.
-    registry
-        .append_message(
-            conversation_id,
-            &StoredMessage {
-                id: rand_hex(8)?,
-                role: "user".into(),
-                content: content.clone(),
-                thinking: None,
-                stats_json: None,
-                created_ms: now_ms(),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-    let mut messages: Vec<ChatMessage> = registry
-        .messages_for(conversation_id)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|m| ChatMessage { role: m.role, content: m.content })
-        .collect();
-
-    // Preset resolution is best-effort: a DB hiccup falls back to Ollama's own
-    // defaults rather than failing a turn the user is waiting on.
-    let preset = registry.preset_for_conversation(conversation_id).ok().flatten();
-
-    // The system turn is prepended per request, never persisted — storing it
-    // would re-prepend a second copy on the next turn, and again on the one
-    // after that.
-    if let Some(system) = preset
-        .as_ref()
-        .and_then(|p| p.system.as_deref())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        messages.insert(
-            0,
-            ChatMessage { role: "system".into(), content: system.to_string() },
-        );
-    }
-
-    let req = ChatRequest {
-        model,
-        messages,
-        keep_alive_secs: CHAT_KEEP_ALIVE_SECS,
-        // Omit `think` so thinking-capable models stream their reasoning (surfaced
-        // collapsed in the UI) while others answer directly. `Some(true)` would
-        // error on non-thinking models like llama3.1.
-        think: None,
-        num_ctx: preset.as_ref().and_then(|p| p.num_ctx),
-        temperature: preset.as_ref().and_then(|p| p.temperature),
-        top_p: preset.as_ref().and_then(|p| p.top_p),
-    };
-
     let state = app.state::<ServerState>();
     let _run = state.compare_lock.lock().await;
-    // The queue behind this lock is the other window Stop has to work in: a
-    // benchmark ahead of us holds it for minutes.
-    if cancel.load(Ordering::Relaxed) {
-        return stopped_early(on_event);
-    }
-
-    // A cold model spends several seconds loading before the first token, which
-    // otherwise reads as a hung app. Only announced when the model really is
-    // cold — a resident one goes straight to prompt eval. Best-effort: an
-    // unreachable /api/ps just skips the notice.
-    if !anchor_hub::status::running(&registry)
-        .await
-        .is_ok_and(|list| list.iter().any(|r| r.name == req.model))
-    {
-        let _ = on_event.send(ChatEvent::Loading { model: req.model.clone() });
-    }
-
-    let result = registry
-        .chat(&req, cancel, |is_thinking, tok| {
-            // Best-effort: a dropped channel (UI navigated away) shouldn't error.
-            let _ = on_event.send(if is_thinking {
-                ChatEvent::Thinking { text: tok.to_string() }
-            } else {
-                ChatEvent::Token { text: tok.to_string() }
-            });
-        })
-        .await;
-
-    match result {
-        // A stop during the model load returns an empty turn: nothing was
-        // generated, so nothing is stored.
-        Ok((text, _, _)) if text.is_empty() => stopped_early(on_event),
-        Ok((text, thinking, stats)) => {
-            let _ = registry.append_message(
-                conversation_id,
-                &StoredMessage {
-                    id: rand_hex(8)?,
-                    role: "assistant".into(),
-                    content: text.clone(),
-                    thinking: (!thinking.is_empty()).then(|| thinking.clone()),
-                    stats_json: serde_json::to_string(&stats).ok(),
-                    created_ms: now_ms(),
-                },
-            );
-            let _ = on_event.send(ChatEvent::Result { response: text, thinking, stats });
-            Ok(())
-        }
+    if cancel.load(Ordering::Relaxed) { return stopped_early(on_event); }
+    let registry = registry(app)?;
+    let _work = registry.try_work_lock().map_err(|e| e.to_string())?;
+    match registry.chat_turn(conversation_id, &model, &content, cancel, |event| {
+        let _ = on_event.send(event);
+    }).await {
+        Ok(()) => Ok(()),
+        Err(anchor_hub::Error::Cancelled) => stopped_early(on_event),
         Err(e) => {
             let _ = on_event.send(ChatEvent::Failed { message: e.to_string() });
-            Ok(())
+            Err(e.to_string())
         }
     }
 }
@@ -573,6 +445,7 @@ async fn conversation_messages(app: AppHandle, id: String) -> Result<Vec<StoredM
 /// model resident. Best-effort — a down server (nothing to unload) is ignored.
 #[tauri::command]
 async fn unload_model(app: AppHandle, model: String) -> Result<(), String> {
+    let _work = registry(&app)?.try_work_lock().map_err(|e| e.to_string())?;
     let _ = registry(&app)?.unload(&model).await;
     Ok(())
 }
@@ -593,6 +466,7 @@ async fn running_models(app: AppHandle) -> Result<Vec<anchor_hub::status::Runnin
 /// Removes a model from Ollama and the cache.
 #[tauri::command]
 async fn remove_model(app: AppHandle, id: String) -> Result<(), String> {
+    let _work = registry(&app)?.try_work_lock().map_err(|e| e.to_string())?;
     ensure_server(&app).await?;
     registry(&app)?.remove(&id).await.map_err(|e| e.to_string())
 }
@@ -755,6 +629,7 @@ async fn run_benchmark(
     let hw = hw_identity(&app)?;
     let id = install_id(&app)?;
     let _run = state.compare_lock.lock().await;
+    let _work = registry.try_work_lock().map_err(|e| e.to_string())?;
     if state.bench_cancel.load(Ordering::Relaxed) {
         return stopped(&on_event);
     }
@@ -798,6 +673,7 @@ async fn calibrate_model(app: AppHandle, model: String, on_event: Channel<BenchP
     if state.bench_cancel.load(Ordering::Relaxed) { return Ok(None); }
     let _ = on_event.send(BenchProgress::Status { message:"Waiting for other model work to finish".into() });
     let _run = state.compare_lock.lock().await;
+    let _work = registry(&app)?.try_work_lock().map_err(|e| e.to_string())?;
     if state.bench_cancel.load(Ordering::Relaxed) { return Ok(None); }
     let registry = registry(&app)?;
     let export = registry.calibrate_ollama(&model, &hw_identity(&app)?, &install_id(&app)?, &state.bench_cancel, |event| {
@@ -906,6 +782,7 @@ async fn run_mlx_suite(
     let state = app.state::<ServerState>();
     state.bench_cancel.store(false, Ordering::Relaxed);
     let _run = state.compare_lock.lock().await;
+    let _work = registry(&app)?.try_work_lock().map_err(|e| e.to_string())?;
     if state.bench_cancel.load(Ordering::Relaxed) {
         let _ = on_event.send(BenchProgress::Done { runs: Vec::new() });
         return Ok(Vec::new());
@@ -1089,7 +966,9 @@ pub fn run() {
             // Clean up a server a previous run left behind before anything can
             // reuse it and conclude Anchor doesn't own it.
             if let Ok(dir) = data_dir(app.handle()) {
-                server::reap_orphan(&dir);
+                if let Ok(_work) = registry(app.handle()).and_then(|r| r.try_work_lock().map_err(|e| e.to_string())) {
+                    server::reap_orphan(&dir);
+                }
                 // ponytail: one-time sweep of the removed semantic search's cache
                 // (BGE model, ~130 MB) and query log; delete this once installs have updated.
                 let _ = std::fs::remove_dir_all(dir.join("embeddings"));
@@ -1165,6 +1044,12 @@ pub fn run() {
             // (not ours to kill), best-effort evict any models we may have loaded
             // so quitting Anchor never leaves weights in someone else's Ollama.
             if let RunEvent::Exit = event {
+                // A CLI may still be using this server after its window closes.
+                let guard = registry(app).and_then(|r| r.try_work_lock().map_err(|e| e.to_string()));
+                let Ok(_work) = guard else {
+                    if let Ok(dir) = data_dir(app) { server::clear_pid(&dir); }
+                    return;
+                };
                 let child = app.state::<ServerState>().child.lock().unwrap().take();
                 match child {
                     Some(mut child) => {

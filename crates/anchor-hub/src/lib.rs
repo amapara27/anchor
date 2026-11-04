@@ -12,6 +12,7 @@ use anchor_core::Model;
 use rusqlite::Connection;
 
 pub mod bench;
+pub mod chat;
 pub mod db;
 pub mod gguf;
 pub mod library;
@@ -22,6 +23,7 @@ pub mod storage;
 
 pub use bench::{BenchProgress, RepeatsMode, Scenario, CATALOG, SUITE_ID, SUITE_VERSION};
 pub use db::{Conversation, Preset, StoredMessage, DEFAULT_PRESET_ID};
+pub use chat::ChatEvent;
 pub use ollama::{ChatMessage, ChatRequest, GenerateRequest, GenerationStats, PullProgress};
 
 use serde::Serialize;
@@ -185,6 +187,8 @@ pub enum Error {
     /// should treat it as a normal terminal state, not surface it as an error.
     #[error("cancelled")]
     Cancelled,
+    #[error("{0}")]
+    Work(String),
 }
 
 /// Convenience alias for registry results.
@@ -203,6 +207,14 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// An OS-owned lock coordinates separate frontends and releases on process exit.
+    pub fn try_work_lock(&self) -> Result<std::fs::File> {
+        let path = self.db_path.with_extension("work.lock");
+        let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true)
+            .open(path).map_err(|e| Error::Work(e.to_string()))?;
+        file.try_lock().map_err(|e| Error::Work(format!("Model work is busy in another Anchor operation; retry when it finishes ({e})")))?;
+        Ok(file)
+    }
     /// Opens (creating if needed) the registry cache at `db_path`, ensuring the
     /// parent directory and schema exist.
     ///
@@ -518,6 +530,12 @@ impl Registry {
 
     /// Creates or updates one preset.
     pub fn save_preset(&self, preset: &Preset) -> Result<()> {
+        if preset.id.trim().is_empty() || preset.name.trim().is_empty()
+            || preset.temperature.is_some_and(|n| !n.is_finite() || !(0.0..=2.0).contains(&n))
+            || preset.top_p.is_some_and(|n| !n.is_finite() || !(0.0..=1.0).contains(&n))
+            || preset.num_ctx == Some(0) {
+            return Err(Error::Work("invalid preset: require an id/name, temperature 0–2, top-p 0–1 and positive context".into()));
+        }
         db::upsert_preset(&self.connect()?, preset)
     }
 
@@ -652,6 +670,7 @@ impl Registry {
             })
             .await;
 
+        let _ = self.unload(id).await;
         match result {
             Ok((response, stats)) => {
                 on_event(CompareEvent::Result {

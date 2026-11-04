@@ -12,7 +12,79 @@ use std::path::PathBuf;
 
 use anchor_hub::server::{self, EnsureOutcome};
 use anchor_hub::Registry;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, ValueEnum)]
+pub enum Runtime {
+    #[default]
+    Ollama,
+    Mlx,
+}
+
+static INTERRUPT: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> =
+    std::sync::OnceLock::new();
+
+pub fn cancel_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    INTERRUPT
+        .get_or_init(|| {
+            let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let cancel = flag.clone();
+            tokio::spawn(async move {
+                while tokio::signal::ctrl_c().await.is_ok() {
+                    if cancel.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        std::process::exit(130);
+                    }
+                    eprintln!("Stopping; Ctrl-C again exits immediately.");
+                }
+            });
+            flag
+        })
+        .clone()
+}
+
+pub async fn prepare_server(cancel: &std::sync::atomic::AtomicBool) -> Result<(), String> {
+    tokio::select! {
+        result = ensure_server() => result,
+        _ = async { while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        } } => Err("cancelled".into()),
+    }
+}
+
+pub fn prompt_input(
+    prompt: Option<String>,
+    file: Option<PathBuf>,
+    stdin: bool,
+) -> Result<String, String> {
+    use std::io::Read;
+    let text = if stdin {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|e| e.to_string())?;
+        text
+    } else if let Some(path) = file {
+        std::fs::read_to_string(path).map_err(|e| e.to_string())?
+    } else {
+        prompt.ok_or("provide a prompt, --file or --stdin")?
+    };
+    if text.trim().is_empty() {
+        return Err("prompt must not be empty".into());
+    }
+    Ok(text)
+}
+
+pub fn mutation(json: bool, status: &str, id: Option<&str>) -> Result<(), String> {
+    if json {
+        print_json(&serde_json::json!({"status":status,"id":id}))
+    } else {
+        println!(
+            "{status}{}",
+            id.map(|s| format!(" {s}")).unwrap_or_default()
+        );
+        Ok(())
+    }
+}
 
 mod bench;
 mod chat;
@@ -98,9 +170,22 @@ async fn main() {
         Command::Settings { cmd } => ops::settings(cmd, json).await,
     };
     if let Err(e) = result {
-        eprintln!("error: {e}");
-        std::process::exit(1);
+        if json {
+            eprintln!("{}", serde_json::json!({"error":e}));
+        } else {
+            eprintln!("error: {e}");
+        }
+        std::process::exit(if interrupted() { 130 } else { 1 });
     }
+    if interrupted() {
+        std::process::exit(130);
+    }
+}
+
+fn interrupted() -> bool {
+    INTERRUPT
+        .get()
+        .is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The directory Anchor keeps its state in — shared with the desktop app.
@@ -165,7 +250,7 @@ pub fn is_affirmative(answer: &str) -> bool {
 /// Asks before something irreversible. Every destructive command routes through
 /// this, so there is one prompt to reason about rather than one per call site.
 pub fn confirm(question: &str) -> Result<bool, String> {
-    println!("{question} [y/N]");
+    eprintln!("{question} [y/N]");
     let mut answer = String::new();
     std::io::stdin()
         .read_line(&mut answer)

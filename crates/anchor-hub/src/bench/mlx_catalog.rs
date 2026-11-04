@@ -36,14 +36,17 @@ pub struct DownloadProgress {
     pub total: u64,
 }
 
+/// The pinned snapshot location, including checkpoints no longer installed.
+pub fn checkpoint_path(model: &CatalogModel) -> PathBuf {
+    mlx::hub_cache().join(format!("models--{}", model.id.replace('/', "--")))
+        .join("snapshots").join(&model.revision)
+}
+
 pub fn catalog() -> Result<Vec<CatalogModel>> {
     let mut models: Vec<CatalogModel> =
         serde_json::from_str(include_str!("../../../../workers/mlx/models.json"))?;
     for model in &mut models {
-        let path = mlx::hub_cache()
-            .join(format!("models--{}", model.id.replace('/', "--")))
-            .join("snapshots")
-            .join(&model.revision);
+        let path = checkpoint_path(model);
         // Incomplete snapshots must never be offered as ready to benchmark.
         if model
             .files

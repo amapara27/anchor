@@ -43,6 +43,10 @@ try {
     assert.equal((await run(['--only', 'not-a-stage'])).code, 2);
     assert.equal((await run(['--only'])).code, 2);
     assert.equal((await run(['--profile'])).code, 2);
+    assert.equal((await run(['--surface'])).code, 2);
+    assert.equal((await run(['--surface', 'invalid'])).code, 2);
+    const listed = await run(['--surface', 'cli', '--list']);
+    assert.equal(listed.code, 0); assert.match(listed.out, /cli-mlx/);
     const lock = path.join(scratch, '.internal/testing/active.lock');
     await writeFile(lock, JSON.stringify({ pid: process.pid, run: 'fixture-owner' }));
     assert.equal((await run(['--only', 'release'])).code, 2);

@@ -77,6 +77,16 @@ const click=async(text,selector='button')=>{
 const attrClick=async(label)=>wait(()=>execute(`const el=Array.from(document.querySelectorAll('[aria-label]')).find(e=>e.getAttribute('aria-label')===${JSON.stringify(label)}&&e.getClientRects().length&&!e.disabled);if(!el)return false;el.click();return true;`),'click '+label);
 const fill=async(label,value)=>wait(()=>execute(`const el=document.querySelector('[aria-label='+${JSON.stringify(JSON.stringify(label))}+']');if(!el)return false;Object.getOwnPropertyDescriptor(el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));return true;`),'fill '+label);
 const nav=async(text)=>{await click(text,'nav[aria-label="Tools"] button');};
+const cliCommands=[];
+const cli=async(args,code=0,during=null)=>{
+  const command=spawn(path.join(root,'target/debug/anchor'),args,{cwd:root,env:{...process.env,OLLAMA_HOST:'http://127.0.0.1:'+port,OLLAMA_MODELS:path.join(scratch,'models'),ANCHOR_E2E_DATA_DIR:scratch},stdio:['ignore','pipe','pipe']});
+  let out='',err='',concurrent=null;command.stdout.on('data',b=>out+=b);command.stderr.on('data',b=>{err+=b;if(during&&!concurrent&&err.includes('Runtime ')){concurrent=during();concurrent.catch(()=>command.kill('SIGTERM'));}});
+  const timer=setTimeout(()=>command.kill('SIGKILL'),30000);
+  const result=await new Promise((resolve,reject)=>{command.once('error',reject);command.once('close',resolve);}).finally(()=>clearTimeout(timer));
+  cliCommands.push({args,code:result,stdout:out,stderr:err});
+  if(during){assert(concurrent,'CLI must acquire the work lock');await concurrent;}
+  assert.equal(result,code,args.join(' ')+'\n'+err);return out?JSON.parse(out):null;
+};
 let success=false;
 try{
   checkpoint('startup-permissions-and-catalog');
@@ -133,6 +143,33 @@ try{
   const complete=sessions.find(s=>s.outcome==='completed');assert(complete);
   assert.equal(complete.recorded_attempts,complete.planned_attempts,'completed suite attempts remain persisted');
   const visible=await visibleText();assert(!visible.includes('Export JSON')&&!visible.includes('Include prompts and output in exports'));
+  checkpoint('cli-gui-shared-workflows');
+  const shared=await cli(['chat','ls','--json']);assert.equal(shared.length,1);
+  const guiMessages=await execute('return window.__TAURI_INTERNALS__.invoke("conversation_messages",{id:'+JSON.stringify(shared[0].id)+'});');
+  assert.deepEqual(await cli(['chat','show',shared[0].id,'--json']),guiMessages);
+  await cli(['settings','presets','save','interop','--name','CLI shared preset','--system','Shared system prompt','--num-ctx','16384','--json']);
+  assert((await execute('return window.__TAURI_INTERNALS__.invoke("list_presets");')).some(p=>p.id==='interop'&&p.num_ctx===16384));
+  await cli(['chat','--conversation',shared[0].id,'--preset','interop','CLI continuation','--json']);
+  const continued=await execute('return window.__TAURI_INTERNALS__.invoke("conversation_messages",{id:'+JSON.stringify(shared[0].id)+'});');
+  assert.equal(continued.length,4);assert.equal(continued[2].content,'CLI continuation');
+  const cliRuns=await cli(['bench','run',catalog[0].id,'--scenario','classify','--repeats','fast','--json']);
+  assert.equal(cliRuns.length,1);
+  const allSessions=await execute('return window.__TAURI_INTERNALS__.invoke("bench_sessions",{limit:20});');
+  const exported=await cli(['bench','export',cliRuns[0].id,'--include-content']);
+  assert(allSessions.some(s=>s.id===exported.session.id));
+  slow=true;
+  const requestCount=requests.length;
+  await execute('window.__interopRun=window.__TAURI_INTERNALS__.invoke("run_benchmark",{model:'+JSON.stringify(catalog[0].id)+',repeats:"fast",scenario:"classify",onEvent:"__CHANNEL__:98765"}).then(()=>"done",e=>String(e));return true;');
+  await wait(()=>requests.slice(requestCount).some(r=>r.url==='/api/generate'&&r.body.prompt),'GUI owns inference lock');
+  await cli(['bench','run',catalog[0].id,'--scenario','classify','--json'],1);
+  await cli(['models','unload',catalog[0].id,'--json'],1);
+  await cli(['chat','ls','--json']);
+  await execute('return window.__TAURI_INTERNALS__.invoke("stop_benchmark");');
+  await execute('return window.__interopRun;');
+  await cli(['bench','run',catalog[0].id,'--scenario','classify','--repeats','fast','--json'],0,async()=>{
+    const refused=await execute('return window.__TAURI_INTERNALS__.invoke("run_benchmark",{model:'+JSON.stringify(catalog[0].id)+',repeats:"fast",scenario:"classify",onEvent:"__CHANNEL__:98765"}).then(()=>"ALLOWED",e=>String(e));');
+    assert.match(refused,/busy in another Anchor operation/);
+  });slow=false;
   // Calibration is usable from the GUI and shares real cancellation/persistence.
   checkpoint('measurement-validation');
   const beforeCalibration=requests.length;
@@ -227,6 +264,8 @@ try{
     console.log('Fresh MLX download passed: partial weight transfer → Activity cancellation → retry → all pinned checksums.');
   }
   if(modelPath) {
+    const beforeNative=execFileSync('sqlite3',[path.join(scratch,'registry.db'),"SELECT COUNT(*) FROM bench_runs WHERE suite_id='anchor-scenarios';"],{encoding:'utf8'}).trim();
+    assert.equal(beforeNative,String(counts[2]+2),'two CLI interoperability workloads add exactly two Ollama rows');
     checkpoint('mlx-suite-and-stop');
     await nav('Benchmark');await attrClick('Benchmark runtime');await click('MLX','[role="option"]');
     const cached=await execute('return window.__TAURI_INTERNALS__.invoke("mlx_models",{paths:'+JSON.stringify([modelPath])+'});');
@@ -253,7 +292,8 @@ try{
       await writeFile(artifact+'.png',Buffer.from(await request('GET','/session/'+session+'/screenshot'),'base64'));
       console.log('Fresh-download native evidence: '+artifact+'.json');
     }
-    await click('Measurement checks','summary');
+    await wait(()=>execute('const s=Array.from(document.querySelectorAll("summary")).find(e=>e.textContent.trim()==="Measurement checks"&&e.getClientRects().length);if(!s)return false;if(!s.parentElement.open)s.click();return s.parentElement.open;'),'open MLX measurement checks');
+    await wait(async()=> (await visibleText()).includes('Timing and allocator checks passed'),'MLX measurement report rendered');
     assert.match(await visibleText(),/Timing and allocator checks passed/);
     await nav('Explore');await nav('Benchmark');
     assert.match(await visibleText(),/Timing and allocator checks passed/,'MLX checks survive navigation');
@@ -264,7 +304,7 @@ try{
     const stopped=await execute('return window.__TAURI_INTERNALS__.invoke("bench_sessions",{limit:20});');
     assert(stopped.some(s=>s.protocol==='mlx_worker_text_v1'&&s.outcome==='cancelled'));
     const afterNative=execFileSync('sqlite3',[path.join(scratch,'registry.db'),"SELECT COUNT(*) FROM bench_runs WHERE suite_id='anchor-scenarios';"],{encoding:'utf8'}).trim();
-    assert.equal(afterNative,'9','MLX does not alter Ollama ranking rows');
+    assert.equal(afterNative,beforeNative,'MLX does not alter Ollama ranking rows');
     await attrClick('Benchmark runtime');await click('Ollama','[role="option"]');
     await attrClick('Benchmark model');await click(catalog[1].name,'[role="option"]');
     await wait(async()=> (await visibleText()).includes('Checks recorded'),'recalled Ollama validation');
@@ -287,13 +327,13 @@ try{
   assert((await execute('return window.__TAURI_INTERNALS__.invoke("list_presets");')).some(p=>p.id===preset.id));
   assert.equal((await execute('return window.__TAURI_INTERNALS__.invoke("list_conversations");')).length,1);
   if(process.env.ANCHOR_E2E_ARTIFACT_DIR){
-    await writeFile(path.join(process.env.ANCHOR_E2E_ARTIFACT_DIR,freshMlx?'mlx-native.json':'native.json'),JSON.stringify({step,sessions:restored,download:freshMlx?downloadEvidence:undefined},null,2));
+    await writeFile(path.join(process.env.ANCHOR_E2E_ARTIFACT_DIR,freshMlx?'mlx-native.json':'native.json'),JSON.stringify({step,cliCommands,sessions:restored,download:freshMlx?downloadEvidence:undefined},null,2));
   }
   // SQLite queries above verify persisted data beyond the component state.
   await request('DELETE','/session/'+session);session=null;child.kill('SIGTERM');
   success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, calibration cancellation/report, SQLite persistence.');
 }catch(error){
-  const state=JSON.stringify({step,error:error.stack,requests,download:freshMlx?downloadEvidence:undefined,page:session?await execute('return {url:location.href,text:document.body.innerText}').catch(String):null},null,2);
+  const state=JSON.stringify({step,error:error.stack,requests,download:freshMlx?downloadEvidence:undefined,page:session?await execute('return {url:location.href,text:document.body.innerText,disclosures:Array.from(document.querySelectorAll("details")).map(e=>({summary:e.querySelector("summary")?.textContent,open:e.open}))}').catch(String):null},null,2);
   await writeFile(path.join(scratch,'state.json'),state);await writeFile(path.join(scratch,'native.log'),log);
   if(process.env.ANCHOR_E2E_ARTIFACT_DIR){
     const prefix=path.join(process.env.ANCHOR_E2E_ARTIFACT_DIR,freshMlx?'mlx-native-failure':'native-failure');

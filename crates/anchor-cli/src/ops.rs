@@ -52,9 +52,11 @@ pub async fn storage(cmd: StorageCmd, json: bool) -> Result<(), String> {
             Ok(())
         }
         StorageCmd::Clean { yes } => {
+            if scan.unreadable_manifests > 0 {
+                return Err("cannot clean an incomplete reference graph".into());
+            }
             if scan.orphaned_blobs.is_empty() {
-                println!("nothing to clean");
-                return Ok(());
+                return crate::mutation(json, "nothing to clean", None);
             }
             if !yes
                 && !confirm(&format!(
@@ -63,12 +65,15 @@ pub async fn storage(cmd: StorageCmd, json: bool) -> Result<(), String> {
                     fmt_bytes(scan.orphaned_bytes)
                 ))?
             {
-                println!("left alone");
-                return Ok(());
+                return crate::mutation(json, "declined", None);
             }
             let freed = anchor_hub::storage::clean_orphaned(&scan);
-            println!("freed {}", fmt_bytes(freed));
-            Ok(())
+            if json {
+                print_json(&serde_json::json!({"freed_bytes":freed}))
+            } else {
+                println!("freed {}", fmt_bytes(freed));
+                Ok(())
+            }
         }
     }
 }
@@ -99,8 +104,33 @@ pub enum SettingsCmd {
 #[derive(Subcommand)]
 pub enum PresetCmd {
     Ls,
-    Show { id: String },
-    Rm { id: String },
+    Show {
+        id: String,
+    },
+    Rm {
+        id: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Create or update a preset. Unspecified fields retain their values.
+    Save {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        system: Option<String>,
+        #[arg(long)]
+        temperature: Option<f32>,
+        #[arg(long)]
+        num_ctx: Option<u32>,
+        #[arg(long)]
+        top_p: Option<f32>,
+        #[arg(long)]
+        model: Option<String>,
+        /// Reset optional fields to runtime defaults, e.g. --clear system,num-ctx.
+        #[arg(long, value_delimiter = ',')]
+        clear: Vec<String>,
+    },
 }
 
 pub async fn settings(cmd: SettingsCmd, json: bool) -> Result<(), String> {
@@ -125,7 +155,10 @@ pub async fn settings(cmd: SettingsCmd, json: bool) -> Result<(), String> {
             println!("  arch        {}", profile.arch);
             println!(
                 "  memory      {}",
-                profile.memory_bytes.map(fmt_bytes).unwrap_or_else(|| "—".into())
+                profile
+                    .memory_bytes
+                    .map(fmt_bytes)
+                    .unwrap_or_else(|| "—".into())
             );
             println!(
                 "  cpu cores   {} ({}P + {}E)",
@@ -134,12 +167,21 @@ pub async fn settings(cmd: SettingsCmd, json: bool) -> Result<(), String> {
                 opt(profile.efficiency_cores)
             );
             println!("  gpu cores   {}", opt(profile.gpu_cores));
-            println!("  macOS       {}", profile.os_version.as_deref().unwrap_or("—"));
+            println!(
+                "  macOS       {}",
+                profile.os_version.as_deref().unwrap_or("—")
+            );
             Ok(())
         }
         SettingsCmd::Presets { cmd } => presets(cmd, json),
         SettingsCmd::Paths => {
             let dir = data_dir()?;
+            if json {
+                return print_json(&serde_json::json!({
+                    "data_dir":dir,"registry":dir.join("registry.db"),"hardware":dir.join("hardware.json"),
+                    "ollama_host":anchor_hub::ollama_host(),"model_store":anchor_hub::storage::models_root()
+                }));
+            }
             println!("data dir     {}", dir.display());
             println!("registry     {}", dir.join("registry.db").display());
             println!("hardware     {}", dir.join("hardware.json").display());
@@ -181,12 +223,13 @@ async fn server_status(start: bool, json: bool) -> Result<(), String> {
         }));
     }
     println!("host       {host}");
-    println!("status     {}", if reachable { "running" } else { "stopped" });
+    println!(
+        "status     {}",
+        if reachable { "running" } else { "stopped" }
+    );
     println!("version    {}", version.as_deref().unwrap_or("—"));
     if !local {
-        println!(
-            "\nwarning: {host} is not this machine — prompts and responses leave this Mac."
-        );
+        println!("\nwarning: {host} is not this machine — prompts and responses leave this Mac.");
     } else if !reachable {
         println!("\n`anchor settings server --start` starts one.");
     }
@@ -202,7 +245,10 @@ fn presets(cmd: PresetCmd, json: bool) -> Result<(), String> {
                 return print_json(&presets);
             }
             // Preset ids are frontend-minted uuids, hence the wide column.
-            println!("{:<38} {:<24} {:>6} {:>8} {:>6}", "ID", "NAME", "TEMP", "NUM_CTX", "TOP_P");
+            println!(
+                "{:<38} {:<24} {:>6} {:>8} {:>6}",
+                "ID", "NAME", "TEMP", "NUM_CTX", "TOP_P"
+            );
             for p in &presets {
                 println!(
                     "{:<38} {:<24} {:>6} {:>8} {:>6}",
@@ -235,12 +281,77 @@ fn presets(cmd: PresetCmd, json: bool) -> Result<(), String> {
             }
             Ok(())
         }
-        PresetCmd::Rm { id } => {
+        PresetCmd::Save {
+            id,
+            name,
+            system,
+            temperature,
+            num_ctx,
+            top_p,
+            model,
+            clear,
+        } => {
+            let mut p = registry
+                .presets()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|p| p.id == id)
+                .unwrap_or(anchor_hub::Preset {
+                    id: id.clone(),
+                    name: id,
+                    system: None,
+                    temperature: None,
+                    num_ctx: None,
+                    top_p: None,
+                    model: None,
+                    created_ms: crate::now_ms(),
+                });
+            if let Some(n) = name {
+                p.name = n;
+            }
+            if system.is_some() {
+                p.system = system;
+            }
+            if temperature.is_some() {
+                p.temperature = temperature;
+            }
+            if num_ctx.is_some() {
+                p.num_ctx = num_ctx;
+            }
+            if top_p.is_some() {
+                p.top_p = top_p;
+            }
+            if model.is_some() {
+                p.model = model;
+            }
+            for field in clear {
+                match field.as_str() {
+                    "system" => p.system = None,
+                    "temperature" => p.temperature = None,
+                    "num-ctx" => p.num_ctx = None,
+                    "top-p" => p.top_p = None,
+                    "model" => p.model = None,
+                    _ => return Err(format!("unknown preset field {field}")),
+                }
+            }
+            registry.save_preset(&p).map_err(|e| e.to_string())?;
+            if json {
+                print_json(&p)
+            } else {
+                crate::mutation(false, "saved", Some(&p.id))
+            }
+        }
+        PresetCmd::Rm { id, yes } => {
             // The default preset is protected — conversations resolve through
             // it — so deleting it is a no-op rather than an error.
+            if id == anchor_hub::DEFAULT_PRESET_ID {
+                return crate::mutation(json, "protected", Some(&id));
+            }
+            if !yes && !confirm(&format!("delete preset {id}?"))? {
+                return crate::mutation(json, "declined", Some(&id));
+            }
             registry.delete_preset(&id).map_err(|e| e.to_string())?;
-            println!("deleted {id}");
-            Ok(())
+            crate::mutation(json, "deleted", Some(&id))
         }
     }
 }

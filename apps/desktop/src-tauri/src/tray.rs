@@ -118,6 +118,7 @@ fn unload_model(app: AppHandle, current: CurrentModel) {
     let Some(model) = current.lock().unwrap().clone() else { return };
     tauri::async_runtime::spawn(async move {
         let Some(registry) = registry(&app) else { return };
+        let Ok(_work) = registry.try_work_lock() else { return };
         let _ = registry.unload(&model).await;
     });
 }
@@ -127,6 +128,7 @@ fn unload_model(app: AppHandle, current: CurrentModel) {
 fn warm_up(app: AppHandle, current: CurrentModel) {
     tauri::async_runtime::spawn(async move {
         let Some(registry) = registry(&app) else { return };
+        let Ok(_work) = registry.try_work_lock() else { return };
         let known = current.lock().unwrap().clone();
         let target = known.or_else(|| {
             registry

@@ -3,24 +3,25 @@
 //! Rows land in the same table the desktop app's Benchmarks page reads, keyed by
 //! the same install id and hardware identity, so a run here shows up there.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-
 use anchor_core::{BenchRun, HwIdentity};
 use anchor_hub::{BenchProgress, RepeatsMode};
 use clap::{Subcommand, ValueEnum};
 
-use crate::{ensure_server, hardware, print_json, progress_line, registry};
+use crate::{hardware, print_json, registry, Runtime};
 
 #[derive(Subcommand)]
 pub enum Cmd {
     /// Benchmark a model on this machine.
     ///
-    /// Close other heavy work first — including the Anchor app if it is
-    /// generating. The two processes don't share a lock, so a contended run
-    /// measures the contention rather than the model.
+    /// Anchor refuses competing work in its GUI/CLI. Close unrelated inference
+    /// applications too: they do not participate in Anchor's work lock.
     Run {
         model: String,
+        #[arg(long, value_enum, default_value_t = Runtime::Ollama)]
+        runtime: Runtime,
+        /// Run just this workload from bench scenarios.
+        #[arg(long)]
+        scenario: Option<String>,
         /// `thorough` runs every scenario three times; `fast` drops the
         /// long-generation scenarios to a single run.
         #[arg(long, value_enum, default_value_t = Repeats::Thorough)]
@@ -28,6 +29,8 @@ pub enum Cmd {
     },
     /// Recent runs on this machine, newest first.
     Ls {
+        #[arg(long, value_enum, default_value_t = Runtime::Ollama)]
+        runtime: Runtime,
         /// Only this model.
         #[arg(long)]
         model: Option<String>,
@@ -36,6 +39,11 @@ pub enum Cmd {
     },
     /// Runs from machines like this one, fastest first.
     Top {
+        #[arg(long, value_enum, default_value_t = Runtime::Ollama)]
+        runtime: Runtime,
+        /// MLX checkpoint defining the tokenizer/template/runtime comparison group.
+        #[arg(long)]
+        reference: Option<String>,
         /// Scope to one model instead of ranking across all of them.
         #[arg(long)]
         model: Option<String>,
@@ -57,6 +65,8 @@ pub enum Cmd {
     /// picks the newest run matching the filters. `--json` on the other
     /// commands carries the full id when a script needs one.
     Samples {
+        #[arg(long, value_enum, default_value_t = Runtime::Ollama)]
+        runtime: Runtime,
         /// A full run id, instead of the filters below.
         run_id: Option<String>,
         #[arg(long)]
@@ -72,6 +82,8 @@ pub enum Cmd {
     Scenarios,
     /// All execution outcomes, including failed and cancelled sessions.
     Sessions {
+        #[arg(long, value_enum)]
+        runtime: Option<Runtime>,
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
@@ -84,7 +96,10 @@ pub enum Cmd {
     },
     /// Recalculate metrics from an evidence JSON file, without a runtime or database.
     Replay { path: std::path::PathBuf },
+    /// Inspect saved session details and measurement validation without new probes.
+    Report { id: String },
     /// Probe the installed Ollama build and record which counters are verified.
+    #[command(name = "validate", alias = "calibrate")]
     Calibrate {
         model: String,
         /// Use an isolated database here and save the full synthetic-probe evidence JSON.
@@ -101,64 +116,168 @@ pub enum Repeats {
 
 pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
     match cmd {
-        Cmd::Run { model, repeats } => bench(&model, repeats, json).await,
-        Cmd::Ls { model, limit } => history(model.as_deref(), limit, json).await,
+        Cmd::Run {
+            model,
+            repeats,
+            runtime,
+            scenario,
+        } => bench(model, repeats, runtime, scenario, json).await,
+        Cmd::Ls {
+            model,
+            limit,
+            runtime,
+        } => {
+            if runtime == Runtime::Mlx {
+                return mlx_results(model.as_deref(), None, None, None, true, limit, json);
+            }
+            history(model.as_deref(), limit, json).await
+        }
         Cmd::Top {
             model,
             suite,
             scenario,
             ctx,
-        } => top(model.as_deref(), Some(&suite), scenario.as_deref(), ctx, json).await,
+            runtime,
+            reference,
+        } => {
+            let scenario = scenario
+                .as_deref()
+                .unwrap_or(anchor_hub::bench::HEADLINE_SCENARIO);
+            check_scenario(Some(scenario))?;
+            if runtime == Runtime::Mlx {
+                if suite != anchor_hub::SUITE_ID && suite != anchor_hub::bench::mlx_suite::SUITE_ID
+                {
+                    return Err("suite does not match MLX".into());
+                }
+                return mlx_results(
+                    model.as_deref(),
+                    reference.as_deref(),
+                    Some(scenario),
+                    ctx,
+                    false,
+                    u32::MAX,
+                    json,
+                );
+            }
+            if reference.is_some() {
+                return Err("--reference applies to MLX rankings".into());
+            }
+            top(model.as_deref(), Some(&suite), Some(scenario), ctx, json).await
+        }
         Cmd::Scenarios => scenarios(json),
-        Cmd::Sessions { limit } => {
-            let sessions = registry()?.bench_sessions(limit).map_err(|e| e.to_string())?;
-            let rows: Vec<_> = sessions.iter().map(|s| serde_json::json!({
+        Cmd::Sessions { limit, runtime } => {
+            let sessions = registry()?
+                .bench_sessions(if runtime.is_some() { u32::MAX } else { limit })
+                .map_err(|e| e.to_string())?;
+            let rows: Vec<_> = sessions.iter().filter(|s| runtime.is_none_or(|r| (r == Runtime::Mlx) == s.config.protocol.starts_with("mlx_"))).take(limit as usize).map(|s| serde_json::json!({
                 "id": s.id, "model": s.config.model_name, "outcome": s.outcome, "error": s.error,
                 "created_at": s.created_at, "finished_at": s.finished_at,
                 "planned_attempts": s.config.attempts.len(), "formula_version": s.formula_version,
+                "protocol":s.config.protocol,"runtime_version":s.config.runtime_version,"suite":s.config.suite_id,
             })).collect();
-            if json { return print_json(&rows); }
+            if json {
+                return print_json(&rows);
+            }
             for row in rows {
-                println!("{}  {:<26} {}", row["id"].as_str().unwrap(), row["model"].as_str().unwrap(), row["outcome"].as_str().unwrap());
+                println!(
+                    "{}  {:<26} {}",
+                    row["id"].as_str().unwrap(),
+                    row["model"].as_str().unwrap(),
+                    row["outcome"].as_str().unwrap()
+                );
             }
             Ok(())
         }
-        Cmd::Export { id, include_content: _ } => {
-            print_json(&registry()?.bench_evidence(&id).map_err(|e| e.to_string())?)
+        Cmd::Report { id } => {
+            let e = registry()?.bench_evidence(&id).map_err(|e| e.to_string())?;
+            let mut session = serde_json::to_value(&e.session).map_err(|e| e.to_string())?;
+            // Prompt/output content remains an explicit bench export --include-content action.
+            session["config"]["attempts"] = serde_json::json!(e.session.config.attempts.iter().map(|a| serde_json::json!({
+                "scenario_id":a.scenario_id,"repeat_index":a.repeat_index,"is_warmup":a.is_warmup,
+                "prompt_tokens_target":a.prompt_tokens_target,"num_ctx":a.request.num_ctx,"num_predict":a.request.num_predict,
+                "temperature":a.request.temperature,"think":a.request.think,"keep_alive_secs":a.request.keep_alive_secs,
+            })).collect::<Vec<_>>());
+            print_json(&serde_json::json!({"session":session,"report":e.derived}))
         }
+        Cmd::Export {
+            id,
+            include_content: _,
+        } => print_json(&registry()?.bench_evidence(&id).map_err(|e| e.to_string())?),
         Cmd::Replay { path } => {
             let raw = std::fs::read(path).map_err(|e| e.to_string())?;
-            let export: anchor_hub::bench::evidence::EvidenceExport = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+            let export: anchor_hub::bench::evidence::EvidenceExport =
+                serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
             print_json(&export.recalculate().map_err(|e| e.to_string())?)
         }
         Cmd::Calibrate { model, output } => {
-            ensure_server().await?;
-            let dir = match &output { Some(dir) => dir.clone(), None => crate::data_dir()? };
+            let cancel = crate::cancel_flag();
+            let _work = registry()?.try_work_lock().map_err(|e| e.to_string())?;
+            crate::prepare_server(&cancel).await?;
+            let dir = match &output {
+                Some(dir) => dir.clone(),
+                None => crate::data_dir()?,
+            };
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            let registry = anchor_hub::Registry::open(dir.join("registry.db")).map_err(|e| e.to_string())?;
-            let profile = anchor_system::Profiler::new(dir.join("hardware.json")).get().map_err(|e| e.to_string())?;
+            let registry =
+                anchor_hub::Registry::open(dir.join("registry.db")).map_err(|e| e.to_string())?;
+            let profile = anchor_system::Profiler::new(dir.join("hardware.json"))
+                .get()
+                .map_err(|e| e.to_string())?;
             let install = anchor_hub::install_id(&dir).map_err(|e| e.to_string())?;
-            let cancel = watch_for_interrupt();
-            let export = registry.calibrate_ollama(&model, &HwIdentity::from_profile(&profile), &install, &cancel, |p| {
-                if let BenchProgress::Status { message } = p { eprintln!("{message}"); }
-            }).await.map_err(|e| e.to_string())?;
+            let export = registry
+                .calibrate_ollama(
+                    &model,
+                    &HwIdentity::from_profile(&profile),
+                    &install,
+                    &cancel,
+                    |p| {
+                        if let BenchProgress::Status { message } = p {
+                            eprintln!("{message}");
+                        }
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?;
             if output.is_some() {
                 let path = dir.join(format!("{}.json", export.session.id));
-                std::fs::write(&path, serde_json::to_vec_pretty(&export).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+                std::fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(&export).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
                 eprintln!("Evidence: {}", path.display());
             }
-            if json { print_json(&export.derived)?; }
-            else {
-                println!("Session {} · {:?}", export.session.id, export.session.outcome);
+            if json {
+                print_json(&export.derived)?;
+            } else {
+                println!(
+                    "Session {} · {:?}",
+                    export.session.id, export.session.outcome
+                );
                 for probe in &export.derived.calibration.as_ref().unwrap().probes {
-                    println!("{}: {:?} · input {} · cache {} · finish {} · {}", probe.attempt_id,
-                        probe.outcome, probe.input_count, probe.cache, probe.finish, probe.stream);
+                    println!(
+                        "{}: {:?} · input {} · cache {} · finish {} · {}",
+                        probe.attempt_id,
+                        probe.outcome,
+                        probe.input_count,
+                        probe.cache,
+                        probe.finish,
+                        probe.stream
+                    );
                 }
                 println!("Engine counts and phase rates are runtime-reported; see the evidence report for verified counts and timing limits.");
             }
             if export.session.outcome != anchor_hub::bench::evidence::Outcome::Completed
-                || export.derived.calibration.as_ref().is_some_and(|r| r.probes.iter().any(|p| p.input_count == "mismatch" || p.finish == "length_count_mismatch")) {
-                return Err(format!("calibration has failures; evidence retained in {}", export.session.id));
+                || export.derived.calibration.as_ref().is_some_and(|r| {
+                    r.probes
+                        .iter()
+                        .any(|p| p.input_count == "mismatch" || p.finish == "length_count_mismatch")
+                })
+            {
+                return Err(format!(
+                    "calibration has failures; evidence retained in {}",
+                    export.session.id
+                ));
             }
             Ok(())
         }
@@ -167,9 +286,15 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
             model,
             ctx,
             scenario,
+            runtime,
         } => {
+            check_scenario(scenario.as_deref())?;
             let run_id = match run_id {
                 Some(id) => id,
+                None if runtime == Runtime::Mlx => {
+                    let runs = mlx_rows(model.as_deref(), None, scenario.as_deref(), ctx, true)?;
+                    runs.first().ok_or("no matching MLX run")?.id.clone()
+                }
                 None => newest_run(model.as_deref(), ctx, scenario.as_deref()).await?,
             };
             let samples = registry()?
@@ -182,7 +307,10 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
                 return Err(format!("no samples for {run_id}"));
             }
             // Context-tier warmups and unsuccessful attempts live in session evidence.
-            println!("{:>6} {:>12} {:>12} {:>10}", "REPEAT", "PREFILL t/s", "DECODE t/s", "TTFT ms");
+            println!(
+                "{:>6} {:>12} {:>12} {:>10}",
+                "REPEAT", "PREFILL t/s", "DECODE t/s", "TTFT ms"
+            );
             println!("Token counts and timing scopes depend on the recorded runtime/method; TTFT is client-observed.");
             for s in &samples {
                 println!(
@@ -250,7 +378,10 @@ fn scenarios(json: bool) -> Result<(), String> {
             .collect();
         return print_json(&rows);
     }
-    println!("{:<12} {:>8} {:>8} {:>7}  {}", "SCENARIO", "PROMPT", "GEN", "CTX", "USE CASE");
+    println!(
+        "{:<12} {:>8} {:>8} {:>7}  {}",
+        "SCENARIO", "PROMPT", "GEN", "CTX", "USE CASE"
+    );
     for s in &anchor_hub::CATALOG {
         println!(
             "{:<12} {:>8} {:>8} {:>7}  {}",
@@ -264,125 +395,162 @@ fn scenarios(json: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Sparkline cells in the live line. Sized so the whole status line — scenario
-/// counter, waveform, rate — stays inside the 78 columns `progress_line` pads to.
-const WAVEFORM_WIDTH: usize = 24;
-
-/// Turns Ctrl-C into the suite's Stop button rather than a kill.
-///
-/// A killed `anchor bench` strands the weights in Ollama — the process dies
-/// before the run can unload them, and the next thing to need that RAM finds it
-/// taken. Stopping cleanly keeps completed results and interrupted evidence,
-/// and still unloads. A second Ctrl-C exits immediately, since
-/// installing a handler otherwise takes the escape hatch away.
-fn watch_for_interrupt() -> Arc<AtomicBool> {
-    let cancel = Arc::new(AtomicBool::new(false));
-    let flag = cancel.clone();
-    tokio::spawn(async move {
-        while tokio::signal::ctrl_c().await.is_ok() {
-            if flag.swap(true, Ordering::Relaxed) {
-                std::process::exit(130);
-            }
-            crate::progress_done();
-            eprintln!("stopping after this scenario — Ctrl-C again to quit now");
-        }
-    });
-    cancel
-}
-
-async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> {
-    ensure_server().await?;
-    let registry = registry()?;
-    let hw = hw()?;
-    let install_id = anchor_hub::install_id(&crate::data_dir()?).map_err(|e| e.to_string())?;
-    let mut finished: Vec<BenchRun> = Vec::new();
-    let cancel = watch_for_interrupt();
-
-    // A suite is minutes of near-silence between finished runs, so the live
-    // decode-rate samples the engine already emits (the app's waveform) are what
-    // the terminal shows too: same data, drawn in blocks instead of bars. On a
-    // redirected stdout none of this is drawn — see the `is_terminal` gates.
-    let animated = crate::is_terminal();
-    let mut waveform: Vec<f64> = Vec::new();
-    // The scenario being measured, kept so a sample can redraw the whole line.
-    let mut current = String::new();
-
-    let mut on_progress = |event: BenchProgress| match event {
-        BenchProgress::Status { message } => {
-            current = message.clone();
-            waveform.clear();
-            if !json { progress_line(&format!("{} {message}", crate::ui::spinner())); }
-        }
-        BenchProgress::Run {
-            index,
-            total,
-            decode_tps,
-        } => if !json { progress_line(&format!("  {current} · run {index}/{total} · {decode_tps:.1} tok/s")); },
-        BenchProgress::ScenarioStarted {
-            scenario_id,
-            num_ctx,
-            index,
-            total,
-        } => {
-            current = format!("{index}/{total} {scenario_id} @ {num_ctx} ctx");
-            waveform.clear();
-            if !json { progress_line(&format!("{} {current}", crate::ui::spinner())); }
-        }
-        BenchProgress::ScenarioDone { run, index, total } => {
-            let rate = run
-                .decode_tps_median
-                .map(|v| format!("{v:.1} tok/s"))
-                .unwrap_or_else(|| "no reading".into());
-            // Committed with a newline: finished scenarios scroll up as a log
-            // while the animated line keeps redrawing beneath them.
-            crate::progress_done();
-            if !json { println!(
-                "  ✓ {:<10} {:>7} ctx  {:>12}",
-                run.prompt_id.as_deref().unwrap_or("—"),
-                run.num_ctx,
-                rate,
-            ); }
-            let _ = (index, total);
-            finished.push(*run);
-        }
-        BenchProgress::Done { runs } => finished = runs,
-        BenchProgress::Failed { message } => eprintln!("\n{message}"),
-        BenchProgress::Sample { chunks_per_sec: tps } => {
-            if json || !animated {
-                return;
-            }
-            waveform.push(tps);
-            progress_line(&format!(
-                "{} {current}  {}  {tps:>6.1} chunks/s",
-                crate::ui::spinner(),
-                crate::ui::sparkline(&waveform, WAVEFORM_WIDTH),
-            ));
-        }
-    };
-
-    let result = registry
-        .run_benchmark(model, &hw, &install_id, repeats.into(), None, &cancel, &mut on_progress)
-        .await
-        .map(|_| ());
-    crate::progress_done();
-    result.map_err(|e| e.to_string())?;
-
-    if json {
-        return print_json(&finished);
-    }
-    println!();
-    if cancel.load(Ordering::Relaxed) {
-        println!(
-            "stopped early — {} of {} scenarios measured\n",
-            finished.len(),
-            anchor_hub::CATALOG.len()
-        );
-    }
-    print_runs(&finished, false);
-    if let Some(line) = conditions_line(&finished) {
-        println!("\n{line}");
+fn check_scenario(scenario: Option<&str>) -> Result<(), String> {
+    if scenario.is_some_and(|id| !anchor_hub::CATALOG.iter().any(|s| s.id == id)) {
+        return Err("unknown scenario; see anchor bench scenarios".into());
     }
     Ok(())
+}
+
+async fn bench(
+    model: String,
+    repeats: Repeats,
+    runtime: Runtime,
+    scenario: Option<String>,
+    json: bool,
+) -> Result<(), String> {
+    check_scenario(scenario.as_deref())?;
+    let cancel = crate::cancel_flag();
+    let registry = registry()?;
+    let _work = registry.try_work_lock().map_err(|e| e.to_string())?;
+    let hw = hw()?;
+    let install_id = anchor_hub::install_id(&crate::data_dir()?).map_err(|e| e.to_string())?;
+    eprintln!("Runtime {runtime:?}; repeats {}; scenario {}; timing scopes: docs/benchmark-methodology.md",
+        if matches!(repeats, Repeats::Fast) { "fast" } else { "thorough" }, scenario.as_deref().unwrap_or("all nine"));
+    let mut waveform = Vec::new();
+    let progress = move |event| match event {
+        BenchProgress::Status { message } => eprintln!("{message}"),
+        BenchProgress::ScenarioStarted {
+            scenario_id,
+            index,
+            total,
+            num_ctx,
+        } => eprintln!("{index}/{total} {scenario_id} @ {num_ctx} ctx"),
+        BenchProgress::ScenarioDone { run, .. } => eprintln!(
+            "completed {}",
+            run.prompt_id.as_deref().unwrap_or("unknown")
+        ),
+        BenchProgress::Failed { message } => eprintln!("{message}"),
+        BenchProgress::Run { index, total, .. } => eprintln!("repeat {index}/{total}"),
+        BenchProgress::Sample { chunks_per_sec }
+            if !json && std::io::IsTerminal::is_terminal(&std::io::stderr()) =>
+        {
+            waveform.push(chunks_per_sec);
+            eprint!(
+                "\r{} {chunks_per_sec:.1} chunks/s",
+                crate::ui::sparkline(&waveform, 24)
+            );
+        }
+        _ => {}
+    };
+    let runs = if runtime == Runtime::Mlx {
+        let model = crate::models::mlx_model(&model)?;
+        let root = crate::data_dir()?.join("mlx-worker");
+        tokio::task::spawn_blocking(move || {
+            registry.run_mlx_suite(
+                &model.path,
+                &root,
+                &hw,
+                &install_id,
+                repeats.into(),
+                scenario.as_deref(),
+                &cancel,
+                progress,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        crate::prepare_server(&cancel).await?;
+        registry
+            .run_benchmark(
+                &model,
+                &hw,
+                &install_id,
+                repeats.into(),
+                scenario.as_deref(),
+                &cancel,
+                progress,
+            )
+            .await
+    }
+    .map_err(|e| e.to_string())?;
+    if json {
+        return print_json(&runs);
+    }
+    print_runs(&runs, false);
+    if let Some(line) = conditions_line(&runs) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn mlx_rows(
+    model: Option<&str>,
+    reference: Option<&str>,
+    scenario: Option<&str>,
+    ctx: Option<u32>,
+    history: bool,
+) -> Result<Vec<BenchRun>, String> {
+    check_scenario(scenario)?;
+    let registry = registry()?;
+    // Saved checkpoint paths remain inspectable after their weights are removed.
+    let path_for = |id: &str| -> Result<std::path::PathBuf, String> {
+        let catalog = anchor_hub::bench::mlx_catalog::catalog().map_err(|e| e.to_string())?;
+        if let Some(m) = catalog.into_iter().find(|m| m.id == id) {
+            return Ok(anchor_hub::bench::mlx_catalog::checkpoint_path(&m));
+        }
+        let p = std::path::PathBuf::from(id);
+        if let Ok(path) = p.canonicalize() {
+            return Ok(path);
+        }
+        if p.is_absolute() {
+            Ok(p)
+        } else {
+            Ok(std::env::current_dir().map_err(|e| e.to_string())?.join(p))
+        }
+    };
+    let model = model.map(path_for).transpose()?;
+    let reference = reference
+        .map(path_for)
+        .transpose()?
+        .or_else(|| model.clone());
+    if !history && reference.is_none() {
+        return Err("MLX rankings require --reference <model-or-checkpoint> (or --model) for matching tokenizer/template/runtime settings".into());
+    }
+    Ok(registry
+        .mlx_suite_runs(
+            &hw()?,
+            model.as_deref(),
+            reference.as_deref(),
+            scenario,
+            history,
+        )
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|r| ctx.is_none_or(|c| r.num_ctx == c))
+        .collect())
+}
+
+fn mlx_results(
+    model: Option<&str>,
+    reference: Option<&str>,
+    scenario: Option<&str>,
+    ctx: Option<u32>,
+    history: bool,
+    limit: u32,
+    json: bool,
+) -> Result<(), String> {
+    let rows: Vec<_> = mlx_rows(model, reference, scenario, ctx, history)?
+        .into_iter()
+        .take(limit as usize)
+        .collect();
+    if json {
+        print_json(&rows)
+    } else {
+        print_runs(&rows, !history);
+        Ok(())
+    }
 }
 
 /// What the suite was measured under, in one line. `None` when the machine
@@ -393,17 +561,26 @@ async fn bench(model: &str, repeats: Repeats, json: bool) -> Result<(), String> 
 /// comparable against another run measured under the same conditions, and the
 /// reader can't tell a cool run from a hot one by the number alone.
 fn conditions_line(runs: &[BenchRun]) -> Option<String> {
-    let known: Vec<&BenchRun> = runs.iter().filter(|r| r.thermal_label.as_deref() != Some("unknown")).collect();
+    let known: Vec<&BenchRun> = runs
+        .iter()
+        .filter(|r| r.thermal_label.as_deref() != Some("unknown"))
+        .collect();
     if known.is_empty() {
         return None;
     }
-    let hot = known.iter().filter(|r| matches!(r.thermal_label.as_deref(), Some("throttled" | "pressure"))).count();
+    let hot = known
+        .iter()
+        .filter(|r| matches!(r.thermal_label.as_deref(), Some("throttled" | "pressure")))
+        .count();
     let mut line = if hot > 0 {
         format!("thermal pressure observed at boundaries of {hot} of {} scenarios — expect lower numbers than a cool run", known.len())
     } else {
         "thermal nominal at scenario boundaries".to_string()
     };
-    if known.iter().any(|r| r.env_start.as_ref().and_then(|e| e.on_ac_power) == Some(false)) {
+    if known
+        .iter()
+        .any(|r| r.env_start.as_ref().and_then(|e| e.on_ac_power) == Some(false))
+    {
         line.push_str("; ran on battery");
     }
     Some(line)
@@ -422,12 +599,14 @@ impl From<Repeats> for RepeatsMode {
 /// what benchmark rows are keyed on.
 async fn digest_of(model: Option<&str>) -> Result<Option<String>, String> {
     let Some(model) = model else { return Ok(None) };
-    ensure_server().await?;
-    anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), model)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("{model} is not installed"))
-        .map(Some)
+    let registry = registry()?;
+    let runs = registry
+        .bench_history(&hw()?, None, u32::MAX)
+        .map_err(|e| e.to_string())?;
+    runs.into_iter()
+        .find(|r| r.model_name == model)
+        .map(|r| Some(r.model_digest))
+        .ok_or_else(|| format!("no stored model or benchmark named {model}"))
 }
 
 async fn history(model: Option<&str>, limit: u32, json: bool) -> Result<(), String> {
@@ -470,13 +649,15 @@ fn print_runs(runs: &[BenchRun], show_match: bool) {
     // is what actually distinguishes the rows: which machine (for a ranking) or
     // which scenario (for this machine's own history). `--json` carries the id.
     println!(
-        "{:<26} {:<12} {:>7} {:>11} {:>11} {:>9} {}",
+        "{:<26} {:<12} {:>7} {:>11} {:>11} {:>9} {:>9} {:>12} {}",
         "MODEL",
         "SCENARIO",
         "CTX",
         "PREFILL",
         "DECODE",
+        "TTFT ms",
         "LOAD ms",
+        "RESIDENT",
         if show_match { "MACHINE" } else { "SUITE" }
     );
     for r in runs {
@@ -486,13 +667,19 @@ fn print_runs(runs: &[BenchRun], show_match: bool) {
             r.suite_id.clone()
         };
         println!(
-            "{:<26} {:<12} {:>7} {:>11} {:>11} {:>9} {}",
+            "{:<26} {:<12} {:>7} {:>11} {:>11} {:>9} {:>9} {:>12} {}",
             r.model_name,
             r.prompt_id.as_deref().unwrap_or("—"),
             r.num_ctx,
             opt1(r.prefill_tps_median),
             opt1(r.decode_tps_median),
-            r.load_ms.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
+            opt1(r.ttft_ms_median),
+            r.load_ms
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "—".into()),
+            r.resident_bytes
+                .map(crate::fmt_bytes)
+                .unwrap_or_else(|| "—".into()),
             tail,
         );
     }
