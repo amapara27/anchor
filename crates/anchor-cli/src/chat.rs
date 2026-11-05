@@ -218,28 +218,31 @@ async fn turn(
     let mut result = None;
     let mut in_thinking = false;
     let outcome = registry
-        .chat_turn(id, model, content, cancel, |event| match &event {
-            ChatEvent::Token { text } | ChatEvent::Thinking { text } if !json => {
-                let thinking = matches!(event, ChatEvent::Thinking { .. });
-                if thinking != in_thinking && crate::is_terminal() {
-                    print!("{}", if thinking { "\x1b[2m" } else { "\x1b[0m" });
-                }
-                in_thinking = thinking;
-                print!("{text}");
-                let _ = std::io::stdout().flush();
-            }
-            ChatEvent::Result { stats, .. } => {
-                if !json {
-                    if let Some(rate) = crate::tokens_per_second(stats) {
-                        eprintln!(
-                            "{} tokens · {rate:.1} tok/s (runtime counters)",
-                            stats.eval_count.unwrap_or(0)
-                        );
+        .chat_turn(id, model, content, cancel, |event| {
+            crate::tui_event(&event);
+            match &event {
+                ChatEvent::Token { text } | ChatEvent::Thinking { text } if !json => {
+                    let thinking = matches!(event, ChatEvent::Thinking { .. });
+                    if thinking != in_thinking && crate::is_terminal() {
+                        print!("{}", if thinking { "\x1b[2m" } else { "\x1b[0m" });
                     }
+                    in_thinking = thinking;
+                    print!("{text}");
+                    let _ = std::io::stdout().flush();
                 }
-                result = Some(event);
+                ChatEvent::Result { stats, .. } => {
+                    if !json {
+                        if let Some(rate) = crate::tokens_per_second(stats) {
+                            eprintln!(
+                                "{} tokens · {rate:.1} tok/s (runtime counters)",
+                                stats.eval_count.unwrap_or(0)
+                            );
+                        }
+                    }
+                    result = Some(event);
+                }
+                _ => {}
             }
-            _ => {}
         })
         .await
         .map_err(|e| e.to_string());

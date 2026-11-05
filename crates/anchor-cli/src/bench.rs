@@ -149,6 +149,16 @@ pub async fn run(cmd: Cmd, json: bool) -> Result<(), String> {
                 {
                     return Err("suite does not match MLX".into());
                 }
+                if model.is_none()
+                    && reference.is_none()
+                    && std::env::var_os("ANCHOR_TUI_EVENTS").is_some()
+                {
+                    return print_json(
+                        &registry()?
+                            .mlx_leaderboard(&hw()?, Some(scenario))
+                            .map_err(|e| e.to_string())?,
+                    );
+                }
                 return mlx_results(
                     model.as_deref(),
                     reference.as_deref(),
@@ -418,30 +428,39 @@ async fn bench(
     eprintln!("Runtime {runtime:?}; repeats {}; scenario {}; timing scopes: docs/benchmark-methodology.md",
         if matches!(repeats, Repeats::Fast) { "fast" } else { "thorough" }, scenario.as_deref().unwrap_or("all nine"));
     let mut waveform = Vec::new();
-    let progress = move |event| match event {
-        BenchProgress::Status { message } => eprintln!("{message}"),
-        BenchProgress::ScenarioStarted {
-            scenario_id,
-            index,
-            total,
-            num_ctx,
-        } => eprintln!("{index}/{total} {scenario_id} @ {num_ctx} ctx"),
-        BenchProgress::ScenarioDone { run, .. } => eprintln!(
-            "completed {}",
-            run.prompt_id.as_deref().unwrap_or("unknown")
-        ),
-        BenchProgress::Failed { message } => eprintln!("{message}"),
-        BenchProgress::Run { index, total, .. } => eprintln!("repeat {index}/{total}"),
-        BenchProgress::Sample { chunks_per_sec }
-            if !json && std::io::IsTerminal::is_terminal(&std::io::stderr()) =>
-        {
-            waveform.push(chunks_per_sec);
-            eprint!(
-                "\r{} {chunks_per_sec:.1} chunks/s",
-                crate::ui::sparkline(&waveform, 24)
-            );
+    let mut display = crate::ui::Progress::default();
+    let progress = move |event| {
+        crate::tui_event(&event);
+        match event {
+            BenchProgress::Status { message } => display.line(&message),
+            BenchProgress::ScenarioStarted {
+                scenario_id,
+                index,
+                total,
+                num_ctx,
+            } => {
+                waveform.clear();
+                display.line(&format!("{index}/{total} {scenario_id} @ {num_ctx} ctx"));
+            }
+            BenchProgress::ScenarioDone { run, .. } => display.line(&format!(
+                "completed {}",
+                run.prompt_id.as_deref().unwrap_or("unknown")
+            )),
+            BenchProgress::Failed { message } => display.line(&message),
+            BenchProgress::Run { index, total, .. } => {
+                display.line(&format!("repeat {index}/{total}"))
+            }
+            BenchProgress::Sample { chunks_per_sec }
+                if !json && std::io::IsTerminal::is_terminal(&std::io::stderr()) =>
+            {
+                waveform.push(chunks_per_sec);
+                display.frame(&format!(
+                    "{} {chunks_per_sec:.1} chunks/s",
+                    crate::ui::sparkline(&waveform, 24)
+                ));
+            }
+            _ => {}
         }
-        _ => {}
     };
     let runs = if runtime == Runtime::Mlx {
         let model = crate::models::mlx_model(&model)?;

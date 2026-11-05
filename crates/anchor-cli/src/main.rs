@@ -34,7 +34,7 @@ pub fn cancel_flag() -> std::sync::Arc<std::sync::atomic::AtomicBool> {
                     if cancel.swap(true, std::sync::atomic::Ordering::Relaxed) {
                         std::process::exit(130);
                     }
-                    eprintln!("Stopping; Ctrl-C again exits immediately.");
+                    ui::message("Stopping; Ctrl-C again exits immediately.");
                 }
             });
             flag
@@ -91,6 +91,7 @@ mod chat;
 mod fit;
 mod models;
 mod ops;
+mod tui;
 mod ui;
 
 /// The desktop app's bundle identifier, from
@@ -121,11 +122,13 @@ struct Cli {
     host: Option<String>,
 
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Open the keyboard-driven terminal workspace.
+    Tui,
     /// Installed models and the public Ollama library.
     Models {
         #[command(subcommand)]
@@ -162,12 +165,16 @@ async fn main() {
     }
     let json = cli.json;
     let result = match cli.command {
-        Command::Models { cmd } => models::run(cmd, json).await,
-        Command::Fit(args) => fit::run(args, json).await,
-        Command::Chat(args) => chat::run(args, json).await,
-        Command::Bench { cmd } => bench::run(cmd, json).await,
-        Command::Storage { cmd } => ops::storage(cmd, json).await,
-        Command::Settings { cmd } => ops::settings(cmd, json).await,
+        None | Some(Command::Tui) if json => {
+            Err("choose a scriptable command when using --json; see anchor --help".into())
+        }
+        None | Some(Command::Tui) => tui::run(),
+        Some(Command::Models { cmd }) => models::run(cmd, json).await,
+        Some(Command::Fit(args)) => fit::run(args, json).await,
+        Some(Command::Chat(args)) => chat::run(args, json).await,
+        Some(Command::Bench { cmd }) => bench::run(cmd, json).await,
+        Some(Command::Storage { cmd }) => ops::storage(cmd, json).await,
+        Some(Command::Settings { cmd }) => ops::settings(cmd, json).await,
     };
     if let Err(e) = result {
         if json {
@@ -262,6 +269,13 @@ pub fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
     let out = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     println!("{out}");
     Ok(())
+}
+
+// Private child-to-workspace events; public --json stdout stays result-only.
+pub fn tui_event<T: serde::Serialize>(event: &T) {
+    if std::env::var_os("ANCHOR_TUI_EVENTS").is_some() {
+        eprintln!("{}", serde_json::json!({"anchor_tui":event}));
+    }
 }
 
 /// Unix epoch milliseconds — the timestamp every stored row uses.

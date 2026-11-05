@@ -140,6 +140,10 @@ A real scan of Ollama's on-disk store: total blob and manifest size, how much co
 
 `anchor` is the terminal front-end over the same crates — and the same database, so a trial started in either is stored in one place, and a benchmark run there lands in the app's history. New commands documented here require building current source until the next CLI release is published.
 
+Run `anchor` (or `anchor tui`) in a terminal to open the keyboard workspace. Type `/` for searchable commands: `/models`, `/library`, `/results`, `/bench`, `/leaderboard`, `/sessions`, `/chat`, `/history`, `/compare`, `/fit`, `/validate`, `/presets`, `/storage`, `/settings`, `/replay` and `/activity`. Use arrows and Page Up/Down in long lists, type to filter, Enter to select, Tab to focus actions and Escape to go back. Forms have searchable choices; Tab moves between fields and Submit. Ctrl-R switches Ollama/MLX, Ctrl-L refreshes, and `/help` shows controls.
+
+Jobs stay visible across navigation. Ctrl-C stops a running job; a second press forces it. `/quit` confirms stopping active work before exiting. Chat and preset drafts survive Escape until submitted. Evidence export asks for a new filename and includes prompts/output; it never overwrites an existing file. The workspace requires a real terminal; explicit commands and `--json` remain available for scripts. MLX provides model downloads and benchmarking; chat, comparison, memory fit and store cleanup retain their existing Ollama scope.
+
 ```bash
 anchor models ls                            # installed models
 anchor models browse --filter qwen          # everything on ollama.com

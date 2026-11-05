@@ -8,6 +8,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, realpath, stat, symlink } from
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { terminalLive } from './terminal-live.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const runtime = process.argv[2];
 assert(['ollama', 'mlx'].includes(runtime));
@@ -141,6 +142,7 @@ try {
         await run(['bench', 'run', model, '--runtime', runtime, '--json'], { code: 130, cancel: line => /warming up|[1-9]\/9 /.test(line) });
         const after = await run(['bench', 'sessions', '--runtime', runtime, '--json']);
         assert(after.some(s => s.outcome === 'cancelled'));
+        await terminalLive({ root, scratch, env, commands, children, runtime, model, run, checkpoint });
         success = true; console.log('CLI ' + runtime + ' live E2E passed.');
     }
 } finally {

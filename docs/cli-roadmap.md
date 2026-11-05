@@ -4,6 +4,10 @@ Status: CLI capability work below is implemented in source. PyPI/uv distribution
 
 ## What already works
 
+The interactive terminal workspace opens with `anchor` / `anchor tui`, alongside the existing scriptable argument commands. It adds searchable slash navigation, paged Installed/Library/Benchmarked pickers, keyboard actions and forms, persistent jobs/Stop, saved reports/samples/export/replay, chat/history/presets and storage/settings. MLX leaderboards use the shared compatibility-group reader independently of the selected run model. Direct command stdout/JSON contracts remain unchanged. Ratatui/Crossterm own terminal rendering and events; operations run through the existing executable over the shared Rust services.
+
+Implementation order: stable progress rendering → search/paging/model selection → slash navigation → feature screens → cumulative PTY and real-runtime acceptance. Each step extends the same `pnpm test:e2e` runner's CLI drivers. Mouse interaction, themes and a service daemon are outside this terminal-navigation scope.
+
 The CLI shares Anchor's Rust backend and normal app database. It supports Ollama model management, chat/history, comparison, fit estimates, hardware/server inspection, storage cleanup and benchmark execution. Ollama benchmarks use the current methodology and formulas. Session listing, raw evidence export/replay and Ollama measurement validation already exist; measurement validation uses `bench validate`, with `bench calibrate` retained as an alias.
 
 The CLI now exposes the shared MLX catalog/downloader/text suite, runtime-scoped saved results, single-scenario runs and saved measurement reports. Chat request/preset/persistence sequencing lives in anchor-hub::chat and is used by both interfaces. Separate GUI/CLI processes coordinate through an OS-owned work lock, with crash recovery and read-only access during inference.
