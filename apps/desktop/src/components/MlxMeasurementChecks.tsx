@@ -51,17 +51,14 @@ export function MlxSuiteChecks({result}: {result: MlxSuiteSummary}) {
     <p className={r.boundaries_validated ? "font-medium text-fg" : "font-medium text-warn"}>{r.boundaries_validated ? "Timing and allocator checks passed" : "Measurement checks incomplete"}</p>
     <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 leading-relaxed">
       <dt>Runtime</dt><dd className="data break-words text-fg">{result.runtime_version ?? "MLX"}</dd>
-      <dt>Prompt cache</dt><dd>Normal text generation with a fresh prompt cache.</dd>
       <dt>Rate scope</dt><dd>{rateStatus}.</dd>
-      <dt>Latency</dt><dd>Client latency includes worker IPC and formatting.</dd>
-      <dt>Load allocator peak</dt><dd><span className="data text-fg">{bytes(r.load_peak_bytes)}</span> · includes resident weights; not process RSS or total Mac memory.</dd>
+      <dt title="MLX allocator memory, including resident weights">Load allocator peak</dt><dd className="data text-fg">{bytes(r.load_peak_bytes)}</dd>
     </dl>
-    <p>Quality equivalence and cross-runtime comparisons are unchecked.</p>
     <details className="group/windows">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open/windows:rotate-90" />Checks and memory windows</summary>
       <ul className="mt-2 max-w-[640px] divide-y divide-hair">{r.boundary_checks.map(c=><li key={c.name} className="flex justify-between gap-4 py-1.5"><span>{c.name}</span><span className={c.passed ? "text-fg" : "text-danger"}>{c.passed ? "checked" : "failed"}</span></li>)}</ul>
-      <div className="mt-2 overflow-x-auto rounded-control border border-hair"><table aria-label="MLX allocator windows" className="w-full text-left">
-        <thead><tr className="border-b border-hair">{["Attempt", "Active baseline", "Cached baseline", "Inference peak"].map(h=><th className="th whitespace-nowrap px-3 py-2" key={h}>{h}</th>)}</tr></thead>
+      <div role="region" aria-label="Memory windows" tabIndex={0} className="scrollbar-slim mt-2 max-h-64 overflow-auto overscroll-contain rounded-control border border-hair"><table aria-label="MLX allocator windows" className="w-full text-left">
+        <thead className="sticky top-0 bg-canvas"><tr className="border-b border-hair">{["Attempt", "Active baseline", "Cached baseline", "Inference peak"].map(h=><th scope="col" className="th whitespace-nowrap px-3 py-2" key={h}>{h}</th>)}</tr></thead>
         <tbody>{r.memory.map(w=><tr key={w.plan_index} className="border-b border-hair last:border-0"><th className="data px-3 py-2 font-normal">{w.plan_index+1}</th><td className="data whitespace-nowrap px-3 py-2">{bytes(w.baseline_active_bytes)}</td><td className="data whitespace-nowrap px-3 py-2">{bytes(w.baseline_cache_bytes)}</td><td className="data whitespace-nowrap px-3 py-2">{bytes(w.peak_bytes)}</td></tr>)}</tbody>
       </table></div>
     </details>

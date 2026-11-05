@@ -74,7 +74,6 @@ function PaneBody({
         <div>
           <p className="font-medium">Couldn’t complete</p>
           <p className="mt-0.5 text-danger/80">{state.error}</p>
-          <p className="mt-1 text-xs text-fg-subtle">Adjust your selection and run again.</p>
         </div>
       </div>
     );

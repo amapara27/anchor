@@ -351,7 +351,7 @@ export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel
               </select>
             </label>
             {activeScenario && <span aria-label="Scenario token counts" className="data text-[11px] text-fg-muted">{activeScenario.promptTokens} in / {activeScenario.genTokens} out · {numCtxFor(activeScenario)/1024}K context</span>}
-            <span className="text-[11px] text-fg-muted">{runtime === "mlx" ? "Same tokenizer and template" : "Runtime-reported rates"}</span>
+            <span className="text-[11px] text-fg-muted">{runtime === "mlx" ? "Grouped by tokenizer and template" : "Runtime-reported rates"}</span>
           </div>
           <p className="text-xs text-fg-muted">Sorted by reported decode rate.</p>
           {groups.length === 0 ? (
@@ -360,7 +360,7 @@ export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel
             </p>
           ) : (
             groups.map((g) => (
-              <Group key={g.quality} group={g} onShareRun={handleShareRun} />
+              <Group key={`${g.quality}:${g.runs[0]?.id}`} group={g} onShareRun={handleShareRun} />
             ))
           )}
 
@@ -373,18 +373,12 @@ export function BenchmarksPage({openModel, onBusy, onDownloadChange}: {openModel
 
       {runtime === "mlx" && <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Measurement checks</summary>
-        <div className="mt-3">{mlxChecks ? <MlxSuiteChecks result={mlxChecks} /> : <p className="text-xs text-fg-muted">Checks run automatically with the MLX suite. Real text generation uses the same nine workloads and output caps.</p>}</div>
+        <div className="mt-3">{mlxChecks ? <MlxSuiteChecks result={mlxChecks} /> : <p className="text-xs text-fg-muted">Checks run automatically with the suite.</p>}</div>
       </details>}
 
-      <details className="group border-t border-hair pt-4">
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Method</summary>
-        <ul className="mt-3 space-y-1.5 text-xs leading-relaxed text-fg-muted">
-          <li>Nine workloads, medians after warmup. Thorough: three repeats. Fast: long generations run once.</li>
-          <li>TTFT: request to first output. Decode excludes the first token; one-token responses have no decode rate. Prefill needs cache counts. The live chart counts chunks.</li>
-          <li>All attempts saved. Rankings match method, workload and context; answer quality is unchecked. Thermal readings are snapshots; KV cache and Flash Attention settings are unreported.</li>
-          {runtime === "mlx" && <li>MLX times the worker from its first sampled token until completion, including communication and final queued work. Ollama uses its matched runtime timer. Unsupported timers show N/A; raw counters remain in the details.</li>}
-        </ul>
-      </details>
+      <div className="border-t border-hair pt-4">
+        <a href="https://github.com/amapara27/anchor/blob/main/docs/benchmark-methodology.md" onClick={e => { e.preventDefault(); void openUrl(e.currentTarget.href); }} className="text-xs text-fg-muted underline underline-offset-4 hover:text-fg">Benchmark methodology</a>
+      </div>
       <details className="group border-t border-hair pt-4">
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-1.5 text-[13px] text-fg-muted transition-colors hover:text-fg [&::-webkit-details-marker]:hidden"><ChevronRightIcon className="size-3.5 transition-transform group-open:rotate-90" />Run history <span className="data ml-1 text-[11px] text-fg-muted">{sessions.length} session{sessions.length === 1 ? "" : "s"}</span>{sessions.some(s => ["failed", "timed_out", "invalid"].includes(s.outcome)) && <span className="ml-2 flex items-center gap-1 text-xs text-warn"><WarningIcon className="size-3" />Needs attention</span>}</summary>
         <div className="mt-4"><HistoryCard history={history} historyScope={historyScope} setHistoryScope={setHistoryScope} onShare={handleShare} canShare={mine?.decode_tps_median != null} /></div>
@@ -731,6 +725,7 @@ function Group({
           {median != null && ` · median ${median.toFixed(1)} tok/s`}
         </span>
       </div>
+      {group.referenceModel && <p className="break-words text-xs text-fg-muted">Matching {group.referenceModel} tokenizer and template</p>}
       <div className="overflow-hidden rounded-card border border-hair">
         {group.runs.map((r, i) => {
           const mine = r.source === "local";

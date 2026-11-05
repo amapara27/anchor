@@ -273,7 +273,7 @@ export function StoragePage() {
           ) : (
             <p className="text-[13px] text-fg-muted">
               {scan
-                ? "No orphaned blobs — everything on disk is referenced."
+                ? "No orphaned blobs."
                 : scanning
                   ? "Scanning…"
                   : "Rescan disk to check for orphaned blobs."}

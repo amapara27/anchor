@@ -109,8 +109,7 @@ export function ModelComparison({onBusy}: {onBusy?: (busy: boolean) => void}) {
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-fg-subtle">
-            Models that aren’t installed will be downloaded first. They run one at a time to fit in
-            memory.
+            Runs one model at a time. Missing models download first.
           </p>
           {running && <Button variant="ghost" onClick={stop}>Stop comparison</Button>}
           <Button variant="primary" onClick={() => run(modelA, modelB, prompt)} disabled={!canRun}>

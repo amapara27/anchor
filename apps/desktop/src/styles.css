@@ -165,6 +165,8 @@
   body,
   #root {
     height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 
   body {
@@ -308,11 +310,9 @@
 .tool-nav-item[aria-current="page"]::before { content: ""; position: absolute; left: -10px; top: 9px; bottom: 9px; width: 2px; border-radius: 0 2px 2px 0; background: var(--accent); }
 .tool-sidebar[data-collapsed="true"] .tool-nav-item[aria-current="page"]::before { left: -8px; }
 .tool-nav-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.tool-sidebar-label { padding: 0 10px 8px; color: var(--muted); font-size: 11px; font-weight: 500; }
 .tool-sidebar-footer { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--hair); color: var(--muted); font-size: 11px; line-height: 1.6; }
 .tool-sidebar[data-collapsed="true"] { width: 56px; padding-inline: 8px; }
 .tool-sidebar[data-collapsed="true"] .tool-nav-label,
-.tool-sidebar[data-collapsed="true"] .tool-sidebar-label,
 .tool-sidebar[data-collapsed="true"] .tool-sidebar-footer { display: none; }
 .tool-sidebar[data-collapsed="true"] .tool-nav-item { padding: 0; justify-content: center; }
 .tool-page { width: 100%; max-width: 1440px; margin-inline: auto; padding: 28px 32px; display: flex; flex-direction: column; gap: 24px; }

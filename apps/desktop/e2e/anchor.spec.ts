@@ -10,7 +10,7 @@ test.afterEach(({page}) => { expect(pageErrors.get(page) ?? [], 'uncaught render
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {availableUpdate?: boolean; updateCheckFails?: boolean; fitCase?: any; empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
+async function boot(page: Page, options: {longChat?: boolean; availableUpdate?: boolean; updateCheckFails?: boolean; fitCase?: any; empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
   await page.addInitScript(({catalog, mlxCatalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -68,6 +68,7 @@ async function boot(page: Page, options: {availableUpdate?: boolean; updateCheck
             const id=args.conversationId;
             state.messages[id].push({id:'user',role:'user',content:args.content,thinking:null,stats_json:null,created_ms:Date.now()});
             emit(args.onEvent,{kind:'loading',model:args.model}); await sleep(150);
+            if(options.longChat) { for(let i=0;!state.chatStop;i++){ emit(args.onEvent,{kind:'token',text:'Paragraph '+i+': '+('Streaming text for reading. '.repeat(20))+'\n\n'});await sleep(80); } }
             emit(args.onEvent,{kind:'token',text:'A useful local answer.'}); await sleep(350);
             state.messages[id].push({id:'answer',role:'assistant',content:'A useful local answer.',thinking:null,stats_json:JSON.stringify(stats),created_ms:Date.now()});
             emit(args.onEvent,{kind:'result',response:'A useful local answer.',thinking:'',stats});return;
@@ -110,6 +111,13 @@ async function boot(page: Page, options: {availableUpdate?: boolean; updateCheck
           case 'native_mlx_report': return null;
           case 'choose_mlx_model': return {name:'Imported Llama checkpoint',path:'/local/imported-llama'};
           case 'mlx_suite_report': return state.nativeRuns.find((r:any)=>r.session_id===args.id);
+          case 'mlx_leaderboard': {
+            const groups: Record<string, any[]> = {};
+            for(const row of state.mlxRows.filter((r:any)=>!args.promptId||r.prompt_id===args.promptId)){
+              (groups[row.comparison_group??'default']??=[]).push(row);
+            }
+            return Object.values(groups).map(rows=>rows.sort((a,b)=>(b.decode_tps_median??-Infinity)-(a.decode_tps_median??-Infinity)));
+          }
           case 'mlx_suite_runs': return state.mlxRows.filter((r:any)=>(!args.modelPath||r.model_path===args.modelPath)&&(!args.promptId||r.prompt_id===args.promptId));
           case 'run_mlx_suite': {
             state.benchStop=false;emit(args.onEvent,{kind:'status',message:'Preparing MLX with uv…'});
@@ -120,7 +128,7 @@ async function boot(page: Page, options: {availableUpdate?: boolean; updateCheck
             const rows=cancelled?[]:names.map((name,i)=>({...runFor(args.modelPath),id:id+':'+name,model_path:args.modelPath,model_name:'MLX Llama checkpoint',suite_id:'anchor-mlx-scenarios',prompt_id:name,num_ctx:i===0?1024:i<5?2048:i<8?4096:8192,quant:'4-bit',ollama_version:null,resident_bytes:null,notes:'MLX-LM diagnostic phase rates'}));
             for(const [i,row] of rows.entries()){emit(args.onEvent,{kind:'scenario_started',scenario_id:row.prompt_id,num_ctx:row.num_ctx,index:i+1,total:9});emit(args.onEvent,{kind:'scenario_done',run:row,index:i+1,total:9});}
             state.mlxRows.push(...rows);
-            const result={session_id:id,model_name:'MLX Llama checkpoint',outcome,error:null,runtime_version:'MLX 0.32.4 / MLX-LM 0.31.3',report:{protocol_version:1,boundaries_validated:!cancelled,boundary_checks:[{name:'Live allocation',passed:true},{name:'Peak reset with live allocations',passed:true}],identity_unchanged:cancelled?null:true,load_peak_bytes:900e6,memory:cancelled?[]:[{plan_index:0,baseline_active_bytes:600e6,baseline_cache_bytes:0,peak_bytes:1e9}],rate_status:'diagnostic',comparison_eligible:false,quality:'unchecked'}};
+            const result={session_id:id,model_name:'MLX Llama checkpoint',outcome,error:null,runtime_version:'MLX 0.32.4 / MLX-LM 0.31.3',report:{protocol_version:1,boundaries_validated:!cancelled,boundary_checks:[{name:'Live allocation',passed:true},{name:'Peak reset with live allocations',passed:true}],identity_unchanged:cancelled?null:true,load_peak_bytes:900e6,memory:cancelled?[]:Array.from({length:21},(_,plan_index)=>({plan_index,baseline_active_bytes:600e6,baseline_cache_bytes:0,peak_bytes:1e9})),rate_status:'diagnostic',comparison_eligible:false,quality:'unchecked'}};
             state.nativeRuns.unshift(result);
             state.sessions.unshift({id,protocol:'mlx_worker_text_v1',model_name:result.model_name,model_key:args.modelPath,hw_key:'test',created_at:Date.now(),outcome,error:null,planned_attempts:21,recorded_attempts:cancelled?2:21,formula_version:2});
             emit(args.onEvent,{kind:'done',runs:rows});return rows;
@@ -204,6 +212,30 @@ test('models → inspect → context → try → navigation preserves conversati
   await expect(page.getByRole('textbox',{name:'Message',exact:true})).toHaveValue('A draft worth keeping');
   expect(await page.evaluate(()=> (window as any).__e2e.conversations.length)).toBe(1);
   expect(await page.evaluate(()=> (window as any).__e2e.presets.find((p:any)=>p.id==='trial-context-32768').num_ctx)).toBe(32768);
+});
+
+for(const width of [800,1440]) test(`streaming chat respects reading position and contains scrolling at ${width}`,async({page})=>{
+  await page.setViewportSize({width,height:700});
+  await boot(page,{longChat:true});
+  await page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true}).click();
+  await page.getByRole('button',{name:'Try model'}).click();
+  await page.getByRole('textbox',{name:'Message',exact:true}).fill('Give me a long answer');
+  await page.getByRole('button',{name:'Send message'}).click();
+  const log=page.getByRole('log',{name:'Conversation'});
+  await expect.poll(()=>log.evaluate(el=>el.scrollHeight-el.clientHeight)).toBeGreaterThan(500);
+  await log.hover();await page.mouse.wheel(0,-10000);
+  await expect.poll(()=>log.evaluate(el=>el.scrollTop)).toBe(0);
+  const length=(await log.innerText()).length;
+  await expect.poll(async()=>(await log.innerText()).length).toBeGreaterThan(length+500);
+  expect(await log.evaluate(el=>el.scrollTop)).toBe(0);
+  await page.screenshot({path:test.info().outputPath(`chat-reading-${width}.png`)});
+  await log.evaluate(el=>{el.scrollTop=el.scrollHeight;el.dispatchEvent(new Event('scroll'));});
+  const resumed=(await log.innerText()).length;
+  await expect.poll(async()=>(await log.innerText()).length).toBeGreaterThan(resumed+500);
+  expect(await log.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight)).toBeLessThan(48);
+  expect(await page.evaluate(()=>document.documentElement.scrollHeight)).toBe(700);
+  expect(await page.evaluate(()=>window.scrollY)).toBe(0);
+  await page.getByRole('button',{name:'Stop generating',exact:true}).click();
 });
 
 test('Find suggestions use installed metadata, filter and keyboard selection',async({page})=>{
@@ -440,9 +472,7 @@ test('comparison shows observed TTFT and benchmark distinguishes chunk rate from
   await expect(page.getByRole('region',{name:'Benchmark status'})).toContainText('21.0 tok/s');
   const balanced=page.getByRole('button').filter({hasText:'balanced'}).filter({hasText:'1000'});
   await expect(balanced).toContainText('21.0');
-  await page.getByText('Method',{exact:true}).click();
-  await expect(page.getByText(/Prefill needs cache counts/)).toBeVisible();
-  await expect(page.getByText(/Thermal readings are snapshots/)).toBeVisible();
+  await expect(page.getByRole('link',{name:'Benchmark methodology'})).toHaveAttribute('href','https://github.com/amapara27/anchor/blob/main/docs/benchmark-methodology.md');
   await expect(page.getByText('In target',{exact:true})).toBeVisible();
   await expect(page.getByText('Out cap',{exact:true})).toBeVisible();
 });
@@ -526,7 +556,7 @@ test('GUI calibration runs, explains diagnostics and stays in history', async ({
   const panel=page.getByRole('region',{name:'Measurement validation'});
   await expect(panel).toContainText('No validation recorded');
   await expect(panel).toContainText('Checks token counts, cache reuse and reported rates');
-  await expect(panel).toContainText('without tuning the model or changing benchmark results');
+  await expect(page.getByRole('link',{name:'Benchmark methodology'})).toBeVisible();
   expect(await panel.evaluate(el => !!(document.querySelector('[aria-label="Benchmarks view"]')!.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
   await panel.getByRole('button',{name:'Validate measurements',exact:true}).click();
   await expect(panel.getByRole('status')).toContainText('Checking fresh prompt');
@@ -551,9 +581,7 @@ test('GUI calibration runs, explains diagnostics and stays in history', async ({
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await panel.screenshot({path:test.info().outputPath(`calibration-${width}-${theme}.png`)});
     await panel.getByText('Request details',{exact:true}).click();
-    await page.getByText('Method',{exact:true}).click();
     await page.screenshot({path:test.info().outputPath(`benchmarks-clean-${width}-${theme}.png`)});
-    await page.getByText('Method',{exact:true}).click();
     await panel.getByText('Request details',{exact:true}).click();
   }
   await page.getByText('Run history',{exact:false}).first().click();
@@ -602,11 +630,16 @@ test('MLX uses the shared suite and named model picker with runtime-scoped histo
   const classify=page.getByRole('button').filter({hasText:'classify'}).filter({hasText:'768'});
   await expect(classify).toContainText('32.0');
   await page.getByText('Measurement checks',{exact:true}).click();
-  await expect(page.getByText('Client latency includes worker IPC and formatting.',{exact:false})).toBeVisible();
   await expect(page.getByText('Runtime-reported phase rates; timing boundaries are unverified.',{exact:true})).toBeVisible();
   await expect(page.getByLabel('Benchmarks view')).not.toContainText(/\bdiagnostic\b/i);
   await page.getByText('Checks and memory windows',{exact:true}).click();
-  await expect(page.getByRole('table',{name:'MLX allocator windows'})).toContainText('0 B');
+  const windows=page.getByRole('region',{name:'Memory windows'});
+  await expect(windows.getByRole('row')).toHaveCount(22);
+  expect(await windows.evaluate(el=>el.clientHeight<=256 && el.scrollHeight>el.clientHeight)).toBe(true);
+  await windows.scrollIntoViewIfNeeded();
+  await windows.evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await expect(windows.getByRole('row').last()).toBeInViewport();
+  await page.screenshot({path:test.info().outputPath('memory-windows.png')});
   await page.getByText('Measurement checks',{exact:true}).click();
   for(const [width,theme] of [[800,'dark'],[1440,'light']] as const){
     await page.setViewportSize({width,height:900});await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
@@ -616,7 +649,7 @@ test('MLX uses the shared suite and named model picker with runtime-scoped histo
     await page.screenshot({path:test.info().outputPath('mlx-shared-suite-')+width+'-'+theme+'.png'});
   }
   await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
-  await expect(page.getByText('Same tokenizer and template',{exact:true})).toBeVisible();
+  await expect(page.getByText('Grouped by tokenizer and template',{exact:true})).toBeVisible();
   await expect(page.getByText('MLX Llama checkpoint',{exact:true}).first()).toBeVisible();
   await page.evaluate(()=>{
     new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes){if(node instanceof HTMLElement && node.textContent?.includes('Post-first-token decode'))(window as any).__cardText=node.textContent;}}).observe(document.body,{childList:true});
@@ -640,6 +673,46 @@ test('MLX uses the shared suite and named model picker with runtime-scoped histo
   await expect(evidence.getByRole('button',{name:/Export JSON/})).toHaveCount(0);
   await expect(evidence.getByRole('checkbox',{name:/Include prompts and output/})).toHaveCount(0);
   expect(await page.evaluate(()=>(window as any).__e2e.runs.length)).toBe(0);
+});
+
+test('MLX leaderboard keeps all measured models when an unbenchmarked model is selected',async({page})=>{
+  await boot(page);
+  await page.evaluate(()=> (window as any).__e2e.mlxModels.push({name:'Unbenchmarked checkpoint',path:'/local/unbenchmarked'}));
+  await nav(page,'Benchmark').click();await selectModel(page,'Benchmark runtime','MLX');
+  await page.getByRole('button',{name:'Run suite',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Run suite',exact:true})).toBeEnabled();
+  await page.evaluate(()=>{
+    const s=(window as any).__e2e;
+    s.mlxRows=s.mlxRows.flatMap((r:any)=>[
+      {...r,id:'a:'+r.prompt_id,model_name:'Measured A',model_digest:'a',comparison_group:'one',decode_tps_median:31},
+      {...r,id:'b:'+r.prompt_id,model_name:'Measured A Q8',model_path:'/local/a-q8',model_digest:'b',comparison_group:'one',decode_tps_median:40},
+      {...r,id:'c:'+r.prompt_id,model_name:'Measured B',model_path:'/local/b',model_digest:'c',comparison_group:'two',decode_tps_median:24},
+    ]);
+  });
+  await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
+  const share=(name:string)=>page.getByRole('button',{name:'Share '+name+' result',exact:true});
+  for(const name of ['Measured A','Measured A Q8','Measured B'])await expect(share(name)).toBeVisible();
+  const groups=page.locator('section').filter({has:page.locator('[aria-label="Reported rate order"]')});
+  await expect(groups).toHaveCount(2);
+  await expect(groups.first().getByRole('button',{name:/Share .* result/})).toHaveCount(2);
+  await expect(groups.first().getByRole('button',{name:/Share .* result/}).first()).toHaveAccessibleName('Share Measured A Q8 result');
+  await selectModel(page,'Benchmark model','Unbenchmarked checkpoint');
+  await expect(page.getByRole('combobox',{name:'Benchmark model'})).toContainText('Unbenchmarked checkpoint');
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='mlx_suite_runs'&&c.args.modelPath==='/local/unbenchmarked'))).toBe(true);
+  for(const name of ['Measured A','Measured A Q8','Measured B'])await expect(share(name)).toBeVisible();
+  await expect(page.getByText('No results for this scenario.',{exact:true})).toHaveCount(0);
+  await page.getByRole('combobox',{name:'Leaderboard scenario'}).selectOption('summarize');
+  await expect.poll(()=>page.evaluate(()=>(window as any).__e2e.calls.filter((c:any)=>c.cmd==='mlx_leaderboard').at(-1)?.args)).toEqual({promptId:'summarize'});
+  await expect(groups).toHaveCount(2);
+  await page.getByRole('tab',{name:'Suite',exact:true}).click();
+  await expect(page.getByRole('button',{name:/Share .* result/})).toHaveCount(0);
+  await page.getByRole('tab',{name:'Leaderboard',exact:true}).click();
+  for(const width of [800,1440]){
+    await page.setViewportSize({width,height:1000});
+    for(const name of ['Measured A','Measured A Q8','Measured B'])await expect(share(name)).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:test.info().outputPath('mlx-all-models-'+width+'.png')});
+  }
 });
 
 test('MLX shared-suite cancellation retains a cancelled execution',async({page})=>{
@@ -812,7 +885,7 @@ test('command palette navigates by keyboard and opens a model',async({page})=>{
   await expect(page.getByRole('heading',{name:'Benchmarks',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Search or run a command'}).click();await search.fill(catalog[0].name);await page.keyboard.press('Enter');
   await expect(page.getByRole('region',{name:'Model inspector'})).toContainText(catalog[0].name);
-  await page.getByRole('button',{name:'Search or run a command'}).click();await page.keyboard.press('Escape');await expect(search).toHaveCount(0);
+  await page.getByRole('button',{name:'Search or run a command'}).click();await expect(search).toBeFocused();await page.keyboard.press('Escape');await expect(search).toHaveCount(0);
 });
 
 test('settings preset create edit apply delete and appearance persist across navigation',async({page})=>{

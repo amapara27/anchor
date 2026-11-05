@@ -60,12 +60,11 @@ function Workspace() {
     await create(id, preset.id);
     navigate("chat");
   };
-  return <div className="flex h-dvh flex-col">
+  return <div className="flex h-dvh flex-col overflow-hidden">
     <TitleBar onOpenPalette={() => setPaletteOpen(true)} collapsed={collapsed} onToggleSidebar={() => setCollapsed(v => !v)} />
     <UpdateBanner />
     <div className="flex min-h-0 flex-1">
     <nav aria-label="Tools" className="tool-sidebar" data-collapsed={collapsed}>
-      <span className="tool-sidebar-label">Workspace</span>
       {([
         {id: "models", sub: "installed", label: "Explore", icon: LayersIcon},
         {id: "benchmarks", label: "Benchmark", icon: ZapIcon},

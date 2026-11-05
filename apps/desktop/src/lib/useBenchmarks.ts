@@ -14,6 +14,7 @@ import { recordUse } from "./lastUsed";
 export interface MatchGroup {
   quality: MatchQuality;
   runs: BenchRun[];
+  referenceModel?: string;
 }
 
 /** Group order, most specific first. Mirrors the backend's numeric tier. */
@@ -135,15 +136,14 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
     async (id: string | null, suiteId?: string, scenarioId?: string, numCtx?: number) => {
       const requestId=++loadId.current;
       try {
-        const runs=await invoke<BenchRun[]>(runtime === "mlx" ? "mlx_suite_runs" : "bench_runs_for_model", {
-          modelPath:id,referencePath:modelId,history:false,model:id,suiteId:suiteId ?? null,promptId:scenarioId ?? null,numCtx:numCtx ?? null,
-        });
+        const results = runtime === "mlx" && id == null
+          ? (await invoke<BenchRun[][]>("mlx_leaderboard", {promptId: scenarioId ?? null}))
+              .flatMap(rows => group(rows).map(g => ({...g, referenceModel: rows[0]?.model_name})))
+          : group(await invoke<BenchRun[]>(runtime === "mlx" ? "mlx_suite_runs" : "bench_runs_for_model", {
+              modelPath:id,referencePath:id,history:false,model:id,suiteId:suiteId ?? null,promptId:scenarioId ?? null,numCtx:numCtx ?? null,
+            }));
         if(requestId!==loadId.current)return;
-        setGroups(
-          group(
-            runs,
-          ),
-        );
+        setGroups(results);
         setLoadError(null);
       } catch (e) {
         if(requestId!==loadId.current)return;
@@ -153,7 +153,7 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
         setLoadError(String(e));
       }
     },
-    [runtime, modelId],
+    [runtime],
   );
 
   useEffect(() => {

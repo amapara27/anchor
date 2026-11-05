@@ -72,7 +72,6 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
     <div className="tool-page">
       <PageHeader title={tab === "compare" ? "Compare" : "Models"}
         meta={tab !== "compare" && <>
-          <Meta k="Installed">{installed.length}</Meta>
           <Meta k="On disk">{formatBytes(installed.reduce((sum,m) => sum + (m.size_bytes ?? 0),0))}</Meta>
           <Meta k="Machine">{profile?.chip ?? "Your Mac"}{profile?.memory_bytes ? " · " + formatBytes(profile.memory_bytes) : ""}</Meta>
         </>}
@@ -93,7 +92,7 @@ export function ModelsHub({openModel, initialTab = "installed", onTabChange, onT
       </div>}
       {(error || actionError) && <div role="alert" className="flex items-center gap-3 rounded-lg border border-hair p-3 text-sm"><span className="flex-1">{actionError ?? error}</span><button onClick={() => {setActionError(null); reload();}} className="text-accent-text">Retry</button></div>}
       {tab === "installed" && (loading ? <p role="status">Loading your models…</p> : installed.length === 0 ?
-        <div className="py-12"><h2 className="text-lg font-medium">Choose your first local model</h2><p className="mt-2 text-sm text-fg-muted">Find a model for your task and check its memory fit before downloading.</p><PrimaryButton onClick={() => switchTab("discover")} className="mt-4">Find a model</PrimaryButton></div> :
+        <div className="py-12"><h2 className="text-lg font-medium">Choose your first local model</h2><PrimaryButton onClick={() => switchTab("discover")} className="mt-4">Find a model</PrimaryButton></div> :
         <div aria-label="Installed model list" className="model-table">
           <div className="model-columns model-table-header th" aria-hidden="true"><span>model</span><span>size</span><span>quant</span><span>fit @ {formatContext(fitCtx)}</span><span>decode</span><span /></div>
           {rows.map(m => {const hint=hintFor(m); const stale=staleFor(m); return <button key={m.id} aria-label={"Inspect " + m.name} aria-pressed={active?.id === m.id} onClick={() => select(m.id)} className="model-columns model-row">

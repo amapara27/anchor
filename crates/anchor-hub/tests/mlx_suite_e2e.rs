@@ -193,6 +193,26 @@ async fn shared_mlx_text_suite_retains_real_generation_and_replays() {
         .mlx_suite_runs(&hw, None, Some(&dir.join("other-tokenizer")), None, false)
         .unwrap()
         .is_empty());
+    let leaderboard = registry.mlx_leaderboard(&hw, only.as_deref()).unwrap();
+    assert!(!leaderboard.is_empty(), "leaderboard does not need a selected checkpoint reference");
+    for row in &views {
+        assert!(leaderboard.iter().flatten().any(|r| r.id == row.id));
+    }
+    assert!(leaderboard.iter().all(|g| g.windows(2).all(|w| w[0].decode_tps_median >= w[1].decode_tps_median)));
+    assert!(registry.mlx_leaderboard(&hw, Some("not-a-recorded-workload")).unwrap().is_empty());
+    // Replay the same trace under a second fixture runtime; its rates must stay separate.
+    let copy_id = format!("{}-other-runtime", session.id);
+    let conn = rusqlite::Connection::open(dir.join("registry.db")).unwrap();
+    conn.execute("INSERT INTO benchmark_sessions SELECT ?1,json_set(config_json,'$.runtime_version',?1),record_version,formula_version,created_at+1,finished_at,outcome_json,error FROM benchmark_sessions WHERE id=?2",
+        rusqlite::params![copy_id, session.id]).unwrap();
+    conn.execute("INSERT INTO benchmark_attempts SELECT ?1||':'||plan_index,?1,plan_index,json_set(record_json,'$.id',?1||':'||plan_index,'$.session_id',?1),finished FROM benchmark_attempts WHERE session_id=?2",
+        rusqlite::params![copy_id, session.id]).unwrap();
+    let all_groups = registry.mlx_leaderboard(&hw, only.as_deref()).unwrap();
+    assert_eq!(all_groups.len(), leaderboard.len() + 1);
+    assert!(all_groups.iter().any(|g| g.iter().all(|r| r.id.starts_with(&copy_id))));
+    assert!(all_groups.iter().any(|g| g.iter().all(|r| !r.id.starts_with(&copy_id))));
+    conn.execute("DELETE FROM benchmark_attempts WHERE session_id=?1", [&copy_id]).unwrap();
+    conn.execute("DELETE FROM benchmark_sessions WHERE id=?1", [&copy_id]).unwrap();
     replay.session.config.mlx.as_mut().unwrap().protocol_version += 1;
     assert!(replay.recalculate().is_err());
     let mut reused = export.clone();

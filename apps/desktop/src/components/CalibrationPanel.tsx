@@ -81,7 +81,7 @@ export function CalibrationPanel({ modelId, result, running, busy, loading, prog
       {running ? <GhostButton onClick={onStop} tone="danger"><StopIcon className="size-3.5" />Stop validation</GhostButton>
         : <GhostButton onClick={onRun} disabled={!modelId || busy}>Validate measurements</GhostButton>}
     </div>
-    <p className="mt-1 max-w-[75ch] text-xs leading-relaxed text-fg-muted">Checks token counts, cache reuse and reported rates. Saves evidence without tuning the model or changing benchmark results.</p>
+    <p className="mt-1 max-w-[75ch] text-xs leading-relaxed text-fg-muted">Checks token counts, cache reuse and reported rates.</p>
     {running && <p role="status" aria-live="polite" className="mt-3 text-sm text-fg">{message ?? "Checking Ollama…"}</p>}
     {!running && progress && <p role="status" className="mt-3 text-xs text-fg-muted">{progress}</p>}
     {error && <p role="alert" className="mt-3 break-words text-xs text-danger">{error} Try again when Ollama is available.</p>}

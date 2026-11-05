@@ -452,6 +452,39 @@ impl Registry {
         Ok(result)
     }
 
+    /// All current models, ordered only within compatible measurement groups.
+    pub fn mlx_leaderboard(&self, hw: &HwIdentity, scenario: Option<&str>) -> Result<Vec<Vec<BenchRun>>> {
+        let mut groups: Vec<(_, Vec<BenchRun>)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for session in self.bench_sessions(200)? {
+            let c = &session.config;
+            if c.protocol != PROTOCOL || c.hw.hw_key != hw.hw_key
+                || c.suite_version != SUITE_VERSION
+                || session.formula_version != super::evidence::FORMULA_VERSION {
+                continue;
+            }
+            let Some(identity) = c.mlx.as_ref().and_then(|m| m.identity.as_ref()) else { continue };
+            let Some(tokenizer) = identity.get("tokenizer_fingerprint").filter(|v| v.is_string()) else { continue };
+            let key = (tokenizer.clone(), identity.get("sources").cloned(),
+                c.runtime_version.clone(), c.prompt_version, c.hw.os_version.clone());
+            let index = groups.iter().position(|(k, _)| k == &key).unwrap_or_else(|| {
+                groups.push((key, Vec::new()));
+                groups.len() - 1
+            });
+            for run in runs(&self.bench_evidence(&session.id)?) {
+                if scenario.is_none_or(|s| run.prompt_id.as_deref() == Some(s))
+                    && seen.insert((index, run.model_digest.clone(), run.prompt_id.clone(), run.num_ctx)) {
+                    groups[index].1.push(run);
+                }
+            }
+        }
+        Ok(groups.into_iter().filter_map(|(_, mut rows)| {
+            rows.sort_by(|a, b| b.decode_tps_median.partial_cmp(&a.decode_tps_median)
+                .unwrap_or(std::cmp::Ordering::Equal));
+            (!rows.is_empty()).then_some(rows)
+        }).collect())
+    }
+
     pub fn run_mlx_suite<F>(
         &self,
         path: &Path,

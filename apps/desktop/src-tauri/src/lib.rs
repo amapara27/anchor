@@ -856,6 +856,14 @@ async fn mlx_suite_runs(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn mlx_leaderboard(app: AppHandle, prompt_id: Option<String>) -> Result<Vec<Vec<BenchRun>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        registry(&app)?.mlx_leaderboard(&hw_identity(&app)?, prompt_id.as_deref())
+            .map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
 /// Benchmark results from machines resembling this one, best match first.
 /// Each row carries the tier it matched at so the UI can group them.
 ///
@@ -1026,6 +1034,7 @@ pub fn run() {
             native_mlx_report,
             mlx_suite_report,
             mlx_suite_runs,
+            mlx_leaderboard,
             restart_app,
             bench_runs_for_model,
             bench_history,

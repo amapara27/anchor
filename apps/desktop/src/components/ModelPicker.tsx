@@ -54,10 +54,8 @@ export function ModelPicker({ label, value, onChange, models, disabledId, disabl
       />
 
       {/* Install status — icon + text, never colour alone. */}
-      <div className="mt-2 flex items-center gap-1.5 text-xs">
-        {!selected ? (
-          <span className="text-fg-subtle">No model selected</span>
-        ) : selected.status === "installed" ? (
+      {selected && <div className="mt-2 flex items-center gap-1.5 text-xs">
+        {selected.status === "installed" ? (
           <>
             <span className="size-1.5 shrink-0 rounded-full bg-ok" aria-hidden />
             <span className="font-medium text-ok">Installed</span>
@@ -70,7 +68,7 @@ export function ModelPicker({ label, value, onChange, models, disabledId, disabl
             </span>
           </>
         )}
-      </div>
+      </div>}
 
       {/* Hardware hint: fit tier + throughput (or the shortfall) on this Mac. */}
       {hint && hint.tier !== "unknown" && (

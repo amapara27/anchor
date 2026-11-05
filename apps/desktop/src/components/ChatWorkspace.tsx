@@ -146,6 +146,7 @@ export function ChatWorkspace() {
         />
 
         <MessageList
+          key={activeId}
           model={model}
           messages={messages}
           running={running}
@@ -283,7 +284,7 @@ function ThreadHeader({
   );
 }
 
-/** Scrolling message list that pins to the bottom as new tokens arrive. */
+/** Follow new output until the reader scrolls away from the bottom. */
 function MessageList({
   model,
   messages,
@@ -299,10 +300,15 @@ function MessageList({
   error?: string;
   onRegenerate?: (messageId: string) => void;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  // Layout effect so the jump happens before paint (no visible flash).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const followOutput = useRef(true);
+  const lastScrollTop = useRef(0);
   useLayoutEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    const el = scrollRef.current;
+    if (el && followOutput.current) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTop.current = el.scrollTop;
+    }
   }, [messages]);
 
   if (messages.length === 0) {
@@ -315,7 +321,15 @@ function MessageList({
   }
 
   return (
-    <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto pb-2 pt-6">
+    <div ref={scrollRef} role="log" aria-label="Conversation" tabIndex={0}
+      onWheel={e => { if (e.deltaY < 0) followOutput.current = false; }}
+      onScroll={e => {
+        const el = e.currentTarget;
+        if (el.scrollTop < lastScrollTop.current) followOutput.current = false;
+        else if (el.scrollTop > lastScrollTop.current) followOutput.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+        lastScrollTop.current = el.scrollTop;
+      }}
+      className="scrollbar-slim min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2 pt-6">
       <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-6">
         {messages.map((m, i) => {
           const last = i === messages.length - 1 && m.role === "assistant";
@@ -334,7 +348,6 @@ function MessageList({
         {error && (
           <p className="rounded-[9px] border border-danger/40 bg-inset px-3.5 py-3 text-sm text-danger">{error}</p>
         )}
-        <div ref={endRef} />
       </div>
     </div>
   );
