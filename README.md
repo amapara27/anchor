@@ -117,7 +117,7 @@ Ollama's **Measurement validation → Validate measurements** checks token count
 
 ### Storage
 
-A real scan of Ollama's on-disk store: total blob and manifest size, how much content-addressed sharing already saves you, and which blob files nothing references anymore so they can be reclaimed. When any manifest can't be read the scan reports that instead of offering orphans — an incomplete reference graph can't distinguish a dead blob from a live one, and the deletion is irreversible.
+A real scan of Ollama's on-disk store: total blob and manifest size, savings from shared files, and blobs that aren't referenced by an installed model. The desktop scan is read-only because an active download may still need an unreferenced blob. You can still remove installed models through Ollama.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/storage_light.png">
@@ -140,9 +140,9 @@ A real scan of Ollama's on-disk store: total blob and manifest size, how much co
 
 `anchor` is the terminal front-end over the same crates — and the same database, so a trial started in either is stored in one place, and a benchmark run there lands in the app's history. New commands documented here require building current source until the next CLI release is published.
 
-Run `anchor` (or `anchor tui`) in a terminal to open the keyboard workspace. Type `/` for searchable commands: `/models`, `/library`, `/results`, `/bench`, `/leaderboard`, `/sessions`, `/chat`, `/history`, `/compare`, `/fit`, `/validate`, `/presets`, `/storage`, `/settings`, `/replay` and `/activity`. Use arrows and Page Up/Down in long lists, type to filter, Enter to select, Tab to focus actions and Escape to go back. Forms have searchable choices; Tab moves between fields and Submit. Ctrl-R switches Ollama/MLX, Ctrl-L refreshes, and `/help` shows controls.
+Run `anchor` (or `anchor tui`) in a terminal. Type `/` at the prompt to search commands, Tab to complete and Enter to run. Ollama and MLX are listed in the header. Use `/runtime` to choose one or type `/runtime mlx` directly. `/model` picks a local model, `/models` manages installed models, and `/library` finds downloads. `/bench` opens setup and asks for a model if needed. `/results`, `/leaderboard` and `/sessions` browse saved measurements. Type to filter lists, use arrows or Page Up/Down to move, and press Enter for the primary action or Tab for more actions. Escape returns to the previous view. In a conversation, type at the prompt and press Enter to reply; replies stream into the transcript. Confirmations accept `y` or `n`. Ctrl-C clears the prompt, and pressing it twice quits. Ctrl-L refreshes, and `/help` shows controls.
 
-Jobs stay visible across navigation. Ctrl-C stops a running job; a second press forces it. `/quit` confirms stopping active work before exiting. Chat and preset drafts survive Escape until submitted. Evidence export asks for a new filename and includes prompts/output; it never overwrites an existing file. The workspace requires a real terminal; explicit commands and `--json` remain available for scripts. MLX provides model downloads and benchmarking; chat, comparison, memory fit and store cleanup retain their existing Ollama scope.
+Jobs stay visible across navigation. `/activity` shows the current or last job, including benchmark progress and a summary of decode rate and time to first token. Ctrl-C stops a running job; a second press forces it. `/quit` confirms stopping active work before exiting. Benchmark, chat and preset drafts survive Escape until submitted. Evidence export asks for a new filename and includes prompts/output; it never overwrites an existing file. The workspace requires a real terminal; explicit commands and `--json` remain available for scripts. MLX provides model downloads and benchmarking; chat, comparison, memory fit and store cleanup retain their existing Ollama scope.
 
 ```bash
 anchor models ls                            # installed models

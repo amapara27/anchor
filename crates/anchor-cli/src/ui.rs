@@ -57,7 +57,7 @@ impl Drop for Progress {
 
 /// Braille spinner frames — one glyph wide in every monospace font, unlike the
 /// `|/-\` ASCII cycle, which visibly changes width as it turns.
-const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+pub const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Advanced by the caller, not a clock, so the spinner only turns when there is
 /// genuinely new progress to show — a frozen spinner is honest about a stall.

@@ -14,7 +14,7 @@ const scratch = await mkdtemp(path.join(tmpdir(), 'anchor-cli-e2e-'));
 const store = path.join(scratch, 'models');
 const commands = [], requests = [];
 const models = [{ name: 'fixture:1b', digest: 'sha256:fixture', size: 1024 ** 3, details: { family: 'llama', parameter_size: '1B', quantization_level: 'Q4_K_M' } }];
-let offline = false, slow = false, terminalStream = false, resident = null, step = 'startup', success = false;
+let offline = false, slow = false, terminalStream = false, tagsReady = null, resident = null, step = 'startup', success = false;
 const baseArch = { architecture: 'llama', block_count: 16, head_count: 32, head_count_kv: 8, key_length: 64, value_length: 64 };
 let arch = baseArch;
 let chatAnswer = 'Fixture answer';
@@ -32,8 +32,10 @@ const server = createServer(async (req, res) => {
         }
         if (req.url === '/api/version')
             return json({ version: '0.12.0' });
-        if (req.url === '/api/tags')
+        if (req.url === '/api/tags') {
+            if (tagsReady) await tagsReady;
             return json({ models });
+        }
         if (req.url === '/api/show')
             return json({ details: models[0].details, model_info: Object.fromEntries([['general.architecture', arch.architecture], [arch.architecture + '.context_length', 131072], ...Object.entries(arch).filter(([k]) => k !== 'architecture').map(([k, v]) => [arch.architecture + '.' + (['block_count', 'embedding_length'].includes(k) ? k : 'attention.' + k), v])]) });
         if (req.url === '/api/ps')
@@ -78,7 +80,7 @@ const server = createServer(async (req, res) => {
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const env = { ...process.env, OLLAMA_HOST: 'http://127.0.0.1:' + server.address().port, OLLAMA_MODELS: store, ANCHOR_E2E_DATA_DIR: scratch, HF_HOME: path.join(scratch, 'hf'), HF_HUB_CACHE: path.join(scratch, 'hf/hub') };
-const binary = path.join(root, 'target/debug/anchor');
+const binary = path.join(root, 'target/cli-e2e/debug/anchor');
 const children = new Set();
 async function run(args, { json = false, input = '', code = 0, signalWhen = null, extraEnv = {}, during = null, signal = 'SIGINT' } = {}) {
     const child = spawn(binary, args, { env: { ...env, ...extraEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -309,7 +311,7 @@ try {
     await run(['storage', 'clean', '--yes', '--json'], { json: true });
     assert.equal((await run(['storage', 'scan', '--json'], { json: true })).orphaned_bytes, 0);
     checkpoint('terminal-progress');
-    const terminal = terminalDriver({ root, scratch, env, commands, children });
+    const terminal = terminalDriver({ root, binary, scratch, env, commands, children });
     slow = true;
     const progress = terminal(['bench', 'run', 'fixture:1b', '--scenario', 'classify', '--repeats', 'fast']);
     await progress.wait('chunks/s');
@@ -324,45 +326,55 @@ try {
     for (let i = 0; i < 80; i++) models.push({ ...models[0], name: 'picker:' + String(i).padStart(3, '0') });
     for (let i = 0; i < 100; i++) sql(`INSERT INTO library_models VALUES ('library-${String(i).padStart(3, '0')}', 'fixture library', '[]', '["1b"]', 1, 1, 'today', ${Date.now()});`);
     const picker = terminal();
-    await picker.waitScreen('Models  1/');
+    await picker.waitScreen('Type / for commands');
+    assert.match(picker.screen, /\[Ollama\]\s+MLX\s+\/runtime/);
+    picker.send('/model\r');
+    await picker.waitScreen('Choose a model  1/');
     picker.send('picker:');
-    await picker.waitScreen('Models  1/80');
+    await picker.waitScreen('Choose a model  1/80');
     picker.send('\x1b[6~');
-    await picker.waitScreen('Models  18/80');
+    // Page Down moves one visible page: 18 rows between the header and the ruled prompt at 30 rows.
+    await picker.waitScreen('Choose a model  19/80');
     picker.send('\x1b[F\r');
     await picker.waitScreen('Selected picker:079');
-    await picker.escape();
-    await picker.waitScreen('Models  1/');
-    picker.send('picker:042\r');
-    await picker.waitScreen('Selected picker:042');
+    await picker.waitScreen('Type / for commands');
+    picker.send('/model\r');
+    await picker.waitScreen('Choose a model  1/');
+    picker.send('picker:042');
+    await picker.waitScreen('Choose a model  1/1');
     picker.resize(18, 60);
-    await picker.waitScreen('picker:042');
+    await picker.waitScreen('Choose a model  1/1');
+    assert(picker.screen.includes('Enter select · PgUp/Dn · Esc back · /'));
     await picker.capture('terminal-picker-60');
     picker.resize(30, 100);
-    await picker.waitScreen('Models  1/1');
+    await picker.waitScreen('Choose a model  1/1');
     await picker.capture('terminal-picker-100');
-    await picker.escape();
-    await picker.waitScreen('Models  1/' + models.length);
-    picker.send('\x1b[D');
-    await picker.waitScreen('saved measurements');
-    picker.send('\x1b[D');
-    await picker.waitScreen('Models  1/100');
+    picker.send('\r');
+    await picker.waitScreen('Selected picker:042');
+    picker.send('/results\r');
+    await picker.waitScreen('last measured');
+    picker.send('/library\r');
+    await picker.waitScreen('Library  1/100');
     picker.send('library-099');
-    await picker.waitScreen('Models  1/1');
+    await picker.waitScreen('Library  1/1');
     await picker.capture('terminal-library-paging');
     picker.send('\x12');
-    await picker.waitScreen('MLX');
+    await picker.waitScreen('Choose runtime');
+    picker.send('\x1b[B\r');
+    await picker.waitScreen('Active runtime: MLX');
+    picker.send('\x03');
+    await picker.waitScreen('Press Ctrl-C again to exit');
     picker.send('\x03');
     await picker.finish();
     checkpoint('terminal-slash-navigation');
     const nav = terminal(['tui']);
-    await nav.waitScreen('Models  1/');
+    await nav.waitScreen('Type / for commands');
     nav.send('/');
     await nav.waitScreen('Slash commands');
     nav.send('res\t');
-    await nav.waitScreen('/results');
+    await nav.waitScreen('› /results');
     nav.send('\r');
-    await nav.waitScreen('saved measurements');
+    await nav.waitScreen('last measured');
     nav.send('/mod');
     await nav.waitScreen('/models');
     nav.send('\x1b[B\r');
@@ -370,34 +382,62 @@ try {
     nav.send('/help\r');
     await nav.waitScreen('Keyboard controls');
     await nav.escape();
-    await nav.waitScreen('picker:000');
+    await nav.waitScreen('Installed  1/');
     nav.send('/zzzz\r');
     await nav.waitScreen('Unknown command');
     await nav.escape();
-    await nav.waitScreen('Search models');
-    nav.send('/runtime\r');
-    await nav.waitScreen('MLX');
+    await nav.waitScreen('Type to filter');
+    nav.send('/runtime mlx\r');
+    await nav.waitScreen('Active runtime: MLX');
+    assert.match(nav.screen, /Ollama\s+\[MLX\]/);
+    nav.send('/model\r');
+    await nav.waitScreen('No models here.');
     await nav.capture('terminal-slash-menu');
     nav.send('/quit\r');
     await nav.finish();
     checkpoint('terminal-action-focus-transitions');
     const focus = terminal();
-    await focus.waitScreen('Models  1/');
+    await focus.waitScreen('Type / for commands');
+    let releaseTags;
+    tagsReady = new Promise(resolve => { releaseTags = resolve; });
+    try {
+        focus.send('/models\r');
+        await focus.waitScreen('Loading…');
+        focus.send('\r\t/');
+        await focus.waitScreen('Slash commands');
+        await focus.waitScreen('Loading…');
+        assert(!focus.screen.includes('Choose a row first'));
+        await focus.escape();
+    } finally {
+        releaseTags();
+        tagsReady = null;
+    }
+    await focus.waitScreen('Installed  1/');
+    focus.send('picker:042\x1b[Z\x12');
+    await focus.waitScreen('Choose runtime');
+    await focus.escape();
+    await focus.waitScreen('Filter  picker:042');
+    await focus.waitGone('Actions ·');
     focus.send('\x1b[Z\x12');
-    await focus.waitScreen('MLX');
-    await focus.waitScreen('No models here.');
-    focus.send('\x1b[Z\x12');
-    await focus.waitScreen('OLLAMA');
-    await focus.waitScreen('Models  1/');
+    await focus.waitScreen('Choose runtime');
+    focus.send('\x1b[B\r');
+    await focus.waitScreen('Active runtime: MLX');
+    focus.send('/runtime ollama\r');
+    await focus.waitScreen('Active runtime: Ollama');
     focus.send('\x1b[Z/library\r');
-    await focus.waitScreen('Models  1/100');
+    await focus.waitScreen('Library  1/100');
     focus.send('/models\r');
-    await focus.waitScreen('Models  1/' + models.length);
+    await focus.waitScreen('Installed  1/' + models.length);
     focus.send('\x1b[Z/results\r');
-    await focus.waitScreen('saved measurements');
+    await focus.waitScreen('last measured');
     await focus.capture('terminal-focus-transitions');
     focus.send('/quit\r');
     await focus.finish();
+    const benchColumns = String(sql("SELECT name FROM pragma_table_info('bench_runs')")).trim().split('\n');
+    const legacyFields = { id: "'legacy-fixture|v4'", suite_version: '4', prompt_id: "'short'", updated_at: '1', ttft_ms_median: 'NULL' };
+    sql(`INSERT INTO bench_runs (${benchColumns.join(',')})
+        SELECT ${benchColumns.map(column => legacyFields[column] ?? column).join(',')}
+        FROM bench_runs ORDER BY updated_at DESC LIMIT 1`);
     await terminalWorkflows({ terminal, scratch, run, requests, models, checkpoint, setStream: value => { slow = value; terminalStream = value; } });
     await terminalEdges({ terminal, scratch, run, requests, models, checkpoint,
         setStream: value => { slow = value; terminalStream = value; }, setOffline: value => { offline = value; }, setAnswer: value => { chatAnswer = value; } });

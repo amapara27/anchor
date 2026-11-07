@@ -31,6 +31,7 @@ const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const FIRST_CHUNK: usize = 1024 * 1024;
 /// Ceiling on paging, for a model that buries its arch keys behind a big array.
 const MAX_CHUNK: usize = 16 * 1024 * 1024;
+const MAX_MANIFEST: usize = 1024 * 1024;
 
 /// GGUF metadata value types. Types 8 (string) and 9 (array) are variable-width.
 const T_STRING: u32 = 8;
@@ -163,6 +164,18 @@ fn client() -> Result<reqwest::Client> {
         .map_err(|e| Error::Http(e.to_string()))
 }
 
+async fn read_prefix(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(limit);
+    while bytes.len() < limit {
+        let Some(chunk) = response.chunk().await? else {
+            break;
+        };
+        let count = chunk.len().min(limit - bytes.len());
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    Ok(bytes)
+}
+
 /// The digest of a tag's model layer — the GGUF itself, not the template or
 /// licence layers that share the manifest.
 async fn model_layer_digest(client: &reqwest::Client, name: &str, tag: &str) -> Result<String> {
@@ -176,7 +189,11 @@ async fn model_layer_digest(client: &reqwest::Client, name: &str, tag: &str) -> 
     if !res.status().is_success() {
         return Err(Error::Http(format!("manifest {} for {name}:{tag}", res.status())));
     }
-    let manifest: Value = res.json().await.map_err(|e| Error::Http(e.to_string()))?;
+    let bytes = read_prefix(res, MAX_MANIFEST + 1).await?;
+    if bytes.len() > MAX_MANIFEST {
+        return Err(Error::Http(format!("manifest exceeds {MAX_MANIFEST} bytes for {name}:{tag}")));
+    }
+    let manifest: Value = serde_json::from_slice(&bytes)?;
     manifest["layers"]
         .as_array()
         .and_then(|ls| ls.iter().find(|l| l["mediaType"] == MODEL_MEDIA_TYPE))
@@ -206,7 +223,8 @@ pub async fn fetch_model_info(tag: &str) -> Result<Map<String, Value>> {
         if !res.status().is_success() {
             return Err(Error::Http(format!("blob {} for {tag}", res.status())));
         }
-        let body = res.bytes().await.map_err(|e| Error::Http(e.to_string()))?;
+        // A server can ignore Range and stream the entire model with a 200.
+        let body = read_prefix(res, size).await?;
         let short = body.len() < size;
         if let Ok(info) = parse_header(&body) {
             return Ok(info);
@@ -220,3 +238,7 @@ pub async fn fetch_model_info(tag: &str) -> Result<Map<String, Value>> {
     }
     Err(Error::Ollama(format!("could not read GGUF header for {tag}")))
 }
+
+#[cfg(test)]
+#[path = "../tests/fixtures/gguf_http.rs"]
+mod http_e2e;

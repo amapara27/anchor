@@ -30,13 +30,5 @@ export function useStorageScan() {
     refresh();
   }, [refresh]);
 
-  const clean = useCallback(
-    async (target: StorageScan) => {
-      await invoke("clean_orphaned_blobs", { scan: target }).catch(() => {});
-      await refresh();
-    },
-    [refresh],
-  );
-
-  return { scan, loading, error, refresh, clean };
+  return { scan, loading, error, refresh };
 }

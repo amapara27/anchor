@@ -30,6 +30,27 @@ try {
     await writeFile(fixture, 'console.log("fixture-passed");');
     assert.equal((await run(['--only', 'release'])).code, 0);
     assert.equal((await latest()).status, 'passed-selected');
+    await writeFile(fixture, `
+        import { fork } from 'node:child_process';
+        if (process.argv[2] === 'descendant') {
+            process.on('SIGTERM', () => {});
+            process.send(process.pid);
+            setTimeout(() => { console.error('fixture-unreaped'); process.exit(1); }, 8000);
+            setInterval(() => {}, 1000);
+        } else {
+            const child = fork(new URL(import.meta.url), ['descendant']);
+            child.once('message', pid => {
+                console.log('fixture-descendant ' + pid);
+                child.disconnect();
+                child.unref();
+            });
+        }
+    `);
+    const cleaned = await run(['--only', 'release']);
+    assert.equal(cleaned.code, 0, cleaned.out + cleaned.err);
+    assert.doesNotMatch(cleaned.err, /fixture-unreaped/);
+    const pid = Number(cleaned.out.match(/fixture-descendant (\d+)/)[1]);
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
     await writeFile(fixture, 'console.error("fixture-bug-evidence");process.exitCode=42;');
     assert.equal((await run(['--only', 'release'])).code, 1);
     const failed = await latest();
@@ -55,7 +76,7 @@ try {
     await writeFile(fixture, 'console.log("fixture-waiting");setInterval(()=>{},1000);');
     assert.equal((await run(['--only', 'release'], {}, true)).code, 130);
     assert.equal((await latest()).status, 'blocked');
-    console.log('Runner process E2E passed: success, product failure evidence, targeted rerun, blocked prerequisite, invalid selection, exclusive ownership and interruption cleanup.');
+    console.log('Runner process E2E passed: success, descendant cleanup, product failure evidence, targeted rerun, blocked prerequisite, invalid selection, exclusive ownership and interruption cleanup.');
 }
 finally {
     await rm(scratch, { recursive: true, force: true });

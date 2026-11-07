@@ -46,6 +46,9 @@ pub fn local_model(path: &Path) -> Result<NativeModel> {
     let config: Value = serde_json::from_slice(
         &std::fs::read(path.join("config.json")).map_err(|e| invalid(e.to_string()))?,
     )?;
+    if !config["model_file"].is_null() {
+        return Err(invalid("Custom MLX model code is not supported"));
+    }
     if !config["model_type"].as_str().is_some_and(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
         || !path.join("tokenizer_config.json").is_file()
         || !(path.join("tokenizer.json").is_file() || path.join("tokenizer.model").is_file())

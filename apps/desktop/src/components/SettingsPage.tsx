@@ -523,8 +523,8 @@ function HardwarePanel() {
             <span className="text-[13px] font-semibold text-warn">Inference is not running on this Mac</span>
             <span className="text-[11.5px] leading-[1.5] text-fg-muted">
               <code className="data">OLLAMA_HOST</code> points at{" "}
-              <code className="data">{status.host}</code>, so every prompt and response is sent there. Unset it
-              to go back to local-only inference.
+              <code className="data">{status.host}</code>, so prompts go to that server. Unset it
+              to use Ollama on this Mac.
             </span>
           </span>
         </div>
@@ -551,7 +551,7 @@ function PrivacyPanel() {
   return (
     <SectionCard
       title="Privacy & sharing"
-      blurb="Inference is always local. Chats are stored locally. Downloads, update checks and explicit exports can use the network."
+      blurb="Anchor blocks Ollama cloud models. Prompts go to Ollama on this Mac by default. Chats are stored locally."
     >
       <dl className="flex flex-col border-t border-hair text-[13px]">
         <div className="flex items-baseline justify-between gap-4 border-b border-hair py-2.5">

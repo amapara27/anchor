@@ -16,7 +16,7 @@ const scratch = await realpath(await mkdtemp(path.join(tmpdir(), 'anchor-cli-' +
 const env = { ...process.env, ANCHOR_E2E_DATA_DIR: scratch, OLLAMA_MODELS: path.join(scratch, 'models'),
     HF_HOME: path.join(scratch, 'hf'), HF_HUB_CACHE: path.join(scratch, 'hf/hub'), HF_XET_CACHE: path.join(scratch, 'xet'),
     UV_CACHE_DIR: path.join(scratch, 'uv-cache'), OLLAMA_NO_CLOUD: '1', OLLAMA_NUM_PARALLEL: '1', OLLAMA_MAX_LOADED_MODELS: '1' };
-const binary = path.join(root, 'target/debug/anchor');
+const binary = path.join(root, 'target/cli-e2e/debug/anchor');
 const model = runtime === 'mlx' ? 'mlx-community/gemma-3-270m-it-4bit' : 'gemma3:270m';
 const commands = [], children = new Set();
 let server = null, serverLog = '', success = false, step = 'build', blocked = false;
@@ -42,7 +42,7 @@ async function run(args, { code = 0, json = true, cancel = null } = {}) {
 }
 const checkpoint = name => { step = name; console.log('STEP cli-' + runtime + '.' + name); };
 try {
-    const build = spawn('cargo', ['build', '--locked', '-p', 'anchor-cli', '--features', 'e2e'], { cwd: root, stdio: 'inherit' });
+    const build = spawn('cargo', ['build', '--locked', '-p', 'anchor-cli', '--features', 'e2e', '--target-dir', 'target/cli-e2e'], { cwd: root, stdio: 'inherit' });
     children.add(build);
     assert.equal(await new Promise((resolve, reject) => { build.once('error', reject); build.once('close', resolve); }), 0);
     children.delete(build);
@@ -142,7 +142,7 @@ try {
         await run(['bench', 'run', model, '--runtime', runtime, '--json'], { code: 130, cancel: line => /warming up|[1-9]\/9 /.test(line) });
         const after = await run(['bench', 'sessions', '--runtime', runtime, '--json']);
         assert(after.some(s => s.outcome === 'cancelled'));
-        await terminalLive({ root, scratch, env, commands, children, runtime, model, run, checkpoint });
+        await terminalLive({ root, binary, scratch, env, commands, children, runtime, model, run, checkpoint });
         success = true; console.log('CLI ' + runtime + ' live E2E passed.');
     }
 } finally {

@@ -199,7 +199,7 @@ pub fn parse_tags(html: &str) -> Vec<LibraryTag> {
         };
         // A "-cloud" tag (e.g. "gpt-oss:120b-cloud") pulls a proxy to Ollama's
         // hosted service, not local weights — there's nothing for Anchor to load.
-        if tag.is_empty() || tag.ends_with("-cloud") {
+        if tag.is_empty() || crate::ollama::is_cloud_tag(&tag) {
             continue;
         }
         // Size and context are the two `col-span-2` paragraphs, in that order.

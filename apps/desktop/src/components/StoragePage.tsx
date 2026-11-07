@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { LibraryModel, StorageScan } from "../types";
+import type { LibraryModel } from "../types";
 import { useModels } from "../lib/useModels";
 import { useStorageScan } from "../lib/useStorageScan";
 import { formatBytes } from "../lib/format";
@@ -38,7 +38,7 @@ function formatLastUsed(ms: number | null): string {
  * can be reclaimed.
  *
  * Installed weights come from `useModels()` + `lastUsed`; dedupe savings,
- * on-disk locations and orphaned-blob housekeeping come from a real scan of
+ * on-disk locations and unreferenced blob counts come from a real scan of
  * Ollama's store (`useStorageScan`, backed by `anchor_hub::storage`) — Ollama
  * content-addresses blobs by digest, so shared layers are already deduped on
  * disk at pull time, and this only reports that truth rather than computing
@@ -46,10 +46,9 @@ function formatLastUsed(ms: number | null): string {
  */
 export function StoragePage() {
   const { models, error, removeModel } = useModels();
-  const { scan, loading: scanning, refresh: rescan, clean } = useStorageScan();
+  const { scan, loading: scanning, refresh: rescan } = useStorageScan();
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [pendingRemove, setPendingRemove] = useState<LibraryModel[] | null>(null);
-  const [pendingClean, setPendingClean] = useState<StorageScan | null>(null);
 
   const rows = useMemo(
     () =>
@@ -251,32 +250,25 @@ export function StoragePage() {
         </section>
 
         <section className="flex flex-col gap-2.5">
-          <h2 className="text-[13px] font-medium text-fg">Housekeeping</h2>
+          <h2 className="text-[13px] font-medium text-fg">Unreferenced blobs</h2>
           {scan && scan.orphaned_blobs.length > 0 ? (
-            <>
-              <p className="text-[13px] leading-[1.5] text-fg-muted">
-                {scan.orphaned_blobs.length} orphaned {scan.orphaned_blobs.length === 1 ? "blob" : "blobs"} — not
-                referenced by any installed model or tag (usually left behind by an interrupted pull). Safe to
-                delete.
-              </p>
-              <GhostButton tone="danger" className="h-7 self-start text-xs" onClick={() => setPendingClean(scan)}>
-                Clean up · frees {formatBytes(scan.orphaned_bytes)}
-              </GhostButton>
-            </>
+            <p className="text-[13px] leading-[1.5] text-fg-muted">
+              {scan.orphaned_blobs.length} unreferenced {scan.orphaned_blobs.length === 1 ? "blob" : "blobs"} ·{" "}
+              {formatBytes(scan.orphaned_bytes)}. Active Ollama downloads may still need these files.
+            </p>
           ) : scan && scan.unreadable_manifests > 0 ? (
             <p className="text-[13px] leading-[1.5] text-warn">
               Couldn&rsquo;t read {scan.unreadable_manifests}{" "}
               {scan.unreadable_manifests === 1 ? "manifest" : "manifests"} in the model store, so which blobs are
-              still in use can&rsquo;t be determined. Cleanup is off — deleting against a partial picture could
-              remove data an installed model still needs.
+              still in use can&rsquo;t be determined.
             </p>
           ) : (
             <p className="text-[13px] text-fg-muted">
               {scan
-                ? "No orphaned blobs."
+                ? "No unreferenced blobs."
                 : scanning
                   ? "Scanning…"
-                  : "Rescan disk to check for orphaned blobs."}
+                  : "Rescan disk to check for unreferenced blobs."}
             </p>
           )}
         </section>
@@ -303,22 +295,6 @@ export function StoragePage() {
           setSelected({});
         }}
         onCancel={() => setPendingRemove(null)}
-      />
-
-      <ConfirmDialog
-        open={pendingClean != null}
-        title="Clean up orphaned blobs?"
-        body={
-          pendingClean
-            ? `Deletes ${pendingClean.orphaned_blobs.length} blob file${pendingClean.orphaned_blobs.length === 1 ? "" : "s"} nothing installed points at, freeing ${formatBytes(pendingClean.orphaned_bytes)}. This cannot be undone.`
-            : ""
-        }
-        confirmLabel="Clean up"
-        onConfirm={() => {
-          if (pendingClean) void clean(pendingClean);
-          setPendingClean(null);
-        }}
-        onCancel={() => setPendingClean(null)}
       />
     </>
   );

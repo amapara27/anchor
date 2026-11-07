@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, open, readFile, writeFile, unlink } from 'node:fs/promises';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:net';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,10 +43,10 @@ const pnpm = ['pnpm', '--filter', '@anchor/desktop'];
 const stages = [
     { id: 'harness', title: 'Runner failure reports, blocked prerequisites, rerun commands and interruption cleanup', commands: [['node', 'tests/e2e/runner.mjs']], tools: ['node'], sources: ['scripts/test-e2e.mjs', 'tests/e2e/runner.mjs'], minutes: 2 },
     { id: 'build', title: 'Typecheck, frontend build and production Rust compilation', commands: [[...pnpm, 'build'], ['cargo', 'build', '--workspace', '--locked']], tools: ['pnpm', 'cargo'], sources: ['apps/desktop/src', 'crates', 'apps/desktop/src-tauri'], minutes: 15 },
-    { id: 'state', title: 'SQLite migration/reopen, library/cache identity and safe storage reclamation', commands: [['cargo', 'test', '--locked', '-p', 'anchor-hub', '--test', 'persistence_e2e', '--test', 'application_state_e2e', '--', '--nocapture']], tools: ['cargo'], sources: ['crates/anchor-hub/src/db.rs', 'crates/anchor-hub/src/storage.rs', 'crates/anchor-hub/src/library.rs', 'crates/anchor-hub/src/server.rs'], minutes: 5 },
+    { id: 'state', title: 'SQLite migration/reopen, library/cache identity, bounded GGUF reads and safe storage reclamation', commands: [['cargo', 'test', '--locked', '-p', 'anchor-hub', '--test', 'persistence_e2e', '--test', 'application_state_e2e', '--', '--nocapture'], ['cargo', 'test', '--locked', '-p', 'anchor-hub', '--lib', 'gguf::http_e2e']], tools: ['cargo'], sources: ['crates/anchor-hub/src/db.rs', 'crates/anchor-hub/src/storage.rs', 'crates/anchor-hub/src/library.rs', 'crates/anchor-hub/src/server.rs', 'crates/anchor-hub/src/gguf.rs'], minutes: 5 },
     { id: 'measurements', title: 'HTTP streaming → benchmark evidence → SQLite → offline replay', commands: [['cargo', 'test', '--locked', '-p', 'anchor-hub', '--test', 'measurements_e2e', '--', '--nocapture']], tools: ['cargo'], sources: ['crates/anchor-hub/src/ollama.rs', 'crates/anchor-hub/src/bench', 'crates/anchor-hub/tests/measurements_e2e.rs'], minutes: 8 },
     { id: 'cli-build', title: 'Production CLI compilation without the desktop or webview', commands: [['cargo', 'build', '--locked', '-p', 'anchor-cli']], tools: ['cargo'], sources: ['crates/anchor-cli', 'crates/anchor-hub'], minutes: 10 },
-    { id: 'cli', title: 'Actual CLI processes, fit catalog, hardware fallback, chat, benchmarks and storage', commands: [['cargo', 'build', '--locked', '-p', 'anchor-cli', '--features', 'e2e'], ['node', 'tests/e2e/cli.mjs']], tools: ['cargo', 'node', 'sqlite3', 'cc', ...(process.platform === 'darwin' ? ['xcrun'] : [])], sources: ['tests/e2e/terminal.mjs', 'tests/e2e/terminal-workflows.mjs', 'tests/e2e/pty.c', 'crates/anchor-cli/src', 'crates/anchor-core/src/fit.rs', 'crates/anchor-system/src', 'tests/e2e/cli.mjs', 'crates/anchor-hub/src/chat.rs'], minutes: 10, build: 'cli-build' },
+    { id: 'cli', title: 'Actual CLI processes, fit catalog, hardware fallback, chat, benchmarks and storage', commands: [['cargo', 'build', '--locked', '-p', 'anchor-cli', '--features', 'e2e', '--target-dir', 'target/cli-e2e'], ['node', 'tests/e2e/cli.mjs']], tools: ['cargo', 'node', 'sqlite3', 'cc', ...(process.platform === 'darwin' ? ['xcrun'] : [])], sources: ['tests/e2e/terminal.mjs', 'tests/e2e/terminal-workflows.mjs', 'tests/e2e/pty.c', 'crates/anchor-cli/src', 'crates/anchor-core/src/fit.rs', 'crates/anchor-system/src', 'tests/e2e/cli.mjs', 'crates/anchor-hub/src/chat.rs'], minutes: 10, build: 'cli-build' },
     { id: 'browser', title: 'React workflows, recovery, keyboard and responsive/light/dark layouts', commands: [[...pnpm, 'test:e2e:browser']], tools: ['pnpm'], sources: ['apps/desktop/src/components', 'apps/desktop/src/lib', 'apps/desktop/e2e/anchor.spec.ts'], minutes: 8, build: true },
     { id: 'native', title: 'WKWebView → real IPC/Rust/SQLite, permissions, persistence and cancellation', commands: [[...pnpm, 'test:e2e:native']], tools: ['pnpm', 'cargo', 'sqlite3'], sources: ['apps/desktop/src-tauri/src/lib.rs', 'apps/desktop/e2e/native.mjs', 'apps/desktop/src/lib', 'crates/anchor-hub/src/chat.rs'], minutes: 15, mac: true, build: true },
     { id: 'discovery', title: 'Published Ollama library/tags → ranged GGUF → persisted architecture cache', commands: [['cargo', 'test', '--locked', '-p', 'anchor-hub', '--test', 'network_catalog_e2e', '--', '--ignored', '--nocapture']], tools: ['cargo'], sources: ['crates/anchor-hub/src/library.rs', 'crates/anchor-hub/src/gguf.rs', 'crates/anchor-hub/src/lib.rs', 'crates/anchor-hub/tests/network_catalog_e2e.rs'], minutes: 5, network: true },
@@ -98,15 +99,27 @@ const persist = async () => {
 await persist();
 console.log(`E2E ${report.scope}: ${[...chosen].join(', ')}\nReport: ${path.join(dir, 'report.json')}`);
 let active = null, interrupted = false;
-function terminate(child) {
-    if (!child) return;
-    try { process.kill(-child.pid, 'SIGTERM'); } catch {}
-    setTimeout(() => {
-        try { process.kill(-child.pid, 'SIGKILL'); } catch {}
-    }, 1500).unref();
+async function stopGroup(pid) {
+    if (!pid) return;
+    const signal = name => {
+        try { return process.kill(-pid, name); }
+        catch (error) {
+            if (error.code === 'ESRCH') return false;
+            throw error;
+        }
+    };
+    if (!signal('SIGTERM')) return;
+    const deadline = Date.now() + 1500;
+    while (signal(0)) {
+        if (Date.now() >= deadline) {
+            signal('SIGKILL');
+            return;
+        }
+        await delay(50);
+    }
 }
 for (const signal of ['SIGINT', 'SIGTERM'])
-    process.on(signal, () => { interrupted = true; terminate(active); });
+    process.on(signal, () => { interrupted = true; active?.(); });
 const exists = tool => spawnSync(tool, ['--version'], { cwd: root, stdio: 'ignore', timeout: 10000 }).status === 0;
 const portFree = port => new Promise(resolve => {
     const probe = createServer();
@@ -121,7 +134,9 @@ async function command(argv, stage, log) {
     if (stage.id === 'mlx')
         environment.ANCHOR_MLX_DOWNLOAD_E2E = '1';
     const child = spawn(argv[0], argv.slice(1), { cwd: root, env: environment, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    active = child;
+    let cleanup;
+    const stop = () => cleanup ??= stopGroup(child.pid);
+    active = stop;
     let last = 'Starting ' + argv.join(' '), timedOut = false, launchError = null;
     const output = b => {
         const text = b.toString();
@@ -133,10 +148,14 @@ async function command(argv, stage, log) {
     child.stdout.on('data', output);
     child.stderr.on('data', output);
     const heartbeat = setInterval(() => console.log(`[${stage.id}] still running: ${last.slice(-200)}`), 20000);
-    const timer = setTimeout(() => { timedOut = true; terminate(child); }, stage.minutes * 60000);
-    const result = await new Promise(resolve => { child.once('error', error => { launchError = error.message; resolve({ code: null, signal: null }); }); child.once('close', (code, signal) => resolve({ code, signal })); });
+    const timer = setTimeout(() => { timedOut = true; stop(); }, stage.minutes * 60000);
+    // A surviving descendant can keep the output pipes open after the stage exits.
+    child.once('exit', stop);
+    child.once('error', error => { launchError = error.message; });
+    const result = await new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
     clearInterval(heartbeat);
     clearTimeout(timer);
+    await stop();
     active = null;
     return { ...result, timedOut, launchError, lastOutput: last };
 }
@@ -196,7 +215,7 @@ try {
     }
 }
 finally {
-    terminate(active);
+    await active?.();
     report.finishedAt = new Date().toISOString();
     const selected = report.stages.filter(r => chosen.has(r.id));
     report.status = selected.some(r => r.status === 'failed') ? 'failed' : selected.some(r => r.status !== 'passed') ? 'blocked' : report.scope === 'full' ? 'passed' : 'passed-' + report.scope;

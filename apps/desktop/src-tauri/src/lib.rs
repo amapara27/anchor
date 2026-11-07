@@ -484,14 +484,6 @@ async fn scan_storage() -> Result<Option<StorageScan>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Deletes every orphaned blob listed in `scan` and returns the bytes freed.
-#[tauri::command]
-async fn clean_orphaned_blobs(scan: StorageScan) -> Result<u64, String> {
-    tauri::async_runtime::spawn_blocking(move || anchor_hub::storage::clean_orphaned(&scan))
-        .await
-        .map_err(|e| e.to_string())
-}
-
 /// Builds a [`Profiler`] backed by `hardware.json` in the app's data directory.
 fn profiler(app: &AppHandle) -> Result<Profiler, String> {
     let dir = data_dir(&app)
@@ -1016,7 +1008,6 @@ pub fn run() {
             running_models,
             remove_model,
             scan_storage,
-            clean_orphaned_blobs,
             get_hardware_profile,
             refresh_hardware_profile,
             get_server_status,

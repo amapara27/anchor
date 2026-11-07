@@ -100,6 +100,7 @@ pub async fn ensure_running(host: &str) -> EnsureOutcome {
     };
     let child = match Command::new(&binary)
         .arg("serve")
+        .env("OLLAMA_NO_CLOUD", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

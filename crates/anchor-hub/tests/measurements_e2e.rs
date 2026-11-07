@@ -315,11 +315,14 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert_eq!(ev.attempts.len(), 3, "warmup, completed repeat, failed repeat all retained");
     assert!(ev.results.is_empty()); assert!(!ev.derived.scenarios[0].complete);
     assert_eq!(ev.derived.scenarios[0].decode_tps_median, None);
-    fixture.mode.store(0, Ordering::Relaxed);
+    fixture.mode.store(7, Ordering::Relaxed);
     let cancelled = fixture.registry("cancel-attempt.db");
     let stop = AtomicBool::new(false);
-    assert!(cancelled.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,Some("balanced"),&stop,|e| {
-        if matches!(e, BenchProgress::ScenarioStarted {..}) { stop.store(true, Ordering::Relaxed); }
+    let mut measured = false;
+    assert!(cancelled.run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,Some("balanced"),&stop,|e| match e {
+        BenchProgress::ScenarioStarted {..} => measured = true,
+        BenchProgress::Sample {..} if measured => stop.store(true, Ordering::Relaxed),
+        _ => {}
     }).await.unwrap().is_empty());
     let ev = cancelled.bench_evidence(&cancelled.bench_sessions(1).unwrap()[0].id).unwrap();
     assert_eq!(ev.session.outcome, anchor_hub::bench::evidence::Outcome::Cancelled);

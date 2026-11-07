@@ -87,12 +87,16 @@ pub async fn installed_digests(host: &str) -> Result<Vec<(String, String)>> {
         .error_for_status()?
         .json()
         .await?;
-    Ok(resp.models.into_iter().filter_map(|m| Some((m.name, m.digest?))).collect())
+    Ok(resp.models.into_iter().filter(TagEntry::is_local).filter_map(|m| Some((m.name, m.digest?))).collect())
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
 }
 
 /// A reqwest client with a total timeout, for the non-streaming endpoints.
 fn request_client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::builder()
+    Ok(client_builder()
         .timeout(REQUEST_TIMEOUT)
         .build()?)
 }
@@ -109,6 +113,10 @@ struct TagsResponse {
 struct TagEntry {
     name: String,
     #[serde(default)]
+    remote_model: String,
+    #[serde(default)]
+    remote_host: String,
+    #[serde(default)]
     size: Option<u64>,
     #[serde(default)]
     modified_at: Option<String>,
@@ -118,6 +126,26 @@ struct TagEntry {
     digest: Option<String>,
     #[serde(default)]
     details: TagDetails,
+}
+
+impl TagEntry {
+    fn is_local(&self) -> bool {
+        !is_cloud_name(&self.name) && self.remote_model.is_empty() && self.remote_host.is_empty()
+    }
+}
+
+pub(crate) fn is_cloud_tag(tag: &str) -> bool {
+    let tag = tag.to_ascii_lowercase();
+    tag == "cloud" || tag.ends_with("-cloud")
+}
+
+fn is_cloud_name(id: &str) -> bool {
+    id.rsplit('/').next().and_then(|name| name.rsplit_once(':'))
+        .is_some_and(|(_, tag)| is_cloud_tag(tag))
+}
+
+fn reject_cloud() -> Error {
+    Error::Ollama("Anchor only supports local Ollama models; choose a model with local weights".into())
 }
 
 /// The `details` sub-object of a `/api/tags` entry.
@@ -134,6 +162,10 @@ struct TagDetails {
 /// Response shape of `POST /api/show` (only the bits we use).
 #[derive(Debug, Deserialize)]
 struct ShowResponse {
+    #[serde(default)]
+    remote_model: String,
+    #[serde(default)]
+    remote_host: String,
     /// Architecture-keyed metadata, e.g. `{ "llama.context_length": 131072 }`.
     ///
     /// Some models report this as an explicit JSON `null` rather than omitting
@@ -398,7 +430,21 @@ pub async fn list_local_models(host: &str) -> Result<Vec<Model>> {
         .error_for_status()?
         .json()
         .await?;
-    Ok(resp.models.into_iter().map(tag_to_model).collect())
+    Ok(resp.models.into_iter().filter(TagEntry::is_local).map(tag_to_model).collect())
+}
+
+/// Check the live model even if its tag was renamed or cached before cloud filtering.
+async fn require_local_model(host: &str, id: &str, cancel: &std::sync::atomic::AtomicBool) -> Result<()> {
+    if is_cloud_name(id) {
+        return Err(reject_cloud());
+    }
+    let request = request_client()?.post(format!("{host}/api/show"))
+        .json(&serde_json::json!({ "name": id }));
+    let model: ShowResponse = send_cancellable(request, cancel).await?.error_for_status()?.json().await?;
+    if !model.remote_model.is_empty() || !model.remote_host.is_empty() {
+        return Err(reject_cloud());
+    }
+    Ok(())
 }
 
 /// Fetches best-effort extra metadata for a model via `POST /api/show`.
@@ -582,10 +628,13 @@ pub async fn pull<F>(
 where
     F: FnMut(PullProgress) + Send,
 {
+    if is_cloud_name(id) {
+        return Err(reject_cloud());
+    }
     let url = format!("{host}/api/pull");
     // A pull can run for many minutes, so no total timeout — just bound the
     // connect and the idle gap between reads so a wedged server can't hang us.
-    let client = reqwest::Client::builder()
+    let client = client_builder()
         .connect_timeout(PULL_CONNECT_TIMEOUT)
         .read_timeout(PULL_READ_TIMEOUT)
         .build()?;
@@ -647,10 +696,11 @@ async fn generate_inner<F>(
 ) -> Result<(String, GenerationStats)>
 where F: FnMut(&str) + Send {
     use crate::bench::evidence::{EventKind, RawEvent};
+    require_local_model(host, &req.model, cancel).await?;
     let url = format!("{host}/api/generate");
     // Like a pull, a generation has no useful total deadline (it depends on the
     // answer length); bound the connect and the idle gap between reads instead.
-    let client = reqwest::Client::builder()
+    let client = client_builder()
         .connect_timeout(GENERATE_CONNECT_TIMEOUT)
         .read_timeout(GENERATE_READ_TIMEOUT)
         .build()?;
@@ -886,8 +936,13 @@ pub async fn chat<F>(
 where
     F: FnMut(bool, &str) + Send,
 {
+    match require_local_model(host, &req.model, cancel).await {
+        Ok(()) => {}
+        Err(Error::Cancelled) => return Ok((String::new(), String::new(), GenerationStats::default())),
+        Err(e) => return Err(e),
+    }
     let url = format!("{host}/api/chat");
-    let client = reqwest::Client::builder()
+    let client = client_builder()
         .connect_timeout(GENERATE_CONNECT_TIMEOUT)
         .read_timeout(GENERATE_READ_TIMEOUT)
         .build()?;

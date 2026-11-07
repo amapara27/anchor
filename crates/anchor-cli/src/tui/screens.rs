@@ -1,9 +1,10 @@
 use super::*;
-use ratatui::layout::Rect;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Kind {
+    Home,
+    Runtimes,
     Models,
     Runs,
     Sessions,
@@ -66,6 +67,7 @@ pub(super) struct Form {
 pub(super) struct Confirm {
     question: String,
     args: Vec<String>,
+    title: &'static str,
     accept: bool,
     quit: bool,
 }
@@ -77,27 +79,303 @@ pub(super) struct Job {
     rate: Option<f64>,
     download: Option<(u64, u64)>,
     answer: String,
+    thinking: String,
+    /// The user turn a chat job is sending; None for Regenerate, which reuses the last prompt.
+    prompt: Option<String>,
+    timeline: Vec<String>,
     chat: bool,
     export: bool,
+    benchmark_runtime: Option<&'static str>,
 }
 fn args(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| (*s).to_owned()).collect()
 }
-fn number(value: &Value, key: &str, unit: &str) -> String {
+pub(super) fn number(value: &Value, key: &str, unit: &str) -> String {
     value[key]
         .as_f64()
         .filter(|n| n.is_finite())
         .map(|n| format!("{n:.1}{unit}"))
         .unwrap_or_else(|| "N/A".into())
 }
+/// Command results as aligned `Label  value` lines; scripts still get JSON via `--json`.
 fn readable(value: &Value) -> String {
-    match value {
-        Value::String(s) => plain(s),
-        _ => plain(&serde_json::to_string_pretty(value).unwrap_or_default()),
+    let mut lines = Vec::new();
+    describe(value, 0, &mut lines);
+    if lines.is_empty() {
+        "Nothing to show.".into()
+    } else {
+        lines.join("\n")
     }
 }
+fn label(key: &str) -> String {
+    let key = ["_bytes", "_gb"]
+        .iter()
+        .find_map(|unit| key.strip_suffix(unit))
+        .filter(|k| !k.is_empty())
+        .unwrap_or(key);
+    let words: Vec<String> = key
+        .split('_')
+        .map(|word| match word {
+            "os" | "kv" | "gpu" | "cpu" | "id" | "url" | "ttft" | "mlx" | "hf" => {
+                word.to_ascii_uppercase()
+            }
+            _ => word.to_owned(),
+        })
+        .collect();
+    let text = words.join(" ");
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+fn scalar(key: &str, value: &Value) -> String {
+    match value {
+        Value::Bool(b) => (if *b { "yes" } else { "no" }).into(),
+        Value::Number(n) if key.ends_with("_bytes") && n.as_u64().is_some() => {
+            crate::fmt_bytes(n.as_u64().unwrap_or_default())
+        }
+        Value::Number(n) if key.ends_with("_gb") => format!("{:.2} GB", n.as_f64().unwrap_or(0.0)),
+        Value::Number(n) if n.is_f64() => {
+            let text = format!("{:.2}", n.as_f64().unwrap_or(0.0));
+            text.trim_end_matches('0').trim_end_matches('.').to_owned()
+        }
+        Value::String(s) => plain(s),
+        other => plain(&other.to_string()),
+    }
+}
+fn describe(value: &Value, indent: usize, lines: &mut Vec<String>) {
+    let pad = " ".repeat(indent);
+    let nested = |v: &Value| {
+        v.is_object()
+            || v.as_array()
+                .is_some_and(|a| a.iter().any(|i| i.is_object() || i.is_array()))
+    };
+    match value {
+        Value::Object(map) => {
+            let width = map
+                .iter()
+                .filter(|(_, v)| !v.is_null() && !nested(v))
+                .map(|(k, _)| label(k).chars().count())
+                .max()
+                .unwrap_or(0);
+            for (key, item) in map {
+                if item.is_null() {
+                    continue;
+                }
+                if nested(item) {
+                    lines.push(format!("{pad}{}", label(key)));
+                    describe(item, indent + 2, lines);
+                    continue;
+                }
+                let text = match item.as_array() {
+                    Some(items) if items.is_empty() => "none".into(),
+                    Some(items) => items
+                        .iter()
+                        .map(|i| scalar(key, i))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    None => scalar(key, item),
+                };
+                // Continuation lines of multi-line values stay under their value column.
+                let text = text.replace('\n', &format!("\n{pad}{}  ", " ".repeat(width)));
+                lines.push(format!("{pad}{:<width$}  {text}", label(key)));
+            }
+        }
+        Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 && nested(item) {
+                    lines.push(String::new());
+                }
+                if nested(item) || item.is_array() {
+                    describe(item, indent, lines);
+                } else {
+                    lines.push(format!("{pad}{}", scalar("", item)));
+                }
+            }
+        }
+        _ => lines.push(format!("{pad}{}", scalar("", value))),
+    }
+}
+pub(super) fn decode_and_ttft(run: &Value) -> String {
+    format!(
+        "decode {} · TTFT {}",
+        number(run, "decode_tps_median", " tok/s"),
+        number(run, "ttft_ms_median", " ms")
+    )
+}
+
+fn workload_metrics(run: &Value) -> String {
+    format!(
+        "prefill {} · {}",
+        number(run, "prefill_tps_median", " tok/s"),
+        decode_and_ttft(run)
+    )
+}
+
+fn measurement_details(report: &Value) -> String {
+    let mut lines = Vec::new();
+    for scenario in report["scenarios"].as_array().into_iter().flatten() {
+        lines.push(format!(
+            "{} · {}/{} repeats{}\n  {}",
+            string(scenario, "scenario_id"),
+            scenario["completed_repeats"],
+            scenario["planned_repeats"],
+            if scenario["complete"] == true {
+                ""
+            } else {
+                " · incomplete"
+            },
+            workload_metrics(scenario)
+        ));
+    }
+    if let Some(mlx) = report["mlx"]
+        .as_object()
+        .or_else(|| report["native"].as_object())
+    {
+        if let Some(validated) = mlx.get("boundaries_validated").and_then(Value::as_bool) {
+            lines.push(format!(
+                "MLX boundary checks: {}",
+                if validated { "Passed" } else { "Not validated" }
+            ));
+        }
+        if let Some((completed, planned)) =
+            mlx.get("completed_repeats").zip(mlx.get("planned_repeats"))
+        {
+            lines.push(format!(
+                "Fixed-token validation: {completed}/{planned} repeats"
+            ));
+        }
+    }
+    if let Some(probes) = report["calibration"]["probes"].as_array() {
+        lines.push(format!(
+            "Ollama measurement validation · {} probes",
+            probes.len()
+        ));
+        for probe in probes {
+            lines.push(format!(
+                "  {} · input {} · cache {} · finish {}",
+                string(probe, "outcome"),
+                string(probe, "input_count"),
+                string(probe, "cache"),
+                string(probe, "finish")
+            ));
+        }
+    }
+    if lines.is_empty() {
+        lines.push("No workload measurements recorded.".into());
+    }
+    lines.join("\n")
+}
+
+fn measurement_report(value: &Value) -> String {
+    let session = &value["session"];
+    let config = &session["config"];
+    let protocol = string(config, "protocol");
+    let runtime = runtime_name(if protocol.starts_with("mlx_") {
+        "mlx"
+    } else {
+        "ollama"
+    });
+    let version = config["runtime_version"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .map(|v| format!(" · {v}"))
+        .unwrap_or_default();
+    let formula = &session["formula_version"];
+    let timing = if formula == 2 {
+        "Post-first-token decode · TTFT (time to first token)"
+    } else {
+        "Legacy decode timing · TTFT (time to first token)"
+    };
+    let error = session["error"]
+        .as_str()
+        .map(|e| format!("\n{e}"))
+        .unwrap_or_default();
+    format!(
+        "{}\n{runtime}{version} · {}{error}\n\n{timing}\n\n{}\n\nFormula: {formula}\nSession: {}",
+        model_label(&string(config, "model_name")),
+        string(session, "outcome").replace('_', " "),
+        measurement_details(&value["report"]),
+        string(session, "id")
+    )
+}
+
+fn repeat_samples(value: &Value) -> String {
+    let samples = value.as_array().map(Vec::as_slice).unwrap_or_default();
+    if samples.is_empty() {
+        return "No repeat samples recorded for this workload.".into();
+    }
+    let mut lines = vec!["Runtime-reported rates · TTFT (time to first token)".into()];
+    for sample in samples {
+        lines.push(format!(
+            "{} · prefill {} · decode {} · TTFT {}",
+            if sample["is_warmup"] == true {
+                "Warmup".into()
+            } else {
+                format!("Repeat {}", sample["repeat_index"])
+            },
+            number(sample, "prefill_tps", " tok/s"),
+            number(sample, "decode_tps", " tok/s"),
+            number(sample, "ttft_ms", " ms")
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Saved messages plus the turn a running (or just-finished) chat job is producing.
+fn pending_turn(saved: &Value, job: &Job) -> Vec<Value> {
+    let mut messages = saved.as_array().cloned().unwrap_or_default();
+    let last = messages.last();
+    match &job.prompt {
+        // The prompt is saved before streaming, so a reload may already contain it.
+        Some(prompt)
+            if last.is_some_and(|m| m["role"] == "user" && m["content"] == prompt.as_str()) => {}
+        Some(prompt) => messages.push(serde_json::json!({"role": "user", "content": prompt})),
+        // Regenerate replaces the newest answer.
+        None if messages.last().is_some_and(|m| m["role"] == "assistant") => {
+            messages.pop();
+        }
+        None => {}
+    }
+    messages.push(serde_json::json!({
+        "role": "assistant", "content": job.answer, "thinking": job.thinking
+    }));
+    messages
+}
+
+fn benchmark_summary(value: &Value, runtime: &str) -> String {
+    let runs = value.as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut lines = vec![format!(
+        "{} measured · {}",
+        if runs.len() == 1 {
+            "1 workload".into()
+        } else {
+            format!("{} workloads", runs.len())
+        },
+        runtime_name(runtime)
+    )];
+    if let Some(run) = runs.first() {
+        lines.push(plain(&model_label(&string(run, "model_name"))));
+    }
+    lines.push("Post-first-token decode · TTFT (time to first token)".into());
+    for run in runs {
+        lines.push(format!(
+            "{:<12} {}",
+            plain(&string(run, "prompt_id")),
+            decode_and_ttft(run)
+        ));
+    }
+    lines.push("\n/results for saved measurements and reports".into());
+    lines.join("\n")
+}
 impl App {
-    fn open(&mut self, title: &str, kind: Kind, argv: Vec<String>) -> Result<(), String> {
+    pub(super) fn open(
+        &mut self,
+        title: &str,
+        kind: Kind,
+        argv: Vec<String>,
+    ) -> Result<(), String> {
         self.back.push(self.browser.clone());
         if self.back.len() > 32 {
             self.back.remove(0);
@@ -108,12 +386,117 @@ impl App {
         self.browser.kind = kind;
         self.browser.args = argv;
         self.actions_focus = None;
-        self.load()
+        self.status.clear();
+        if kind != Kind::Models {
+            self.load()?;
+        }
+        Ok(())
     }
-    fn text(&mut self, title: &str, body: String) -> Result<(), String> {
+    pub(super) fn text(&mut self, title: &str, body: String) -> Result<(), String> {
         self.open(title, Kind::Text, Vec::new())?;
         self.browser.body = body;
         Ok(())
+    }
+    pub(super) fn runtime_picker(&mut self) -> Result<(), String> {
+        if self.browser.kind == Kind::Runtimes {
+            return Ok(());
+        }
+        self.open("Choose runtime", Kind::Runtimes, Vec::new())?;
+        self.browser.rows = [
+            ("ollama", "Chat and benchmarks"),
+            ("mlx", "Apple Silicon benchmarks"),
+        ]
+        .into_iter()
+        .map(|(id, detail)| Row {
+            id: id.into(),
+            label: runtime_name(id).into(),
+            detail: detail.into(),
+            value: Value::Null,
+        })
+        .collect();
+        self.browser.selected = usize::from(self.runtime == "mlx");
+        Ok(())
+    }
+    /// The conversation as a transcript: accent caret on user turns, thinking dimmed.
+    pub(super) fn transcript(&self) -> Vec<Line<'static>> {
+        let messages = match self.job.as_ref().filter(|job| job.chat) {
+            Some(job) => pending_turn(&self.browser.data, job),
+            None => self.browser.data.as_array().cloned().unwrap_or_default(),
+        };
+        let mut lines = Vec::new();
+        for (index, message) in messages.iter().enumerate() {
+            if !lines.is_empty() {
+                lines.push(Line::default());
+            }
+            if message["role"] == "user" {
+                for (i, text) in plain(&string(message, "content")).lines().enumerate() {
+                    lines.push(Line::from(vec![
+                        Span::styled(if i == 0 { "› " } else { "  " }, ACCENT),
+                        Span::styled(text.to_owned(), Style::new().add_modifier(Modifier::BOLD)),
+                    ]));
+                }
+                // Empty answers are not saved, so an unanswered prompt means nothing came back.
+                if messages
+                    .get(index + 1)
+                    .is_none_or(|next| next["role"] == "user")
+                {
+                    lines.push(Line::default());
+                    lines.push(Line::styled("(no reply)", DIM));
+                }
+            } else {
+                for text in plain(&string(message, "thinking")).lines() {
+                    lines.push(Line::styled(
+                        text.to_owned(),
+                        DIM.add_modifier(Modifier::ITALIC),
+                    ));
+                }
+                lines.extend(
+                    plain(&string(message, "content"))
+                        .lines()
+                        .map(|text| Line::raw(text.to_owned())),
+                );
+            }
+        }
+        lines
+    }
+    /// Sends the typed prompt as the next turn of the open conversation.
+    pub(super) fn reply(&mut self) -> Result<(), String> {
+        self.ollama_only()?;
+        let model = self.active()?;
+        let text = self.browser.query.clone();
+        let mut argv = args(&["chat", "--model", &model]);
+        if let Some(id) = &self.conversation {
+            argv.extend(args(&["--conversation", id]));
+        }
+        argv.extend(args(&["--", &text]));
+        self.start_job("Send message", argv, true, None)?;
+        self.job.as_mut().unwrap().prompt = Some(text);
+        self.browser.query.clear();
+        Ok(())
+    }
+    /// Chat jobs stream into the conversation they belong to, not a separate page.
+    fn show_conversation(&mut self) -> Result<(), String> {
+        let argv = self
+            .conversation
+            .as_ref()
+            .map(|id| args(&["chat", "show", id]))
+            .unwrap_or_default();
+        if self.browser.kind == Kind::Messages && !argv.is_empty() && self.browser.args == argv {
+            return Ok(());
+        }
+        self.open("Conversation", Kind::Messages, argv)
+    }
+    fn reload_conversation(&mut self) {
+        if self.browser.args.is_empty() {
+            if let Some(id) = self.conversation.clone() {
+                self.browser.args = args(&["chat", "show", &id]);
+            }
+        }
+        let status = self.status.clone();
+        match self.load() {
+            Ok(()) => self.status = status,
+            Err(error) => self.status = error,
+        }
     }
     fn active(&self) -> Result<String, String> {
         self.model
@@ -122,7 +505,7 @@ impl App {
     }
     fn ollama_only(&self) -> Result<(), String> {
         if self.runtime == "mlx" {
-            Err("This feature uses Ollama. /runtime switches back; MLX supports downloads and benchmarks.".into())
+            Err("This feature uses Ollama. Switch with /runtime ollama.".into())
         } else {
             Ok(())
         }
@@ -152,11 +535,12 @@ impl App {
         let draft_key = match submit {
             Submit::Chat => format!("{title}:{:?}", self.conversation),
             Submit::Preset => format!("{title}:{}", fields[0].value),
+            Submit::Bench => format!("{title}:{}:{}", self.runtime, fields[0].value),
             _ => title.to_owned(),
         };
         if let Some(draft) = self.drafts.get(&draft_key) {
             for (field, value) in fields.iter_mut().zip(draft) {
-                if field.choices.is_empty() {
+                if field.choices.is_empty() || field.choices.contains(value) {
                     field.value = value.clone();
                     field.cursor = field.value.len();
                 }
@@ -172,6 +556,7 @@ impl App {
             error: String::new(),
         });
         self.actions_focus = None;
+        self.status.clear();
     }
     pub(super) fn tool(&mut self, name: &str) -> Result<(), String> {
         match name {
@@ -292,7 +677,13 @@ impl App {
                     self.job
                         .as_ref()
                         .map(|j| j.answer.clone())
-                        .unwrap_or_else(|| self.last_job.clone()),
+                        .unwrap_or_else(|| {
+                            if self.last_job.is_empty() {
+                                "No jobs yet. Start with /bench or /chat.".into()
+                            } else {
+                                self.last_job.clone()
+                            }
+                        }),
                 )?;
             }
             _ => return Err(format!("Unknown command /{name}")),
@@ -301,19 +692,22 @@ impl App {
     }
     pub(super) fn actions(&self) -> Vec<&'static str> {
         match self.browser.kind {
+            Kind::Home => vec![],
+            Kind::Runtimes => vec!["Use runtime"],
+            Kind::Models if self.browser.on_model.is_some() => vec!["Select"],
             Kind::Models if self.browser.source == Source::Benchmarked => {
-                vec!["Results", "Select", "Benchmark", "Commands"]
+                vec!["Results", "Select", "Benchmark"]
             }
             Kind::Models if self.browser.source == Source::Library => {
                 if self.runtime == "mlx" {
-                    vec!["Select", "Inspect", "Download", "Commands"]
+                    vec!["Select", "Inspect", "Download"]
                 } else {
-                    vec!["Tags", "Download", "Select", "Commands"]
+                    vec!["Tags", "Download", "Select"]
                 }
             }
             Kind::Models => {
                 if self.runtime == "mlx" {
-                    vec!["Select", "Inspect", "Benchmark", "Commands"]
+                    vec!["Select", "Inspect", "Benchmark"]
                 } else {
                     vec![
                         "Select",
@@ -324,25 +718,22 @@ impl App {
                         "Fit",
                         "Unload",
                         "Remove",
-                        "Commands",
                     ]
                 }
             }
-            Kind::Runs | Kind::Sessions => {
-                vec!["Report", "Samples", "Export", "Inspect", "Commands"]
-            }
-            Kind::Leaderboard => vec!["Inspect", "Workload", "Commands"],
-            Kind::Chats => vec![
-                "Continue", "Rename", "Preset", "Delete", "New chat", "Commands",
-            ],
-            Kind::Messages => vec!["Reply", "Regenerate", "Preset", "New chat", "Commands"],
-            Kind::Presets => vec!["Edit", "New preset", "Delete", "Commands"],
-            Kind::Settings => vec!["Open", "Commands"],
-            Kind::Tags => vec!["Download", "Select", "Inspect", "Commands"],
+            Kind::Runs => vec!["Report", "Samples", "Export", "Inspect"],
+            Kind::Sessions => vec!["Report", "Samples", "Export"],
+            Kind::Leaderboard => vec!["Inspect", "Workload"],
+            Kind::Chats => vec!["Continue", "Rename", "Preset", "Delete", "New chat"],
+            Kind::Messages => vec!["Reply", "Regenerate", "Preset", "New chat"],
+            Kind::Presets => vec!["Edit", "New preset", "Delete"],
+            Kind::Settings => vec!["Open"],
+            Kind::Tags => vec!["Download", "Select", "Inspect"],
             Kind::Text if self.browser.title == "Model storage" => {
-                vec!["Clean", "Refresh", "Commands"]
+                vec!["Clean", "Refresh"]
             }
-            _ => vec!["Back", "Refresh", "Commands"],
+            _ if !self.browser.args.is_empty() => vec!["Back", "Refresh"],
+            _ => vec!["Back"],
         }
     }
     pub(super) fn action(&mut self, action: &str) -> Result<(), String> {
@@ -353,15 +744,15 @@ impl App {
                 .map(|r| r.id.clone())
         };
         match action {
-            "Commands" => {
-                self.command = Some(String::new());
-                self.command_selected = 0;
-            }
-            "Back" => {
-                if let Some(previous) = self.back.pop() {
-                    self.read = None;
-                    self.browser = previous;
-                }
+            "Back" => self.go_back(),
+            "Use runtime" => {
+                let runtime = if selected()? == "mlx" {
+                    "mlx"
+                } else {
+                    "ollama"
+                };
+                self.go_back();
+                self.change_runtime(runtime);
             }
             "Refresh" => self.load()?,
             "Select" => {
@@ -370,14 +761,20 @@ impl App {
                     self.conversation = None;
                 }
                 self.model = Some(next);
+                let after = self.browser.on_model;
+                if after.is_some() {
+                    self.go_back();
+                }
                 self.status = format!(
                     "Selected {}",
                     self.model.as_deref().map(model_label).unwrap_or_default()
                 );
+                if let Some(name) = after.filter(|name| *name != "model") {
+                    self.tool(name)?;
+                }
             }
             "Results" => {
                 let model = selected()?;
-                self.model = Some(model.clone());
                 self.open(
                     "Measured workloads",
                     Kind::Runs,
@@ -393,9 +790,33 @@ impl App {
                     ]),
                 )?;
             }
-            "Inspect" => {
+            "Inspect" | "Report"
+                if action == "Inspect"
+                    || (self.browser.kind == Kind::Runs
+                        && row
+                            .as_ref()
+                            .is_some_and(|r| results::session_id(r).is_none())) =>
+            {
                 let row = row.ok_or("Choose a row first.")?;
-                self.text(&row.label, readable(&row.value))?;
+                if matches!(self.browser.kind, Kind::Runs | Kind::Leaderboard) {
+                    let run = &row.value;
+                    self.text(
+                        "Workload summary",
+                        format!(
+                            "{}\n{} · {} · {} ctx · {} repeats\n\nMedian measurements\n{}\n\nSuite: {} v{}",
+                            row.label,
+                            runtime_name(self.runtime),
+                            run["prompt_id"].as_str().unwrap_or("Legacy workload"),
+                            run["num_ctx"],
+                            run["repeats"],
+                            workload_metrics(run),
+                            string(run, "suite_id"),
+                            run["suite_version"]
+                        ),
+                    )?;
+                } else {
+                    self.text(&row.label, readable(&row.value))?;
+                }
             }
             "Chat" | "Benchmark" | "Fit" => {
                 self.model = Some(selected()?);
@@ -410,12 +831,17 @@ impl App {
             }
             "Download" => {
                 let model = selected()?;
-                self.start_job(
-                    "Download model",
-                    args(&["models", "pull", &model, "--runtime", self.runtime]),
-                    false,
-                    None,
-                )?;
+                self.confirm = Some(Confirm {
+                    question: format!(
+                        "Download {} for {}? Model files will use local disk space.",
+                        model_label(&model),
+                        runtime_name(self.runtime)
+                    ),
+                    args: args(&["models", "pull", &model, "--runtime", self.runtime]),
+                    title: "Download model",
+                    accept: false,
+                    quit: false,
+                });
             }
             "Unload" => {
                 self.ollama_only()?;
@@ -433,6 +859,7 @@ impl App {
                 self.confirm = Some(Confirm {
                     question: format!("Remove {model} from Ollama? Model files will be deleted."),
                     args: args(&["models", "rm", &model, "--yes"]),
+                    title: "Confirmed action",
                     accept: false,
                     quit: false,
                 });
@@ -468,6 +895,13 @@ impl App {
                 )?;
             }
             "Export" => {
+                if self.browser.kind == Kind::Runs
+                    && row
+                        .as_ref()
+                        .is_some_and(|r| results::session_id(r).is_none())
+                {
+                    return Err("This legacy workload has no session evidence to export.".into());
+                }
                 let id = selected()?;
                 self.form(
                     "Export evidence (includes prompts and output)",
@@ -506,7 +940,7 @@ impl App {
                     true,
                     None,
                 )?;
-                self.text("Activity", String::new())?;
+                self.show_conversation()?;
             }
             "Rename" => {
                 let row = row.ok_or("Choose a conversation first.")?;
@@ -552,6 +986,7 @@ impl App {
                 self.confirm = Some(Confirm {
                     question: format!("Delete {id}? This cannot be undone."),
                     args: argv,
+                    title: "Confirmed action",
                     accept: false,
                     quit: false,
                 });
@@ -607,6 +1042,7 @@ impl App {
                         crate::fmt_bytes(bytes)
                     ),
                     args: args(&["storage", "clean", "--yes"]),
+                    title: "Confirmed action",
                     accept: false,
                     quit: false,
                 });
@@ -628,44 +1064,19 @@ impl App {
         Ok(())
     }
     pub(super) fn accept_read(&mut self, value: Value) {
-        let completed =
-            self.status.starts_with("Completed ") || self.status.starts_with("Evidence saved");
-        let previous_status = self.status.clone();
+        // A finished read replaces only its own loading notice, never a job result or error.
+        let loading = self.status.is_empty() || self.status == "Loading…";
         self.browser.data = value.clone();
-        if self.browser.kind == Kind::Text {
-            self.browser.body = if self.browser.title == "Measurement report" {
-                format!("Model: {}\nRuntime: {}\nOutcome: {}\nFormula: {}\nSession: {}\n\nMeasurement details\n{}", string(&value["session"]["config"], "model_name"), string(&value["session"]["config"], "protocol"), string(&value["session"], "outcome"), value["session"]["formula_version"], string(&value["session"], "id"), readable(&value["report"]))
-            } else {
-                readable(&value)
-            };
-            self.status = "↑↓ / PgUp/PgDn scroll · Esc back".into();
-            if completed {
-                self.status = previous_status;
+        if matches!(self.browser.kind, Kind::Text | Kind::Messages) {
+            if self.browser.kind == Kind::Text {
+                self.browser.body = match self.browser.title.as_str() {
+                    "Measurement report" => measurement_report(&value),
+                    "Repeat samples" => repeat_samples(&value),
+                    _ => readable(&value),
+                };
             }
-            return;
-        }
-        if self.browser.kind == Kind::Messages {
-            self.browser.body = value
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|m| {
-                    format!(
-                        "{}\n{}\n\n{}",
-                        string(m, "role").to_uppercase(),
-                        if m["thinking"].as_str().is_some_and(|s| !s.is_empty()) {
-                            format!("Thinking: {}\n", string(m, "thinking"))
-                        } else {
-                            String::new()
-                        },
-                        string(m, "content")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            self.status = "Tab for Reply, Regenerate or Preset · / for tools".into();
-            if completed {
-                self.status = previous_status;
+            if loading {
+                self.status.clear();
             }
             return;
         }
@@ -709,11 +1120,10 @@ impl App {
                             format!("Group {group} · {model}")
                         },
                         format!(
-                            "{}  {} ctx  decode {}  TTFT {}",
+                            "{}  {} ctx  {}",
                             scenario,
                             item["num_ctx"],
-                            number(item, "decode_tps_median", " tok/s"),
-                            number(item, "ttft_ms_median", " ms")
+                            decode_and_ttft(item)
                         ),
                     )
                 }
@@ -742,18 +1152,21 @@ impl App {
                 value: item.clone(),
             });
         }
-        self.browser.rows = rows;
-        self.browser.move_by(0);
-        self.status = if self.browser.rows.is_empty() {
-            "No saved results here yet.".into()
-        } else if self.browser.kind == Kind::Leaderboard {
-            "Runtime-reported rates; compare within each group. Quality equivalence is unchecked."
-                .into()
+        if self.browser.kind == Kind::Runs {
+            (self.browser.rows, self.browser.run_groups) = results::group_workloads(rows);
         } else {
-            "Tab actions · / tools · Esc back".into()
-        };
-        if completed {
-            self.status = previous_status;
+            self.browser.rows = rows;
+        }
+        self.browser.move_by(0);
+        if loading {
+            self.status = if self.browser.rows.is_empty() {
+                "No saved results here yet.".into()
+            } else if self.browser.kind == Kind::Leaderboard {
+                "Runtime-reported rates; compare within each group. Quality equivalence is unchecked."
+                    .into()
+            } else {
+                String::new()
+            };
         }
     }
     pub(super) fn start_job(
@@ -784,10 +1197,16 @@ impl App {
             rate: None,
             download: None,
             answer: String::new(),
+            thinking: String::new(),
+            prompt: None,
+            timeline: Vec::new(),
             chat,
             export: export.is_some(),
+            benchmark_runtime: argv
+                .starts_with(&args(&["bench", "run"]))
+                .then_some(self.runtime),
         });
-        self.status = format!("{title} started. Ctrl-C stops; navigation stays available.");
+        self.status.clear();
         Ok(())
     }
     pub(super) fn update_job(&mut self) {
@@ -810,9 +1229,19 @@ impl App {
                         }
                     }
                     "token" | "thinking" => {
-                        if job.answer.len() < 1024 * 1024 {
-                            job.answer.push_str(&plain(&string(event, "text")));
+                        let text = if event["kind"] == "token" {
+                            &mut job.answer
+                        } else {
+                            &mut job.thinking
+                        };
+                        if text.len() < 1024 * 1024 {
+                            text.push_str(&plain(&string(event, "text")));
                         }
+                        job.phase = "Generating…".into();
+                    }
+                    "loading" => {
+                        job.phase =
+                            format!("Loading {} into memory…", plain(&string(event, "model")))
                     }
                     "scenario_started" => {
                         job.waveform.clear();
@@ -825,9 +1254,28 @@ impl App {
                             event["num_ctx"]
                         );
                     }
-                    "status" | "failed" => job.phase = plain(&string(event, "message")),
+                    "scenario_done" => {
+                        job.timeline.push(format!(
+                            "✓ {} complete",
+                            plain(&string(&event["run"], "prompt_id"))
+                        ));
+                        job.phase = "Saving results…".into();
+                        job.waveform.clear();
+                        job.rate = None;
+                    }
+                    "status" => {
+                        job.phase = plain(&string(event, "message"));
+                        if job.benchmark_runtime.is_some()
+                            && job.timeline.last() != Some(&job.phase)
+                        {
+                            job.timeline.push(job.phase.clone());
+                        }
+                    }
+                    "failed" => job.phase = plain(&string(event, "message")),
                     _ => {}
                 }
+            } else if job.benchmark_runtime.is_some() {
+                continue;
             } else if let Some(value) = value {
                 if let Some(status) = value["status"].as_str() {
                     job.phase = plain(status);
@@ -846,7 +1294,12 @@ impl App {
             self.browser.body = if job.chat {
                 job.answer.clone()
             } else {
-                format!("{}\n\n{}", job.title, job.phase)
+                format!(
+                    "{}\n\n{}\n› {}",
+                    job.title,
+                    job.timeline.join("\n"),
+                    job.phase
+                )
             };
         }
         let result = match job.task.poll() {
@@ -854,6 +1307,10 @@ impl App {
             result => result,
         };
         let job = self.job.take().unwrap();
+        if job.chat && self.browser.kind == Kind::Messages {
+            // Keep the finished turn on screen, then reload what SQLite actually saved.
+            self.browser.data = Value::Array(pending_turn(&self.browser.data, &job));
+        }
         match result {
             Ok(Some(value)) => {
                 if job.chat {
@@ -861,7 +1318,17 @@ impl App {
                         self.conversation = Some(id.into());
                     }
                 }
-                self.last_job = readable(&value);
+                self.last_job = if let Some(runtime) = job.benchmark_runtime {
+                    format!(
+                        "{}\n\nRun timeline\n{}",
+                        benchmark_summary(&value, runtime),
+                        job.timeline.join("\n")
+                    )
+                } else if job.title == "Replay evidence offline" {
+                    measurement_details(&value)
+                } else {
+                    readable(&value)
+                };
                 self.status = if job.task.cancelled {
                     "Stopped; partial chat / completed results retained.".into()
                 } else {
@@ -873,16 +1340,12 @@ impl App {
                         value["saved"].as_str().unwrap_or_default()
                     );
                 }
-                if job.chat && self.browser.title == "Activity" {
-                    if let Some(id) = self.conversation.clone() {
-                        if let Err(e) =
-                            self.open("Conversation", Kind::Messages, args(&["chat", "show", &id]))
-                        {
-                            self.status = e;
-                        }
-                    }
+                if job.chat && self.browser.kind == Kind::Messages {
+                    self.reload_conversation();
                 } else if self.browser.title == "Activity" {
                     self.browser.body = self.last_job.clone();
+                    // The finished summary leads; the timeline follows it.
+                    self.browser.scroll = 0;
                 } else if matches!(
                     self.browser.kind,
                     Kind::Models | Kind::Presets | Kind::Chats
@@ -899,7 +1362,10 @@ impl App {
             Err(error) => {
                 self.last_job = error.clone();
                 self.status = error.clone();
-                if self.browser.title == "Activity" {
+                if job.chat && self.browser.kind == Kind::Messages {
+                    // A stopped reply keeps its saved partial answer.
+                    self.reload_conversation();
+                } else if self.browser.title == "Activity" {
                     self.browser.body = error;
                 }
             }
@@ -910,35 +1376,33 @@ impl App {
         if self.job.is_none() {
             return true;
         }
-        self.confirm = Some(Confirm { question: "Stop the running job and quit? Completed results and graceful partial output are retained.".into(), args: Vec::new(), accept: false, quit: true });
+        self.confirm = Some(Confirm { question: "Stop the running job and quit? Completed results and graceful partial output are retained.".into(), args: Vec::new(), title: "Quit", accept: false, quit: true });
         false
     }
     pub(super) fn confirm_key(&mut self, key: KeyEvent) -> Result<bool, String> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('n') => {
-                self.confirm = None;
-                self.status = "Cancelled; nothing changed.".into();
-            }
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        let confirm = self.confirm.as_mut().unwrap();
+        let accept = match key.code {
+            KeyCode::Enter => confirm.accept,
+            KeyCode::Char('y' | 'Y') if !control => true,
+            KeyCode::Esc | KeyCode::Char('n' | 'N') => false,
+            KeyCode::Char('c') if control => false,
             KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
-                let confirm = self.confirm.as_mut().unwrap();
                 confirm.accept = !confirm.accept;
+                return Ok(false);
             }
-            KeyCode::Enter => {
-                let confirm = self.confirm.take().unwrap();
-                if confirm.accept {
-                    if confirm.quit {
-                        self.quitting = true;
-                        if let Some(job) = &mut self.job {
-                            job.task.stop();
-                        }
-                    } else {
-                        self.start_job("Confirmed action", confirm.args, false, None)?;
-                    }
-                } else {
-                    self.status = "Cancelled; nothing changed.".into();
-                }
+            _ => return Ok(false),
+        };
+        let confirm = self.confirm.take().unwrap();
+        if !accept {
+            self.status = "Cancelled; nothing changed.".into();
+        } else if confirm.quit {
+            self.quitting = true;
+            if let Some(job) = &mut self.job {
+                job.task.stop();
             }
-            _ => {}
+        } else {
+            self.start_job(confirm.title, confirm.args, false, None)?;
         }
         Ok(false)
     }
@@ -946,20 +1410,20 @@ impl App {
         if key.code == KeyCode::Esc
             || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
         {
-            let form = self.form.as_ref().unwrap();
-            if form.chooser.is_none() {
-                self.drafts.insert(
-                    form.draft_key.clone(),
-                    form.fields.iter().map(|f| f.value.clone()).collect(),
-                );
-                self.form = None;
+            if self.form.as_mut().unwrap().chooser.take().is_some() {
                 return Ok(());
             }
+            let form = self.form.as_ref().unwrap();
+            self.drafts.insert(
+                form.draft_key.clone(),
+                form.fields.iter().map(|f| f.value.clone()).collect(),
+            );
+            self.form = None;
+            return Ok(());
         }
         let form = self.form.as_mut().unwrap();
         if let Some(chooser) = &mut form.chooser {
             match key.code {
-                KeyCode::Esc => form.chooser = None,
                 KeyCode::Enter => {
                     if let Some(row) = chooser.row() {
                         let field = &mut form.fields[form.selected];
@@ -1184,7 +1648,10 @@ impl App {
             self.start_job(&title, argv, chat, export)?;
             self.drafts.remove(&draft_key);
             self.form = None;
-            if show_activity {
+            if chat {
+                self.job.as_mut().unwrap().prompt = Some(v[1].clone());
+                self.show_conversation()?;
+            } else if show_activity {
                 self.text("Activity", String::new())?;
             }
             Ok(())
@@ -1203,7 +1670,10 @@ impl App {
             .form
             .as_ref()
             .and_then(|f| f.fields.get(f.selected))
-            .is_some_and(|f| matches!(f.label, "Message" | "Prompt" | "System prompt"));
+            .is_some_and(|f| matches!(f.label, "Message" | "Prompt" | "System prompt"))
+            || (self.form.is_none()
+                && self.command.is_none()
+                && self.browser.kind == Kind::Messages);
         let text = if multiline {
             plain(text)
         } else {
@@ -1219,16 +1689,27 @@ impl App {
                     field.cursor += text.len();
                 }
             }
-        } else {
+        } else if self.confirm.is_none() {
+            if self.command.is_none() && text.starts_with('/') {
+                self.command = Some(text[1..].to_owned());
+                self.command_selected = 0;
+                self.actions_focus = None;
+                return;
+            }
+            if self.command.is_none() && !self.browser.typing() {
+                return;
+            }
             self.command
                 .as_mut()
                 .unwrap_or(&mut self.browser.query)
                 .push_str(&text);
             self.browser.selected = 0;
+            self.command_selected = 0;
         }
     }
     pub(super) fn draw_activity(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let text = if let Some(job) = &self.job {
+        let mut lines = Vec::new();
+        if let Some(job) = &self.job {
             let progress = if let Some((done, total)) = job.download {
                 let fraction = done as f64 / total as f64;
                 format!(
@@ -1247,56 +1728,88 @@ impl App {
                         .unwrap_or_default()
                 )
             };
-            format!(
-                "{} · {}s · Ctrl-C stop · /activity\n{}\n{}\n{}",
-                job.title,
-                job.task.started.elapsed().as_secs(),
-                job.phase,
-                progress,
-                self.status
-            )
-        } else {
-            self.status.clone()
-        };
-        frame.render_widget(
-            Paragraph::new(plain(&text)).wrap(Wrap { trim: false }),
-            area,
+            let title = if area.width < 48 {
+                "Working"
+            } else {
+                &job.title
+            };
+            let stop = if job.task.stopped.is_some() {
+                "Ctrl-C force stop"
+            } else {
+                "Ctrl-C stop"
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{} {title}", spinner(job.task.started)),
+                    ACCENT.add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!(" · {} · {stop}", elapsed(job.task.started)), DIM),
+            ]));
+            lines.push(Line::from(plain(&job.phase)));
+            if !progress.trim().is_empty() {
+                lines.push(Line::styled(progress, ACCENT));
+            }
+        } else if let Some(read) = self.read.as_ref().filter(|_| self.status == "Loading…") {
+            lines.push(Line::styled(
+                format!("{} Loading…", spinner(read.started)),
+                ACCENT,
+            ));
+            return frame.render_widget(Paragraph::new(lines), area);
+        }
+        let style =
+            if self.status.starts_with("Completed ") || self.status.starts_with("Evidence saved") {
+                ACCENT.add_modifier(Modifier::BOLD)
+            } else if self.status == EXIT_HINT {
+                DIM
+            } else {
+                Style::default()
+            };
+        lines.extend(
+            plain(&self.status)
+                .lines()
+                .map(|line| Line::styled(line.to_owned(), style)),
         );
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
     pub(super) fn draw_form(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         if let Some(confirm) = &self.confirm {
-            frame.render_widget(ratatui::widgets::Clear, area);
-            let lines = vec![
-                Line::from(plain(&confirm.question)),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled(
-                        " [Cancel] ",
-                        if !confirm.accept {
-                            Style::default().fg(ACCENT).add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                    Span::styled(
-                        " [Confirm] ",
-                        if confirm.accept {
-                            Style::default()
-                                .fg(Color::LightRed)
-                                .add_modifier(Modifier::REVERSED)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                ]),
-                Line::from("← → choose · Enter accept · Esc cancel"),
-            ];
-            frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+            let block = Block::default()
+                .borders(Borders::TOP)
+                .border_style(ACCENT)
+                .title(" Confirm action ");
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            let question = Paragraph::new(plain(&confirm.question)).wrap(Wrap { trim: false });
+            let height = question.line_count(inner.width) as u16;
+            // Choices sit right under the question, like Claude Code's permission prompts.
+            let [ask, _, choices, hint] = Layout::vertical([
+                Constraint::Length(height),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .areas(inner);
+            frame.render_widget(question, ask);
+            let button = |label: &'static str, on: bool| {
+                Span::styled(label, if on { SELECTED } else { DIM })
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    button(" Cancel ", !confirm.accept),
+                    Span::raw("  "),
+                    button(" Confirm ", confirm.accept),
+                ])),
+                choices,
+            );
+            frame.render_widget(
+                Paragraph::new(Line::styled("← → choose · Enter · y/n · Esc cancel", DIM)),
+                hint,
+            );
             return;
         }
         let Some(form) = &mut self.form else { return };
-        frame.render_widget(ratatui::widgets::Clear, area);
         if let Some(browser) = &mut form.chooser {
+            let parts = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).split(area);
             let indices = browser.filtered();
             let items: Vec<_> = indices
                 .iter()
@@ -1307,37 +1820,58 @@ impl App {
                 .select((!indices.is_empty()).then_some(browser.selected));
             frame.render_stateful_widget(
                 List::new(items)
-                    .block(Block::default().title(format!(
-                        "Choose {} · search: {}",
-                        browser.title, browser.query
-                    )))
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .border_style(ACCENT)
+                            .title(format!(" Choose {} ", browser.title)),
+                    )
                     .highlight_symbol(" › ")
-                    .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::REVERSED)),
-                area,
+                    .highlight_style(SELECTED),
+                parts[0],
                 &mut browser.state,
+            );
+            let input = if browser.query.is_empty() {
+                Line::from(vec![
+                    Span::styled("› ", ACCENT),
+                    Span::styled("Type to filter", DIM),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("› ", ACCENT),
+                    Span::styled("Filter  ", DIM),
+                    Span::raw(plain(&browser.query)),
+                ])
+            };
+            frame.render_widget(
+                Paragraph::new(vec![
+                    input,
+                    Line::styled("↑↓ browse · Enter select · Esc back", DIM),
+                ]),
+                parts[1],
             );
             return;
         }
         let parts = Layout::vertical([
-            Constraint::Length(2),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(3),
         ])
         .split(area);
         frame.render_widget(
-            Paragraph::new(form.title.clone()).style(Style::default().fg(ACCENT)),
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(ACCENT)
+                .title(format!(" {} ", form.title)),
             parts[0],
         );
+        // Right-aligned labels put every value in one column.
+        let width = form.fields.iter().map(|f| f.label.len()).max().unwrap_or(0);
         let mut lines = Vec::new();
         let mut caret = None;
         for (i, field) in form.fields.iter().enumerate() {
-            let suffix = if field.choices.is_empty() {
-                ""
-            } else {
-                "  [Enter chooses]"
-            };
             let available = parts[1].width.saturating_sub(4) as usize;
-            let room = available.saturating_sub(field.label.len() + 3).max(1);
+            let room = available.saturating_sub(width + 3).max(1);
             let rendered = if field.choices.is_empty() {
                 field.value.clone()
             } else {
@@ -1365,27 +1899,34 @@ impl App {
                     .skip(start)
                     .map(|c| if c == '\n' || c == '\t' { ' ' } else { c })
                     .collect();
-                caret = Some((
-                    i,
-                    (field.label.len() + 5 + Line::from(prefix).width()) as u16,
-                ));
+                caret = Some((i, (width + 5 + Line::from(prefix).width()) as u16));
             }
-            lines.push(
-                ListItem::new(format!("{}: {}{}", field.label, plain(&display), suffix)).style(
-                    if i == form.selected {
-                        Style::default().fg(ACCENT)
-                    } else {
-                        Style::default()
-                    },
-                ),
-            );
+            let mut spans = vec![
+                Span::styled(format!("{:>width$}: ", field.label), DIM),
+                Span::raw(plain(&display)),
+            ];
+            if !field.choices.is_empty() {
+                spans.push(Span::styled(" ▾", DIM));
+            }
+            lines.push(ListItem::new(Line::from(spans)));
         }
-        lines.push(ListItem::new("[Submit]"));
+        let submit = match form.submit {
+            Submit::Bench => "Run benchmark",
+            Submit::Chat => "Send",
+            Submit::Leaderboard => "Show leaderboard",
+            Submit::Preset => "Save preset",
+            Submit::Export(_) => "Export",
+            _ => "Submit",
+        };
+        lines.push(ListItem::new(Line::from(vec![
+            Span::raw(" ".repeat(width + 2)),
+            Span::styled(format!("[{submit}]"), ACCENT.add_modifier(Modifier::BOLD)),
+        ])));
         let mut state = ListState::default().with_selected(Some(form.selected));
         frame.render_stateful_widget(
             List::new(lines)
                 .highlight_symbol(" › ")
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
+                .highlight_style(SELECTED),
             parts[1],
             &mut state,
         );
@@ -1400,9 +1941,14 @@ impl App {
         }
         frame.render_widget(
             Paragraph::new(if form.error.is_empty() {
-                "Tab / ↑↓ fields · Enter choose / submit · Esc back · Ctrl-U clear".into()
+                let enter = match form.fields.get(form.selected) {
+                    None => "Enter confirm",
+                    Some(field) if field.choices.is_empty() => "Type to edit · Ctrl-U clear",
+                    Some(_) => "Enter choose",
+                };
+                Text::styled(format!("{enter}\nTab / ↑↓ fields · Esc back"), DIM)
             } else {
-                form.error.clone()
+                Text::raw(form.error.clone())
             })
             .wrap(Wrap { trim: true }),
             parts[2],

@@ -34,7 +34,7 @@ def run_suite(request, path, files, config, identity, source_paths, mx, stream, 
                     mx.reset_peak_memory()
                     start = time.perf_counter_ns()
                     with contextlib.redirect_stdout(sys.stderr):
-                        model, tokenizer = load(str(path), tokenizer_config={"trust_remote_code": False, "local_files_only": True}, lazy=True)
+                        model, tokenizer = load(str(path))
                     mx.eval(model.parameters())
                     mx.synchronize(stream)
                     emit("mlx_load", duration_ns=time.perf_counter_ns() - start, baseline=baseline, memory=memory(mx))

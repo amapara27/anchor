@@ -5,12 +5,12 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { TerminalScreen } from './terminal-screen.mjs';
 
-export function terminalDriver({ root, scratch, env, commands, children }) {
+export function terminalDriver({ root, binary, scratch, env, commands, children }) {
     const bridge = path.join(scratch, 'pty');
     const flags = process.platform === 'darwin' ? ['-isysroot', execFileSync('xcrun', ['--sdk', 'macosx', '--show-sdk-path'], { encoding: 'utf8' }).trim()] : ['-lutil'];
     execFileSync('cc', [...flags, '-Wall', '-Wextra', '-O2', path.join(root, 'tests/e2e/pty.c'), '-o', bridge]);
     return function terminal(args = []) {
-        const child = spawn(bridge, [path.join(root, 'target/debug/anchor'), ...args], { env: { ...env, TERM: 'xterm-256color' }, stdio: ['pipe', 'pipe', 'pipe'] });
+        const child = spawn(bridge, [binary, ...args], { env: { ...env, TERM: 'xterm-256color' }, stdio: ['pipe', 'pipe', 'pipe'] });
         children.add(child);
         let raw = '', stderr = '', done = false;
         const screen = new TerminalScreen();

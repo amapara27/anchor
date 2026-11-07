@@ -1,5 +1,6 @@
 """Exclusive native compute worker. stdout is versioned NDJSON; timings are not HTTP latency."""
 import contextlib
+from functools import partial
 import gc
 import hashlib
 import importlib.metadata
@@ -34,6 +35,8 @@ def digest(path):
 
 def checkpoint(path):
     config = json.loads((path / "config.json").read_text())
+    if config.get("model_file") is not None:
+        raise ValueError("Custom MLX model code is not supported")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", config.get("model_type", "")):
         raise ValueError("The checkpoint must name a built-in MLX-LM model type")
     if not list(path.glob("*.safetensors")):
@@ -181,11 +184,14 @@ def main():
         raise ValueError("Native workload exceeds the checkpoint context capacity")
     with contextlib.redirect_stdout(sys.stderr):
         import mlx.core as mx
-        from mlx_lm import load
+        from mlx_lm import load as mlx_load
         from mlx_lm.models.cache import make_prompt_cache
         import mlx_lm.models.cache as cache_module
         import mlx_lm.utils as utils
         utils._get_classes(config)
+    # MLX-LM re-reads config.json at load; force off its separate custom-code hook.
+    load = partial(mlx_load, model_config={"model_file": None},
+                   tokenizer_config={"trust_remote_code": False, "local_files_only": True}, lazy=True)
     if not mx.metal.is_available():
         raise ValueError("Native MLX measurements require an Apple Silicon GPU")
     stream = mx.new_stream(mx.gpu)
@@ -231,7 +237,7 @@ def main():
                     emit("window_reset", baseline=baseline, after_reset=memory(mx), stream=str(stream))
                     start = time.perf_counter_ns() - origin
                     with contextlib.redirect_stdout(sys.stderr):
-                        model, tokenizer = load(str(path), tokenizer_config={"trust_remote_code": False, "local_files_only": True}, lazy=True)
+                        model, tokenizer = load(str(path))
                     mx.eval(model.parameters())
                     mx.synchronize(stream)
                     end = time.perf_counter_ns() - origin

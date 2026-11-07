@@ -1,30 +1,40 @@
 //! Keyboard workspace over the existing CLI commands and shared Rust services.
 use std::io::{self, IsTerminal};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use serde_json::Value;
 
-const ACCENT: Color = Color::LightMagenta;
+const ACCENT: Style = Style::new().fg(Color::Rgb(151, 128, 212));
+// Mid lavender stays legible on both light and dark terminal profiles.
+const BRAND: Style = ACCENT.add_modifier(Modifier::BOLD);
+// SGR faint dims the terminal's own foreground, so secondary text follows its theme.
+const DIM: Style = Style::new().add_modifier(Modifier::DIM);
+const SELECTED: Style = Style::new()
+    .fg(Color::Rgb(196, 183, 251))
+    .bg(Color::Rgb(47, 36, 74))
+    .add_modifier(Modifier::BOLD);
+mod results;
 mod screens;
 mod task;
 use screens::{Confirm, Form, Job, Kind};
 use task::Task;
+const EXIT_HINT: &str = "Press Ctrl-C again to exit";
 const COMMANDS: &[(&str, &str)] = &[
     ("model", "Choose an installed model"),
-    ("models", "Installed models"),
-    ("library", "Find and download models"),
-    ("results", "Choose a benchmarked model"),
-    ("runtime", "Switch Ollama / MLX"),
     ("bench", "Run a suite or workload"),
+    ("results", "Browse saved measurements"),
+    ("chat", "Chat with the active model"),
+    ("runtime", "Choose Ollama or MLX"),
+    ("models", "Manage installed models"),
+    ("library", "Find and download models"),
     ("validate", "Validate Ollama measurements"),
     ("leaderboard", "All measured models, grouped for comparison"),
     ("sessions", "Saved runs, including stopped / failed"),
-    ("chat", "Chat with the active model"),
     ("history", "Continue a saved conversation"),
     ("compare", "Try one prompt on two Ollama models"),
     ("fit", "Estimate memory at a context length"),
@@ -46,6 +56,13 @@ fn plain(text: &str) -> String {
 fn string(value: &Value, key: &str) -> String {
     value[key].as_str().unwrap_or_default().to_owned()
 }
+fn runtime_name(runtime: &str) -> &'static str {
+    if runtime == "mlx" {
+        "MLX"
+    } else {
+        "Ollama"
+    }
+}
 
 fn model_label(id: &str) -> String {
     let path = std::path::Path::new(id);
@@ -65,6 +82,43 @@ fn model_label(id: &str) -> String {
                 .to_string_lossy()
                 .into_owned()
         })
+}
+
+fn ago(timestamp_ms: i64) -> String {
+    match crate::now_ms().saturating_sub(timestamp_ms) / 60_000 {
+        ..=0 => "<1m ago".into(),
+        minutes @ 1..=59 => format!("{minutes}m ago"),
+        minutes @ 60..=1439 => format!("{}h ago", minutes / 60),
+        minutes => format!("{}d ago", minutes / 1440),
+    }
+}
+fn elapsed(started: Instant) -> String {
+    match started.elapsed().as_secs() {
+        s @ 0..=59 => format!("{s}s"),
+        s => format!("{}m {:02}s", s / 60, s % 60),
+    }
+}
+fn spinner(started: Instant) -> char {
+    let frames = crate::ui::SPINNER;
+    frames[(started.elapsed().as_millis() / 90) as usize % frames.len()]
+}
+/// Pads or truncates to `width` terminal cells, so wide glyphs keep columns aligned.
+fn fit(text: &str, width: usize) -> String {
+    let full = Span::raw(text).width();
+    if full <= width {
+        return format!("{text}{}", " ".repeat(width - full));
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = Span::raw(c.to_string()).width();
+        if used + w + 1 > width {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    format!("{out}…{}", " ".repeat(width.saturating_sub(used + 1)))
 }
 
 #[derive(Clone)]
@@ -88,18 +142,12 @@ impl Source {
             Self::Benchmarked => "Benchmarked",
         }
     }
-    fn next(self, back: bool) -> Self {
-        match (self, back) {
-            (Self::Installed, false) | (Self::Benchmarked, true) => Self::Library,
-            (Self::Library, false) | (Self::Installed, true) => Self::Benchmarked,
-            _ => Self::Installed,
-        }
-    }
 }
 #[derive(Clone)]
 struct Browser {
     source: Source,
     rows: Vec<Row>,
+    run_groups: Vec<results::RunGroup>,
     query: String,
     selected: usize,
     state: ListState,
@@ -110,12 +158,14 @@ struct Browser {
     data: Value,
     scroll: usize,
     scroll_max: usize,
+    on_model: Option<&'static str>,
 }
 impl Browser {
     fn new(source: Source) -> Self {
         Self {
             source,
             rows: Vec::new(),
+            run_groups: Vec::new(),
             query: String::new(),
             selected: 0,
             state: ListState::default(),
@@ -126,6 +176,13 @@ impl Browser {
             data: Value::Null,
             scroll: 0,
             scroll_max: 0,
+            on_model: None,
+        }
+    }
+    fn home() -> Self {
+        Self {
+            kind: Kind::Home,
+            ..Self::new(Source::Installed)
         }
     }
     fn filtered(&self) -> Vec<usize> {
@@ -144,6 +201,16 @@ impl Browser {
     fn row(&self) -> Option<&Row> {
         self.filtered().get(self.selected).map(|i| &self.rows[*i])
     }
+    fn searchable(&self) -> bool {
+        !matches!(
+            self.kind,
+            Kind::Home | Kind::Runtimes | Kind::Text | Kind::Messages
+        )
+    }
+    /// Lists filter by typed text; a conversation uses it as the reply draft.
+    fn typing(&self) -> bool {
+        self.searchable() || self.kind == Kind::Messages
+    }
     fn move_by(&mut self, n: isize) {
         let count = self.filtered().len();
         self.selected = self
@@ -154,7 +221,6 @@ impl Browser {
 }
 struct App {
     browser: Browser,
-    saved: Vec<Browser>,
     runtime: &'static str,
     model: Option<String>,
     read: Option<Task>,
@@ -162,7 +228,6 @@ struct App {
     page_size: usize,
     command: Option<String>,
     command_selected: usize,
-    help: bool,
     back: Vec<Browser>,
     form: Option<Form>,
     confirm: Option<Confirm>,
@@ -172,12 +237,12 @@ struct App {
     quitting: bool,
     conversation: Option<String>,
     drafts: std::collections::HashMap<String, Vec<String>>,
+    exit_armed: Option<Instant>,
 }
 impl App {
     fn new() -> Self {
         Self {
-            browser: Browser::new(Source::Installed),
-            saved: Vec::new(),
+            browser: Browser::home(),
             runtime: "ollama",
             model: None,
             read: None,
@@ -185,7 +250,6 @@ impl App {
             page_size: 10,
             command: None,
             command_selected: 0,
-            help: false,
             back: Vec::new(),
             form: None,
             confirm: None,
@@ -195,37 +259,84 @@ impl App {
             quitting: false,
             conversation: None,
             drafts: std::collections::HashMap::new(),
+            exit_armed: None,
         }
     }
     fn commands(&self) -> Vec<(&'static str, &'static str)> {
-        let query = self.command.as_deref().unwrap_or_default();
-        COMMANDS
+        let query = self
+            .command
+            .as_deref()
+            .unwrap_or_default()
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let mut commands: Vec<_> = COMMANDS
             .iter()
             .copied()
-            .filter(|(name, _)| name.starts_with(query))
-            .collect()
+            .filter(|(name, detail)| {
+                name.contains(&query) || detail.to_ascii_lowercase().contains(&query)
+            })
+            .collect();
+        commands.sort_by_key(|(name, _)| {
+            if *name == query {
+                0
+            } else if name.starts_with(&query) {
+                1
+            } else {
+                2
+            }
+        });
+        commands
     }
-    fn change_runtime(&mut self) -> Result<(), String> {
+    /// Row actions wait for a list load so they never act on stale rows; conversation
+    /// actions use the conversation ID, so they stay usable while it reloads.
+    fn ready(&self) -> bool {
+        self.read.is_none() || self.browser.kind == Kind::Messages
+    }
+    fn change_runtime(&mut self, runtime: &'static str) {
+        if runtime == self.runtime {
+            return;
+        }
+        self.read = None;
         self.actions_focus = None;
-        self.runtime = if self.runtime == "ollama" {
-            "mlx"
-        } else {
-            "ollama"
-        };
+        self.runtime = runtime;
         self.model = None;
-        self.saved.clear();
-        self.browser = Browser::new(self.browser.source);
-        self.load()
+        self.conversation = None;
+        self.back.clear();
+        self.browser = Browser::home();
+        self.status = format!("Active runtime: {}", runtime_name(runtime));
     }
-    fn slash(&mut self, name: &str) -> Result<bool, String> {
-        self.help = false;
+    fn slash(&mut self, name: &'static str) -> Result<bool, String> {
+        self.actions_focus = None;
         match name {
-            "model" | "models" => self.switch(Source::Installed)?,
+            "model" => self.pick_model("model")?,
+            "models" => self.switch(Source::Installed)?,
             "library" => self.switch(Source::Library)?,
             "results" => self.switch(Source::Benchmarked)?,
-            "runtime" => self.change_runtime()?,
-            "help" => self.help = true,
+            "runtime" => self.runtime_picker()?,
+            "help" => self.text(
+                "Keyboard controls",
+                concat!(
+                    "/                  Find a command\n",
+                    "Tab                Complete a command or open actions\n",
+                    "↑ ↓ / PgUp PgDn    Browse or scroll\n",
+                    "Enter              Select or run\n",
+                    "Type               Filter a list, or reply in a conversation\n",
+                    "Esc                Close and return\n",
+                    "y / n              Accept or cancel a confirmation\n",
+                    "Ctrl-L             Refresh the current view\n",
+                    "Ctrl-C             Stop a job, clear input, or press twice to quit\n",
+                    "Ctrl-D             Quit"
+                )
+                .into(),
+            )?,
             "quit" => return Ok(self.quit()),
+            "bench" | "chat" | "validate" | "compare" | "fit"
+                if self.model.is_none() && (name == "bench" || self.runtime == "ollama") =>
+            {
+                self.pick_model(name)?;
+            }
             _ => self.tool(name)?,
         }
         Ok(false)
@@ -257,20 +368,44 @@ impl App {
         Ok(())
     }
     fn switch(&mut self, source: Source) -> Result<(), String> {
-        self.actions_focus = None;
-        if self.browser.kind != Kind::Models {
-            self.back.push(self.browser.clone());
-            self.browser = Browser::new(source);
-        }
-        let previous = std::mem::replace(&mut self.browser, Browser::new(source));
-        self.saved.retain(|b| b.source != previous.source);
-        self.saved.push(previous);
-        if let Some(index) = self.saved.iter().position(|b| b.source == source) {
-            self.browser = self.saved.remove(index);
-        }
+        self.open(source.title(), Kind::Models, Vec::new())?;
+        self.browser.source = source;
         self.load()
     }
+    fn pick_model(&mut self, after: &'static str) -> Result<(), String> {
+        self.switch(Source::Installed)?;
+        self.browser.title = "Choose a model".into();
+        self.browser.on_model = Some(after);
+        Ok(())
+    }
+    fn go_back(&mut self) {
+        self.actions_focus = None;
+        if let Some(previous) = self.back.pop() {
+            self.read = None;
+            self.browser = previous;
+            self.status.clear();
+            let empty = if self.browser.kind == Kind::Messages {
+                self.browser.data.is_null()
+            } else {
+                self.browser.rows.is_empty() && self.browser.body.is_empty()
+            };
+            if empty {
+                if let Err(error) = self.load() {
+                    self.status = error;
+                }
+            }
+        }
+    }
     fn update(&mut self) {
+        if self
+            .exit_armed
+            .is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
+        {
+            self.exit_armed = None;
+            if self.status == EXIT_HINT {
+                self.status.clear();
+            }
+        }
         self.update_job();
         let result = self.read.as_mut().and_then(|read| match read.poll() {
             Ok(None) => None,
@@ -326,7 +461,15 @@ impl App {
                                     crate::fmt_bytes(bytes)
                                 )
                             } else if self.browser.source == Source::Benchmarked {
-                                "saved measurements".to_owned()
+                                value
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter(|run| run["model_name"].as_str() == Some(&id))
+                                    .filter_map(|run| run["updated_at"].as_i64())
+                                    .max()
+                                    .map(|t| format!("last measured {}", ago(t)))
+                                    .unwrap_or_default()
                             } else {
                                 let params = item["parameter_size"].as_str().unwrap_or("");
                                 let quant = item["quantization"].as_str().unwrap_or("");
@@ -346,13 +489,17 @@ impl App {
                     rows.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
                     self.browser.rows = rows;
                     self.browser.move_by(0);
-                    if !self.status.starts_with("Completed ")
-                        && !self.status.starts_with("Evidence saved")
-                    {
+                    // A finished read replaces only its own loading notice, never a job result.
+                    if self.status.is_empty() || self.status == "Loading…" {
                         self.status = if self.browser.rows.is_empty() {
-                            "No models here. Browse Library or switch runtime with Ctrl-R.".into()
+                            match self.browser.source {
+                                Source::Installed => "No models here. Try /library or /runtime.",
+                                Source::Library => "No models in the library.",
+                                Source::Benchmarked => "No saved measurements. Start with /bench.",
+                            }
+                            .into()
                         } else {
-                            "Ready".into()
+                            String::new()
                         };
                     }
                 }
@@ -362,6 +509,14 @@ impl App {
         }
     }
     fn key(&mut self, key: KeyEvent) -> Result<bool, String> {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        if control && key.code == KeyCode::Char('c') {
+            if let Some(job) = &mut self.job {
+                job.task.stop();
+                self.status = "Stopping…".into();
+                return Ok(false);
+            }
+        }
         if self.confirm.is_some() {
             return self.confirm_key(key);
         }
@@ -369,7 +524,7 @@ impl App {
             self.form_key(key)?;
             return Ok(false);
         }
-        if self.command.is_some() && !key.modifiers.contains(KeyModifiers::CONTROL) {
+        if self.command.is_some() && !control {
             match key.code {
                 KeyCode::Esc => self.command = None,
                 KeyCode::Up => self.command_selected = self.command_selected.saturating_sub(1),
@@ -385,6 +540,24 @@ impl App {
                 }
                 KeyCode::Enter => {
                     if let Some((name, _)) = self.commands().get(self.command_selected).copied() {
+                        let input = self.command.as_deref().unwrap_or_default();
+                        if let Some((_, argument)) = input.trim().split_once(char::is_whitespace) {
+                            let runtime =
+                                match (name, argument.trim().to_ascii_lowercase().as_str()) {
+                                    ("runtime", "ollama") => "ollama",
+                                    ("runtime", "mlx") => "mlx",
+                                    _ => {
+                                        return Err(if name == "runtime" {
+                                            "Use /runtime ollama or /runtime mlx.".into()
+                                        } else {
+                                            format!("/{name} opens without arguments.")
+                                        })
+                                    }
+                                };
+                            self.command = None;
+                            self.change_runtime(runtime);
+                            return Ok(false);
+                        }
                         self.command = None;
                         return self.slash(name);
                     }
@@ -402,21 +575,60 @@ impl App {
             }
             return Ok(false);
         }
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if control {
             match key.code {
+                // Like Claude Code: clear input first, then require a second press to quit.
                 KeyCode::Char('c') => {
-                    if let Some(job) = &mut self.job {
-                        job.task.stop();
-                        self.status = "Stopping…".into();
-                    } else {
+                    if self.command.take().is_some()
+                        || !std::mem::take(&mut self.browser.query).is_empty()
+                    {
+                        self.browser.selected = 0;
+                    } else if self
+                        .exit_armed
+                        .is_some_and(|t| t.elapsed() < Duration::from_secs(2))
+                    {
                         return Ok(true);
+                    } else {
+                        self.exit_armed = Some(Instant::now());
+                        self.status = EXIT_HINT.into();
                     }
                 }
                 KeyCode::Char('d') => return Ok(self.quit()),
                 KeyCode::Char('l') => self.load()?,
                 KeyCode::Char('r') => {
-                    self.change_runtime()?;
+                    self.command = None;
+                    self.runtime_picker()?;
                 }
+                _ => {}
+            }
+            return Ok(false);
+        }
+        if key.code == KeyCode::Char('/') {
+            self.actions_focus = None;
+            self.command = Some(String::new());
+            self.command_selected = 0;
+            return Ok(false);
+        }
+        if let Some(index) = self.actions_focus {
+            let actions = self.actions();
+            match key.code {
+                KeyCode::Esc => self.actions_focus = None,
+                KeyCode::Enter => {
+                    self.actions_focus = None;
+                    if self.ready() {
+                        if let Some(action) = actions.get(index) {
+                            self.action(action)?;
+                        }
+                    }
+                }
+                KeyCode::Up | KeyCode::BackTab | KeyCode::Left => {
+                    self.actions_focus = Some((index + actions.len() - 1) % actions.len());
+                }
+                KeyCode::Down | KeyCode::Tab | KeyCode::Right => {
+                    self.actions_focus = Some((index + 1) % actions.len());
+                }
+                KeyCode::Home => self.actions_focus = Some(0),
+                KeyCode::End => self.actions_focus = Some(actions.len() - 1),
                 _ => {}
             }
             return Ok(false);
@@ -424,25 +636,13 @@ impl App {
         match key.code {
             KeyCode::Tab | KeyCode::BackTab => {
                 let count = self.actions().len();
-                self.actions_focus = match (self.actions_focus, key.code == KeyCode::BackTab) {
-                    (None, false) => Some(0),
-                    (None, true) => Some(count.saturating_sub(1)),
-                    (Some(0), true) => None,
-                    (Some(n), false) if n + 1 >= count => None,
-                    (Some(n), back) => Some(if back { n - 1 } else { n + 1 }),
-                };
-            }
-            KeyCode::Enter if self.actions_focus.is_some() => {
-                let action = self.actions()[self.actions_focus.take().unwrap()];
-                self.action(action)?;
-            }
-            KeyCode::Left | KeyCode::Right if self.actions_focus.is_some() => {
-                let current = self.actions_focus.unwrap();
-                self.actions_focus = Some(if key.code == KeyCode::Left {
-                    current.saturating_sub(1)
-                } else {
-                    (current + 1).min(self.actions().len() - 1)
-                });
+                if self.ready() && count > 1 {
+                    self.actions_focus = Some(if key.code == KeyCode::BackTab {
+                        count - 1
+                    } else {
+                        0
+                    });
+                }
             }
             KeyCode::Up | KeyCode::PageUp
                 if matches!(self.browser.kind, Kind::Text | Kind::Messages) =>
@@ -479,38 +679,27 @@ impl App {
             }
             KeyCode::Home => self.browser.selected = 0,
             KeyCode::End => self.browser.selected = self.browser.filtered().len().saturating_sub(1),
-            KeyCode::Left | KeyCode::Right => {
-                if self.browser.kind == Kind::Models {
-                    self.switch(self.browser.source.next(key.code == KeyCode::Left))?;
-                }
+            KeyCode::Esc => self.go_back(),
+            KeyCode::Enter
+                if self.browser.kind == Kind::Messages && !self.browser.query.trim().is_empty() =>
+            {
+                self.reply()?
             }
-            KeyCode::Esc => {
-                if self.help {
-                    self.help = false;
-                } else if self.actions_focus.is_some() {
-                    self.actions_focus = None;
-                } else if !self.browser.query.is_empty() {
-                    self.browser.query.clear();
-                    self.browser.selected = 0;
-                } else if let Some(previous) = self.back.pop() {
-                    self.read = None;
-                    self.browser = previous;
+            KeyCode::Enter if self.ready() => {
+                if let Some(action) = self.actions().first() {
+                    if self.browser.row().is_some()
+                        || matches!(self.browser.kind, Kind::Text | Kind::Messages)
+                    {
+                        self.action(action)?;
+                    }
                 }
-            }
-            KeyCode::Enter => {
-                let action = self.actions()[0];
-                self.action(action)?;
             }
             KeyCode::Backspace => {
                 self.browser.query.pop();
                 self.browser.selected = 0;
             }
-            KeyCode::Char('/') => {
-                self.command = Some(String::new());
-                self.command_selected = 0;
-            }
             KeyCode::Char(c) => {
-                if self.browser.kind != Kind::Text {
+                if self.browser.typing() {
                     self.browser.query.push(c);
                 }
                 self.browser.selected = 0;
@@ -523,104 +712,408 @@ impl App {
         let area = frame.area();
         if area.width < 36 || area.height < 10 {
             frame.render_widget(
-                Paragraph::new("Anchor\nEnlarge to 36 columns × 10 rows.\nCtrl-C exits."),
+                Paragraph::new("Anchor\nEnlarge to 36 columns × 10 rows.\nCtrl-C stops or exits."),
                 area,
             );
             return;
         }
-        let parts = Layout::vertical([
-            Constraint::Length(2),
-            Constraint::Length(2),
-            Constraint::Length(
-                if matches!(self.browser.kind, Kind::Text | Kind::Messages)
-                    && self.command.is_none()
-                {
-                    0
-                } else {
-                    3
-                },
-            ),
+        let focused = self.form.is_some() || self.confirm.is_some();
+        let home = self.browser.kind == Kind::Home && !focused;
+        let mark = if area.height >= 14 {
+            &[
+                "    ▄▀▄    ",
+                "   ▄▄█▄▄   ",
+                "     █     ",
+                "▄█▄  █  ▄█▄",
+                " ▀▀▄▄█▄▄▀▀ ",
+            ][..]
+        } else {
+            &["    ▄▀▄    ", "   ▄▄█▄▄   ", " ▀▄▄▄█▄▄▄▀ "][..]
+        };
+        let header_height = mark.len() as u16;
+        // One prompt shape on every screen, so it never jumps while navigating.
+        let accepts_input = self.actions_focus.is_none()
+            && (self.command.is_some() || home || self.browser.typing());
+        // Input surfaces share one ruled prompt; read-only views keep just the hint row.
+        let framed_prompt = accepts_input && area.height >= 14;
+        let prompt_height = if focused {
+            0
+        } else if framed_prompt {
+            4
+        } else if accepts_input {
+            2
+        } else {
+            1
+        };
+        let available = area
+            .height
+            .saturating_sub(header_height + prompt_height + 1);
+        let commands = self.commands();
+        let activity_height: u16 = if self.job.is_some() && area.height >= 16 {
+            5
+        } else {
+            2
+        };
+        let activity_height = activity_height
+            .min(available.saturating_sub(if self.command.is_some() { 2 } else { 0 }));
+        let menu_height = if self.command.is_some() {
+            (commands.len().clamp(1, 8) as u16 + 1).min(available - activity_height)
+        } else {
+            0
+        };
+        let area = Rect {
+            x: area.x + 1,
+            width: area.width - 2,
+            ..area
+        };
+        let [header, content, activity, menu, prompt] = Layout::vertical([
+            Constraint::Length(header_height),
             Constraint::Min(1),
-            Constraint::Length(if self.job.is_some() { 6 } else { 2 }),
-            Constraint::Length(2),
+            Constraint::Length(activity_height),
+            Constraint::Length(menu_height),
+            Constraint::Length(prompt_height),
         ])
-        .split(area);
+        .areas(area);
+        let runtime = |id, label: &str| {
+            if self.runtime == id {
+                Span::styled(format!("[{label}]"), SELECTED)
+            } else {
+                Span::styled(label.to_owned(), DIM)
+            }
+        };
+        let model = self
+            .model
+            .as_deref()
+            .map(|m| plain(&model_label(m)).replace(['\n', '\t'], " "));
+        let model_span = match &model {
+            Some(model) => Span::raw(model.clone()),
+            None => Span::styled("None selected", DIM),
+        };
+        let model_line = if area.width < 44 {
+            vec![Span::styled("  /model  ", DIM), model_span]
+        } else {
+            vec![
+                Span::styled("  Model  ", DIM),
+                model_span,
+                Span::styled("  /model", DIM),
+            ]
+        };
+        let mut heading = vec![
+            Line::from(vec![
+                Span::styled(mark[0], BRAND),
+                Span::raw("  "),
+                Span::styled("Anchor", Style::new().add_modifier(Modifier::BOLD)),
+                Span::styled(concat!(" v", env!("CARGO_PKG_VERSION")), DIM),
+            ]),
+            Line::from(vec![
+                Span::styled(mark[1], BRAND),
+                Span::raw("  "),
+                runtime("ollama", "Ollama"),
+                Span::raw(" "),
+                runtime("mlx", "MLX"),
+                Span::styled(" /runtime", DIM),
+            ]),
+            Line::from([vec![Span::styled(mark[2], BRAND)], model_line].concat()),
+        ];
+        heading.extend(mark.iter().skip(3).map(|line| Line::styled(*line, BRAND)));
+        frame.render_widget(Paragraph::new(heading), header);
+
+        self.page_size = content
+            .height
+            .saturating_sub(if focused { 3 } else { 1 })
+            .max(1) as usize;
+        if focused {
+            self.draw_form(frame, content);
+        } else if let Some(index) = self.actions_focus {
+            let title = self
+                .browser
+                .row()
+                .map(|row| row.label.as_str())
+                .unwrap_or(&self.browser.title);
+            let mut state = ListState::default().with_selected(Some(index));
+            frame.render_stateful_widget(
+                List::new(self.actions())
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .title(format!(" Actions · {title} ")),
+                    )
+                    .highlight_symbol(" › ")
+                    .highlight_style(SELECTED),
+                content,
+                &mut state,
+            );
+        } else if !home {
+            self.draw_browser(frame, content);
+        }
+        self.draw_activity(frame, activity);
+
+        if self.command.is_some() {
+            let items = if commands.is_empty() {
+                vec![ListItem::new(Line::styled("No matching commands", DIM))]
+            } else {
+                commands
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, detail))| {
+                        ListItem::new(Line::from(vec![
+                            Span::styled(
+                                format!("/{name:<13} "),
+                                Style::new().add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                *detail,
+                                if i == self.command_selected {
+                                    Style::default()
+                                } else {
+                                    DIM
+                                },
+                            ),
+                        ]))
+                    })
+                    .collect()
+            };
+            let mut state = ListState::default()
+                .with_selected((!commands.is_empty()).then_some(self.command_selected));
+            frame.render_stateful_widget(
+                List::new(items)
+                    .block(
+                        Block::default()
+                            .borders(Borders::TOP)
+                            .border_style(DIM)
+                            .title(" Slash commands "),
+                    )
+                    .highlight_symbol(" › ")
+                    .highlight_style(SELECTED),
+                menu,
+                &mut state,
+            );
+        }
+        if focused {
+            return;
+        }
+        let [input_area, hint_area] = if framed_prompt {
+            let [boxed, hint] =
+                Layout::vertical([Constraint::Length(3), Constraint::Length(1)]).areas(prompt);
+            let block = Block::default()
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .border_style(ACCENT);
+            let inner = block.inner(boxed);
+            frame.render_widget(block, boxed);
+            [inner, hint]
+        } else if accepts_input {
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(prompt)
+        } else {
+            [Rect::default(), prompt]
+        };
+        let reply_hint = if self.browser.query.is_empty() {
+            "Type to reply · ↑↓ scroll · Tab actions · Esc back"
+        } else {
+            "Enter send · Ctrl-C clear · Esc back"
+        };
+        // (typed text, dim placeholder or label, hint)
+        let (typed, placeholder, hint) = if let Some(command) = &self.command {
+            (
+                format!("/{command}"),
+                String::new(),
+                "↑↓ browse · Tab complete · Enter run · Esc close",
+            )
+        } else if self.actions_focus.is_some() {
+            (
+                String::new(),
+                String::new(),
+                "↑↓ choose · Enter open · Esc back",
+            )
+        } else if self.browser.searchable() {
+            let hint = if self.actions().len() > 1 {
+                "Enter open · Tab actions · PgUp/Dn · Esc · /"
+            } else {
+                "Enter select · PgUp/Dn · Esc back · /"
+            };
+            if self.browser.query.is_empty() {
+                (String::new(), "Type to filter".into(), hint)
+            } else {
+                (self.browser.query.clone(), "Filter  ".into(), hint)
+            }
+        } else if self.browser.kind == Kind::Messages {
+            if self.browser.query.is_empty() {
+                let model = self.model.as_deref().map(model_label);
+                let model = plain(model.as_deref().unwrap_or("the model"));
+                (String::new(), format!("Reply to {model}…"), reply_hint)
+            } else {
+                (
+                    self.browser.query.replace('\n', "↵"),
+                    String::new(),
+                    reply_hint,
+                )
+            }
+        } else if self.browser.kind == Kind::Home {
+            (String::new(), "Type / for commands".into(), "")
+        } else if self.browser.kind == Kind::Runtimes {
+            (
+                String::new(),
+                String::new(),
+                "↑↓ choose · Enter switch · Esc back",
+            )
+        } else {
+            (
+                String::new(),
+                String::new(),
+                if self.actions().len() > 1 {
+                    "↑↓ scroll · Tab actions · Esc back · /"
+                } else {
+                    "↑↓ scroll · Esc back · /"
+                },
+            )
+        };
+        let hint = if Span::raw(hint).width() > area.width as usize {
+            match (
+                self.command.is_some(),
+                self.actions_focus.is_some(),
+                self.browser.kind,
+            ) {
+                (true, _, _) => "↑↓ · Tab complete · Enter · Esc",
+                (_, true, _) | (_, _, Kind::Runtimes) => "↑↓ choose · Enter · Esc",
+                (_, _, Kind::Home) => "",
+                (_, _, Kind::Messages) => "Type to reply · Tab · Esc",
+                _ if self.actions().len() > 1 => "Enter · Tab actions · Esc · /",
+                _ => "↑↓ · Enter · Esc · /",
+            }
+        } else {
+            hint
+        };
+        let caret = Span::styled("› ", ACCENT);
+        // Show the tail of long input so the caret stays visible.
+        let room = (input_area.width as usize).saturating_sub(3);
+        let typed = if Span::raw(typed.as_str()).width() > room {
+            let tail: Vec<char> = typed.chars().rev().take(room).collect();
+            tail.into_iter().rev().collect()
+        } else {
+            typed
+        };
+        let typed_start = if typed.is_empty() {
+            0
+        } else {
+            Span::raw(placeholder.as_str()).width()
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(
-                    " Anchor ",
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(format!(
-                    " {}  ·  {}",
-                    self.runtime.to_uppercase(),
-                    self.model
-                        .as_deref()
-                        .map(model_label)
-                        .unwrap_or_else(|| "Choose a model".into())
-                )),
+                caret,
+                Span::styled(placeholder.as_str(), DIM),
+                Span::raw(typed.as_str()),
             ])),
-            parts[0],
+            input_area,
         );
-        let tabs: Vec<Span> = [Source::Installed, Source::Library, Source::Benchmarked]
-            .into_iter()
-            .map(|source| {
-                Span::styled(
-                    format!(" {} ", source.title()),
-                    if source == self.browser.source {
-                        Style::default()
-                            .fg(ACCENT)
-                            .add_modifier(Modifier::UNDERLINED)
-                    } else {
-                        Style::default()
-                    },
-                )
-            })
-            .collect();
-        frame.render_widget(
-            Paragraph::new(if self.browser.kind == Kind::Models {
-                Line::from(tabs)
-            } else {
-                Line::from(Span::styled(
-                    format!(" {}", self.browser.title),
-                    Style::default().fg(ACCENT),
-                ))
-            }),
-            parts[1],
-        );
-        let input = self
-            .command
-            .as_ref()
-            .map(|s| format!("/{s}"))
-            .unwrap_or_else(|| plain(&self.browser.query));
-        frame.render_widget(
-            Paragraph::new(input.clone()).block(Block::default().borders(Borders::ALL).title(
-                if self.command.is_some() {
-                    " Commands "
+        frame.render_widget(Paragraph::new(Line::styled(hint, DIM)), hint_area);
+        if accepts_input {
+            let cursor = (typed_start + Span::raw(typed.as_str()).width()) as u16;
+            frame.set_cursor_position((
+                input_area.x + (2 + cursor).min(input_area.width.saturating_sub(1)),
+                input_area.y,
+            ));
+        }
+    }
+
+    fn draw_browser(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        match self.browser.kind {
+            Kind::Home => {}
+            Kind::Text | Kind::Messages => {
+                let block = Block::default()
+                    .borders(Borders::TOP)
+                    .title(format!(" {} ", self.browser.title));
+                let inner = block.inner(area);
+                let text = if self.browser.kind == Kind::Messages {
+                    Text::from(self.transcript())
                 } else {
-                    " Search models "
-                },
-            )),
-            parts[2],
-        );
-        self.page_size = parts[3].height.saturating_sub(2).max(1) as usize;
-        let filtered = self.browser.filtered();
-        let count = filtered.len();
-        let items: Vec<ListItem> = filtered
-            .iter()
-            .map(|i| {
-                let row = &self.browser.rows[*i];
-                ListItem::new(format!("{}   {}", row.label, row.detail))
-            })
-            .collect();
-        self.browser
-            .state
-            .select((count > 0).then_some(self.browser.selected));
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::TOP | Borders::BOTTOM)
-                    .title(format!(
+                    Text::raw(plain(&self.browser.body))
+                };
+                let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+                // Follow streaming output only while the reader is already at the bottom.
+                let follow = (self.browser.kind == Kind::Messages
+                    || (self.browser.title == "Activity" && self.job.is_some()))
+                    && self.browser.scroll >= self.browser.scroll_max;
+                self.browser.scroll_max = paragraph
+                    .line_count(inner.width)
+                    .saturating_sub(inner.height as usize);
+                self.browser.scroll = if follow {
+                    self.browser.scroll_max
+                } else {
+                    self.browser.scroll.min(self.browser.scroll_max)
+                };
+                frame.render_widget(block, area);
+                frame.render_widget(
+                    paragraph.scroll((self.browser.scroll.min(u16::MAX as usize) as u16, 0)),
+                    inner,
+                );
+            }
+            Kind::Runs => self.draw_workloads(frame, area),
+            _ => {
+                let filtered = self.browser.filtered();
+                let count = filtered.len();
+                let split_measurements = self.browser.kind == Kind::Leaderboard && area.height >= 3;
+                if split_measurements {
+                    self.page_size = (self.page_size / 2).max(1);
+                }
+                // Two aligned columns: the label padded to the widest visible one, detail dimmed.
+                let room = (area.width as usize).saturating_sub(5);
+                let label_width = filtered
+                    .iter()
+                    .map(|i| Span::raw(self.browser.rows[*i].label.as_str()).width())
+                    .max()
+                    .unwrap_or(0)
+                    .min(room * 3 / 5)
+                    .max(1);
+                let selected = self.browser.selected;
+                let items: Vec<_> = filtered
+                    .iter()
+                    .enumerate()
+                    .map(|(position, i)| {
+                        let row = &self.browser.rows[*i];
+                        let detail_style = if position == selected {
+                            Style::default()
+                        } else {
+                            DIM
+                        };
+                        if split_measurements {
+                            let (label, detail) = if area.width < 59 {
+                                (
+                                    format!(
+                                        "{} · {}",
+                                        row.value["prompt_id"].as_str().unwrap_or("Legacy"),
+                                        row.label
+                                    ),
+                                    screens::decode_and_ttft(&row.value),
+                                )
+                            } else {
+                                (row.label.clone(), row.detail.clone())
+                            };
+                            ListItem::new(vec![
+                                Line::from(label),
+                                Line::styled(detail, detail_style),
+                            ])
+                        } else if row.detail.is_empty() {
+                            ListItem::new(fit(&row.label, room).trim_end().to_owned())
+                        } else {
+                            ListItem::new(Line::from(vec![
+                                Span::raw(fit(&row.label, label_width)),
+                                Span::raw("   "),
+                                Span::styled(row.detail.as_str(), detail_style),
+                            ]))
+                        }
+                    })
+                    .collect();
+                let items = if count == 0 && !self.browser.query.is_empty() && self.read.is_none() {
+                    vec![ListItem::new(Line::styled("No matches", DIM))]
+                } else {
+                    items
+                };
+                self.browser
+                    .state
+                    .select((count > 0).then_some(self.browser.selected));
+                let title = if count == 0 && self.read.is_some() {
+                    format!(" {} ", self.browser.title)
+                } else {
+                    format!(
                         " {}  {}/{} ",
                         self.browser.title,
                         if count == 0 {
@@ -629,95 +1122,18 @@ impl App {
                             self.browser.selected + 1
                         },
                         count
-                    )),
-            )
-            .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::REVERSED))
-            .highlight_symbol(" › ");
-        frame.render_stateful_widget(list, parts[3], &mut self.browser.state);
-        if matches!(self.browser.kind, Kind::Text | Kind::Messages) {
-            frame.render_widget(ratatui::widgets::Clear, parts[3]);
-            let body = plain(&self.browser.body);
-            let paragraph = Paragraph::new(body).wrap(Wrap { trim: false });
-            self.browser.scroll_max = paragraph
-                .line_count(parts[3].width)
-                .saturating_sub(parts[3].height as usize);
-            self.browser.scroll = self.browser.scroll.min(self.browser.scroll_max);
-            frame.render_widget(
-                paragraph.scroll((self.browser.scroll.min(u16::MAX as usize) as u16, 0)),
-                parts[3],
-            );
+                    )
+                };
+                frame.render_stateful_widget(
+                    List::new(items)
+                        .block(Block::default().borders(Borders::TOP).title(title))
+                        .highlight_symbol(" › ")
+                        .highlight_style(SELECTED),
+                    area,
+                    &mut self.browser.state,
+                );
+            }
         }
-        if self.help {
-            frame.render_widget(ratatui::widgets::Clear, parts[3]);
-            frame.render_widget(Paragraph::new("Keyboard controls\n\n/  Find a command\n↑ ↓  Move through models or commands\nPgUp / PgDn  Page through long lists\nHome / End  First / last result\nEnter  Select a model or command\n← →  Installed / Library / Benchmarked\nType  Search the current list\nCtrl-R  Switch runtime\nCtrl-L  Refresh / retry\nEsc  Close commands or clear search\nCtrl-C / Ctrl-D  Quit").wrap(Wrap { trim: false }), parts[3]);
-        }
-        if self.command.is_some() {
-            frame.render_widget(ratatui::widgets::Clear, parts[3]);
-            let items: Vec<_> = self
-                .commands()
-                .iter()
-                .map(|(name, detail)| ListItem::new(format!("/{name:<14} {detail}")))
-                .collect();
-            let mut state = ListState::default().with_selected(Some(self.command_selected));
-            frame.render_stateful_widget(
-                List::new(items)
-                    .block(Block::default().title(" Slash commands "))
-                    .highlight_symbol(" › ")
-                    .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::REVERSED)),
-                parts[3],
-                &mut state,
-            );
-        }
-        let cursor_width = Line::from(input).width() as u16;
-        if parts[2].height > 0
-            && self.actions_focus.is_none()
-            && self.form.is_none()
-            && self.confirm.is_none()
-        {
-            frame.set_cursor_position((
-                parts[2].x + 1 + cursor_width.min(parts[2].width.saturating_sub(3)),
-                parts[2].y + 1,
-            ));
-        }
-        self.draw_activity(frame, parts[4]);
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(
-                    self.actions()
-                        .iter()
-                        .enumerate()
-                        .map(|(i, name)| {
-                            Span::styled(
-                                format!(" [{name}] "),
-                                if self.actions_focus == Some(i) {
-                                    Style::default().fg(ACCENT).add_modifier(Modifier::REVERSED)
-                                } else {
-                                    Style::default()
-                                },
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-                Line::from(
-                    " / commands · Tab actions · ↑↓ move · PgUp/PgDn · Esc back · Ctrl-C stop/quit",
-                ),
-            ])
-            .scroll((0, {
-                let actions = self.actions();
-                self.actions_focus
-                    .map(|i| {
-                        actions[..i]
-                            .iter()
-                            .map(|s| s.len() + 5)
-                            .sum::<usize>()
-                            .saturating_sub(parts[5].width as usize / 2)
-                            .min(u16::MAX as usize) as u16
-                    })
-                    .unwrap_or(0)
-            })),
-            parts[5],
-        );
-        self.draw_form(frame, parts[3]);
     }
 }
 
@@ -764,7 +1180,7 @@ pub fn run() -> Result<(), String> {
     });
     let mut dirty = true;
     loop {
-        let working = app.read.is_some() || app.job.is_some();
+        let working = app.read.is_some() || app.job.is_some() || app.exit_armed.is_some();
         app.update();
         if shutdown.load(std::sync::atomic::Ordering::Relaxed) && !app.quitting {
             app.quitting = true;

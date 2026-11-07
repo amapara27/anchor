@@ -18,6 +18,8 @@ let modelPath=freshMlx?null:process.env.ANCHOR_MLX_E2E_MODEL;
 if(freshMlx){await mkdir(hubCache,{recursive:true});assert.deepEqual(await readdir(hubCache),[]);}
 const catalog=JSON.parse(await readFile(path.join(root,'crates/anchor-core/profiles/models.json'),'utf8')).slice(0,2);
 const models=catalog.map(p=>({name:p.id,model:p.id,digest:'sha256:'+p.id,size:1024**3,modified_at:new Date().toISOString(),details:{family:'llama',parameter_size:'1.2B',quantization_level:'Q8_0'}}));
+const cloudAlias='remote-alias:latest';
+const remoteFields={remote_model:'gemma4:cloud',remote_host:'https://ollama.com'};
 const requests=[];
 let slow=false,offline=false,resident=null;
 const server=createServer(async(req,res)=>{
@@ -27,9 +29,9 @@ const server=createServer(async(req,res)=>{
   const json=value=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(value));};
   if(offline){res.writeHead(503);return res.end('offline fixture');}
   if(req.url==='/api/version')return json({version:'0.12.0'});
-  if(req.url==='/api/tags')return json({models});
+  if(req.url==='/api/tags')return json({models:[...models,{...models[0],name:cloudAlias,...remoteFields}]});
   if(req.url==='/api/ps')return json({models:resident?[resident]:[]});
-  if(req.url==='/api/show')return json({details:{family:'llama',parameter_size:'1.2B',quantization_level:'Q8_0'},model_info:{'llama.context_length':131072,'llama.block_count':16,'llama.attention.head_count':32,'llama.attention.head_count_kv':8,'llama.embedding_length':2048,'general.architecture':'llama'}});
+  if(req.url==='/api/show')return json({...(body.name===cloudAlias?remoteFields:{}),details:{family:'llama',parameter_size:'1.2B',quantization_level:'Q8_0'},model_info:{'llama.context_length':131072,'llama.block_count':16,'llama.attention.head_count':32,'llama.attention.head_count_kv':8,'llama.embedding_length':2048,'general.architecture':'llama'}});
   if(req.url==='/api/pull'){
     res.setHeader('content-type','application/x-ndjson');res.write(JSON.stringify({status:'downloading',total:100,completed:10})+'\n');
     await new Promise(r=>setTimeout(r,1000));
@@ -59,6 +61,13 @@ const launch=()=>{
   app.stdout.on('data',d=>log+=d);app.stderr.on('data',d=>log+=d);app.on('error',e=>log+=e.message);return app;
 };
 let child=launch();
+async function stopApp(app) {
+  if (!app.pid || app.exitCode !== null || app.signalCode !== null) return;
+  const exited=new Promise(resolve=>app.once('exit',resolve));
+  app.kill('SIGTERM');
+  const force=setTimeout(()=>app.kill('SIGKILL'),1500);
+  try { await exited; } finally { clearTimeout(force); }
+}
 const checkpoint=name=>{step=name;console.log('STEP native.'+name);};
 const base='http://127.0.0.1:4445';let session;
 const request=async(method,route,body)=>{
@@ -79,7 +88,7 @@ const fill=async(label,value)=>wait(()=>execute(`const el=document.querySelector
 const nav=async(text)=>{await click(text,'nav[aria-label="Tools"] button');};
 const cliCommands=[];
 const cli=async(args,code=0,during=null)=>{
-  const command=spawn(path.join(root,'target/debug/anchor'),args,{cwd:root,env:{...process.env,OLLAMA_HOST:'http://127.0.0.1:'+port,OLLAMA_MODELS:path.join(scratch,'models'),ANCHOR_E2E_DATA_DIR:scratch},stdio:['ignore','pipe','pipe']});
+  const command=spawn(path.join(root,'target/cli-e2e/debug/anchor'),args,{cwd:root,env:{...process.env,OLLAMA_HOST:'http://127.0.0.1:'+port,OLLAMA_MODELS:path.join(scratch,'models'),ANCHOR_E2E_DATA_DIR:scratch},stdio:['ignore','pipe','pipe']});
   let out='',err='',concurrent=null;command.stdout.on('data',b=>out+=b);command.stderr.on('data',b=>{err+=b;if(during&&!concurrent&&err.includes('Runtime ')){concurrent=during();concurrent.catch(()=>command.kill('SIGTERM'));}});
   const timer=setTimeout(()=>command.kill('SIGKILL'),30000);
   const result=await new Promise((resolve,reject)=>{command.once('error',reject);command.once('close',resolve);}).finally(()=>clearTimeout(timer));
@@ -105,6 +114,14 @@ try{
   await execute(`window.__permissionProbe='pending';window.__TAURI_INTERNALS__.invoke('plugin:fs|read_text_file',{path:${JSON.stringify(path.join(scratch,'registry.db'))}}).then(()=>window.__permissionProbe='ALLOWED',e=>window.__permissionProbe=String(e));return true;`);
   const denied=await wait(()=>execute("return window.__permissionProbe!=='pending' && window.__permissionProbe"),'filesystem permission denial');
   assert.match(denied,/not allowed|forbidden|denied|not permitted/i,'the webview cannot read the app database directly');
+  checkpoint('cloud-models-blocked-on-loopback');
+  const invoke=(name,args={})=>execute('return window.__TAURI_INTERNALS__.invoke('+JSON.stringify(name)+','+JSON.stringify(args)+').then(value=>({value}),error=>({rejection:String(error)}));');
+  const listed=await invoke('list_models');
+  assert(!listed.value.some(m=>m.id===cloudAlias),'remote alias is hidden despite its local-looking name');
+  const beforeCloud=requests.length;
+  const onEvent='__CHANNEL__:123456';
+  assert.match((await invoke('download_model',{id:'gemma4:cloud',onEvent})).rejection,/only supports local/);
+  assert(!requests.slice(beforeCloud).some(r=>r.url==='/api/pull'),'no cloud pull reached Ollama');
   checkpoint('chat-context-and-navigation');
   await attrClick('Inspect '+catalog[0].name);
   await wait(()=>execute("return !!document.querySelector('select[aria-label=\"Fit context\"]')"),'inspector mounted');
@@ -202,13 +219,10 @@ try{
   const store=path.join(scratch,'models');await mkdir(path.join(store,'blobs'),{recursive:true});await mkdir(path.join(store,'manifests'),{recursive:true});
   const digest='a'.repeat(64),blob=path.join(store,'blobs','sha256-'+digest);await writeFile(blob,'orphan');
   const scan=await execute('return window.__TAURI_INTERNALS__.invoke("scan_storage");');assert.equal(scan.orphaned_bytes,6);
-  const forged={...scan,root:'/forged',orphaned_blobs:[{digest:'sha256:../../outside',size_bytes:999}]};
-  assert.equal(await execute('return window.__TAURI_INTERNALS__.invoke("clean_orphaned_blobs",{scan:'+JSON.stringify(forged)+'});'),0);
+  assert.match((await invoke('clean_orphaned_blobs',{scan})).rejection,/not found/i);
   await nav('Storage');
-  await wait(()=>execute('const b=Array.from(document.querySelectorAll("button")).find(b=>b.textContent.includes("Clean up · frees"));if(!b)return false;b.click();return true;'),'native storage confirmation');
-  await click('Cancel','[role="alertdialog"] button');assert.equal(await readFile(blob,'utf8'),'orphan');
-  await execute('Array.from(document.querySelectorAll("button")).find(b=>b.textContent.includes("Clean up · frees")).click();return true;');
-  await click('Clean up','[role="alertdialog"] button');await wait(async()=>!(await stat(blob).catch(()=>null)),'native orphan removal');
+  await wait(async()=> (await visibleText()).includes('1 unreferenced blob'),'native storage still reports unreferenced files');
+  assert.equal(await readFile(blob,'utf8'),'orphan');
   const preset={id:'e2e-preset',name:'E2E preserved preset',system:'Keep answers brief.',temperature:0.2,top_p:0.8,num_ctx:8192,model:null,created_ms:1};
   await execute('return window.__TAURI_INTERNALS__.invoke("save_preset",{preset:'+JSON.stringify(preset)+'});');
   assert((await execute('return window.__TAURI_INTERNALS__.invoke("list_presets");')).some(p=>p.id===preset.id));
@@ -264,6 +278,13 @@ try{
     console.log('Fresh MLX download passed: partial weight transfer → Activity cancellation → retry → all pinned checksums.');
   }
   if(modelPath) {
+    checkpoint('mlx-custom-code-rejected');
+    const customPath=path.join(await realpath(scratch),'custom-checkpoint');
+    await mkdir(customPath);
+    await writeFile(path.join(customPath,'config.json'),JSON.stringify({model_type:'llama',model_file:'custom.py'}));
+    for(const name of ['tokenizer.json','tokenizer_config.json','model.safetensors']) await writeFile(path.join(customPath,name),'{}');
+    assert(!(await invoke('mlx_models',{paths:[customPath]})).value.some(m=>m.path===customPath));
+    assert.match((await invoke('run_mlx_suite',{modelPath:customPath,repeats:'fast',scenario:'classify',onEvent})).rejection,/Custom MLX model code is not supported/);
     const beforeNative=execFileSync('sqlite3',[path.join(scratch,'registry.db'),"SELECT COUNT(*) FROM bench_runs WHERE suite_id='anchor-scenarios';"],{encoding:'utf8'}).trim();
     assert.equal(beforeNative,String(counts[2]+2),'two CLI interoperability workloads add exactly two Ollama rows');
     checkpoint('mlx-suite-and-stop');
@@ -317,7 +338,7 @@ try{
   }
   checkpoint('restart-and-recall');
   await request('DELETE','/session/'+session);session=null;
-  child.kill('SIGTERM');await new Promise(resolve=>{if(child.exitCode!==null)return resolve();child.once('exit',resolve);});
+  await stopApp(child);
   child=launch();
   await wait(()=>request('GET','/status'),'native restart',45000);
   session=(await request('POST','/session',{capabilities:{alwaysMatch:{browserName:'tauri'}}})).sessionId;
@@ -326,11 +347,16 @@ try{
   assert(restored.some(s=>s.id===complete.id&&s.outcome==='completed'));
   assert((await execute('return window.__TAURI_INTERNALS__.invoke("list_presets");')).some(p=>p.id===preset.id));
   assert.equal((await execute('return window.__TAURI_INTERNALS__.invoke("list_conversations");')).length,1);
+  const beforeCloudChat=requests.length;
+  const {value:cloudChat}=await invoke('create_conversation',{model:cloudAlias});
+  assert.match((await invoke('run_chat',{conversationId:cloudChat.id,model:cloudAlias,content:'Do not forward this fixture prompt',onEvent})).rejection,/only supports local/);
+  assert(!requests.slice(beforeCloudChat).some(r=>r.url==='/api/chat'),'no cloud prompt reached Ollama');
   if(process.env.ANCHOR_E2E_ARTIFACT_DIR){
     await writeFile(path.join(process.env.ANCHOR_E2E_ARTIFACT_DIR,freshMlx?'mlx-native.json':'native.json'),JSON.stringify({step,cliCommands,sessions:restored,download:freshMlx?downloadEvidence:undefined},null,2));
   }
   // SQLite queries above verify persisted data beyond the component state.
-  await request('DELETE','/session/'+session);session=null;child.kill('SIGTERM');
+  await request('DELETE','/session/'+session);session=null;
+  await stopApp(child);
   success=true;console.log('Native E2E passed: UI → IPC → Rust → HTTP; filesystem permission denial, chat/context, navigation, comparison cancellation/completion, benchmark cancellation/full suite, calibration cancellation/report, SQLite persistence.');
 }catch(error){
   const state=JSON.stringify({step,error:error.stack,requests,download:freshMlx?downloadEvidence:undefined,page:session?await execute('return {url:location.href,text:document.body.innerText,disclosures:Array.from(document.querySelectorAll("details")).map(e=>({summary:e.querySelector("summary")?.textContent,open:e.open}))}').catch(String):null},null,2);
@@ -344,6 +370,7 @@ try{
 }
 finally{
   if(session)await request('DELETE','/session/'+session).catch(()=>{});
-  child.kill('SIGTERM');server.closeAllConnections();await new Promise(r=>server.close(r));
+  await stopApp(child);
+  server.closeAllConnections();await new Promise(r=>server.close(r));
   if(success)await rm(scratch,{recursive:true,force:true});
 }
