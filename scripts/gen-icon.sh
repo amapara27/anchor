@@ -23,4 +23,17 @@ for r in Default Dark ClearLight ClearDark TintedLight TintedDark; do
     --platform macOS --rendition "$r" --width 256 --height 256 --scale 2 >/dev/null
   sips -Z 412 "$OUT/dev/$r.png" >/dev/null && sips --padToHeightWidth 512 512 "$OUT/dev/$r.png" >/dev/null
 done
+# Legacy macOS and Finder fall back to the black/purple icon.
+FALLBACK=$(mktemp -d -t anchor-icon-fallback)
+mkdir "$FALLBACK/Anchor.iconset"
+"$ICTOOL" "$ROOT/apps/desktop/src-tauri/Anchor.icon" --export-image --output-file "$FALLBACK/dark.png" \
+  --platform macOS --rendition Dark --width 1024 --height 1024 --scale 1 >/dev/null
+sips -Z 824 "$FALLBACK/dark.png" >/dev/null
+sips --padToHeightWidth 1024 1024 "$FALLBACK/dark.png" >/dev/null
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$FALLBACK/dark.png" --out "$FALLBACK/Anchor.iconset/icon_${size}x${size}.png" >/dev/null
+  sips -z "$((size * 2))" "$((size * 2))" "$FALLBACK/dark.png" --out "$FALLBACK/Anchor.iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+iconutil -c icns "$FALLBACK/Anchor.iconset" -o "$OUT/Anchor.icns"
+rm -r "$FALLBACK"
 echo "wrote $OUT/Anchor.icns + $OUT/Assets.car + $OUT/dev/*.png"

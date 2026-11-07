@@ -434,7 +434,7 @@ try {
     focus.send('/quit\r');
     await focus.finish();
     const benchColumns = String(sql("SELECT name FROM pragma_table_info('bench_runs')")).trim().split('\n');
-    const legacyFields = { id: "'legacy-fixture|v4'", suite_version: '4', prompt_id: "'short'", updated_at: '1', ttft_ms_median: 'NULL' };
+    const legacyFields = { id: "'legacy-fixture|v4'", suite_version: '4', prompt_id: "'short'", updated_at: '1', prefill_tps_median: 'NULL', ttft_ms_median: 'NULL' };
     sql(`INSERT INTO bench_runs (${benchColumns.join(',')})
         SELECT ${benchColumns.map(column => legacyFields[column] ?? column).join(',')}
         FROM bench_runs ORDER BY updated_at DESC LIMIT 1`);

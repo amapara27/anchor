@@ -1051,8 +1051,10 @@ impl App {
                 let filtered = self.browser.filtered();
                 let count = filtered.len();
                 let split_measurements = self.browser.kind == Kind::Leaderboard && area.height >= 3;
+                let narrow_measurements = area.width < 90;
                 if split_measurements {
-                    self.page_size = (self.page_size / 2).max(1);
+                    self.page_size =
+                        (self.page_size / if narrow_measurements { 3 } else { 2 }).max(1);
                 }
                 // Two aligned columns: the label padded to the widest visible one, detail dimmed.
                 let room = (area.width as usize).saturating_sub(5);
@@ -1075,22 +1077,35 @@ impl App {
                             DIM
                         };
                         if split_measurements {
-                            let (label, detail) = if area.width < 59 {
-                                (
-                                    format!(
+                            if narrow_measurements {
+                                ListItem::new(vec![
+                                    Line::from(format!(
                                         "{} · {}",
                                         row.value["prompt_id"].as_str().unwrap_or("Legacy"),
                                         row.label
+                                    )),
+                                    Line::styled(
+                                        format!(
+                                            "prefill {}",
+                                            screens::number(
+                                                &row.value,
+                                                "prefill_tps_median",
+                                                " tok/s"
+                                            )
+                                        ),
+                                        detail_style,
                                     ),
-                                    screens::decode_and_ttft(&row.value),
-                                )
+                                    Line::styled(
+                                        screens::decode_and_ttft(&row.value),
+                                        detail_style,
+                                    ),
+                                ])
                             } else {
-                                (row.label.clone(), row.detail.clone())
-                            };
-                            ListItem::new(vec![
-                                Line::from(label),
-                                Line::styled(detail, detail_style),
-                            ])
+                                ListItem::new(vec![
+                                    Line::from(row.label.clone()),
+                                    Line::styled(row.detail.clone(), detail_style),
+                                ])
+                            }
                         } else if row.detail.is_empty() {
                             ListItem::new(fit(&row.label, room).trim_end().to_owned())
                         } else {

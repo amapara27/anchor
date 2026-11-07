@@ -72,6 +72,7 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     await slash('activity');
     await ui.waitScreen('1 workload measured · Ollama');
     await ui.waitScreen('Post-first-token decode');
+    await ui.waitScreen('prefill 900.0 tok/s');
     await ui.waitScreen('classify complete');
     await ui.capture('terminal-benchmark-summary');
     checkpoint('terminal-results-reports-export-and-replay');
@@ -80,6 +81,7 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     button(0);
     await ui.waitScreen('Measured workloads');
     await ui.waitScreen('TTFT ms');
+    await ui.waitScreen('PREFILL t/s');
     await ui.waitScreen('9 workloads');
     assert.match(ui.screen, /Run 1.*1 workload/);
     assert.equal(ui.screen.split('\n').filter(line => line.includes('fixture:1b')).length, 2, 'one active-model label and one table label');
@@ -91,6 +93,7 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     ui.send('\r');
     await ui.waitScreen('Workload summary');
     await ui.waitScreen('short · 1024 ctx');
+    await ui.waitScreen('prefill N/A');
     await ui.escape();
     await ui.waitScreen('Measured workloads');
     ui.send('\x1b[H');
@@ -98,8 +101,19 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     await ui.capture('terminal-grouped-workloads-100');
     ui.resize(18, 50);
     await ui.waitScreen('TTFT ms');
-    assert.match(ui.screen, /› classify\s+1024\s+N\/A\s+\d+\.\d$/m);
+    await ui.waitScreen('PRE tok/s');
+    assert.match(ui.screen, /› classify\s+900\.0\s+N\/A\s+\d+\.\d$/m);
     await ui.capture('terminal-grouped-workloads-50');
+    ui.resize(18, 40);
+    await ui.waitScreen('PRE tok/s');
+    assert.match(ui.screen, /900\.0\s+N\/A\s+\d+\.\d$/m);
+    ui.send('\x1b[B');
+    await ui.waitScreen('Measured workloads  2/');
+    ui.send('\x1b[H');
+    await ui.waitScreen('Measured workloads  1/');
+    await ui.capture('terminal-prefill-40');
+    ui.resize(18, 50);
+    await ui.waitScreen('PRE tok/s');
     button(1);
     await ui.waitScreen('Repeat samples');
     await ui.waitScreen('Repeat 1 · prefill');
@@ -142,6 +156,7 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     await ui.waitScreen('Leaderboard workload');
     ui.send('\t\r');
     await ui.waitScreen('Runtime-reported rates');
+    await ui.waitScreen('prefill');
     await ui.capture('terminal-leaderboard');
     checkpoint('terminal-chat-streaming-history-and-presets');
     await slash('chat');

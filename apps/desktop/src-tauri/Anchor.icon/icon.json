@@ -5,7 +5,13 @@
   ],
   "groups" : [
     {
-      "layers" : [ { "image-name" : "glyph.png", "name" : "anchor" } ],
+      "layers" : [ {
+        "image-name-specializations" : [
+          { "value" : "glyph-light.png" },
+          { "appearance" : "dark", "value" : "glyph.png" }
+        ],
+        "name" : "anchor"
+      } ],
       "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
       "translucency" : { "enabled" : false, "value" : 0.5 }
     }

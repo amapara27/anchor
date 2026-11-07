@@ -205,7 +205,7 @@ pub(super) fn decode_and_ttft(run: &Value) -> String {
     )
 }
 
-fn workload_metrics(run: &Value) -> String {
+pub(super) fn workload_metrics(run: &Value) -> String {
     format!(
         "prefill {} · {}",
         number(run, "prefill_tps_median", " tok/s"),
@@ -363,7 +363,7 @@ fn benchmark_summary(value: &Value, runtime: &str) -> String {
         lines.push(format!(
             "{:<12} {}",
             plain(&string(run, "prompt_id")),
-            decode_and_ttft(run)
+            workload_metrics(run)
         ));
     }
     lines.push("\n/results for saved measurements and reports".into());
@@ -1123,7 +1123,7 @@ impl App {
                             "{}  {} ctx  {}",
                             scenario,
                             item["num_ctx"],
-                            decode_and_ttft(item)
+                            workload_metrics(item)
                         ),
                     )
                 }

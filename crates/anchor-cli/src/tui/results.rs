@@ -97,40 +97,59 @@ impl App {
             return;
         }
 
-        let show_context = inner.width >= 48;
+        let show_context = inner.width >= 60;
+        let stacked = inner.width < 44;
         let workload_width = if show_context {
             16
         } else {
-            (inner.width as usize).saturating_sub(22).min(16)
+            (inner.width as usize).saturating_sub(32).min(16)
         };
-        let columns = |workload: &str, ctx: &str, decode: &str, ttft: &str| {
+        let columns = |workload: &str, ctx: &str, prefill: &str, decode: &str, ttft: &str| {
             if show_context {
                 format!(
-                    "{workload:<workload_width$.workload_width$} {ctx:>7} {decode:>11} {ttft:>8}"
+                    "{workload:<workload_width$.workload_width$} {ctx:>7} {prefill:>11} {decode:>11} {ttft:>8}"
                 )
+            } else if stacked {
+                format!("{prefill:>9} {decode:>9} {ttft:>8}")
             } else {
-                format!("{workload:<workload_width$.workload_width$} {decode:>9} {ttft:>8}")
+                format!("{workload:<workload_width$.workload_width$} {prefill:>9} {decode:>9} {ttft:>8}")
             }
         };
-        let [heading, body] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(inner);
+        let [heading, body] = Layout::vertical([
+            Constraint::Length(if stacked { 2 } else { 1 }),
+            Constraint::Min(0),
+        ])
+        .areas(inner);
+        let mut headings = Vec::new();
+        if stacked {
+            headings.push(Line::from("   WORKLOAD"));
+        }
+        headings.push(Line::from(format!(
+            "   {}",
+            columns(
+                "WORKLOAD",
+                "CTX",
+                if show_context {
+                    "PREFILL t/s"
+                } else {
+                    "PRE tok/s"
+                },
+                if show_context {
+                    "DECODE t/s"
+                } else {
+                    "DEC tok/s"
+                },
+                "TTFT ms"
+            )
+        )));
         frame.render_widget(
-            Paragraph::new(format!(
-                "   {}",
-                columns(
-                    "WORKLOAD",
-                    "CTX",
-                    if show_context {
-                        "DECODE t/s"
-                    } else {
-                        "DEC tok/s"
-                    },
-                    "TTFT ms"
-                )
-            ))
-            .style(Style::new().add_modifier(Modifier::BOLD)),
+            Paragraph::new(headings).style(Style::new().add_modifier(Modifier::BOLD)),
             heading,
         );
+        if body.is_empty() {
+            self.page_size = 1;
+            return;
+        }
         let mut items = Vec::new();
         let mut selectable = Vec::with_capacity(count);
         let mut group_index = 0;
@@ -153,13 +172,28 @@ impl App {
             }
             selectable.push(items.len());
             let run = &self.browser.rows[row_index].value;
-            items.push(ListItem::new(columns(
-                &plain(run["prompt_id"].as_str().unwrap_or("Legacy")),
+            let workload = plain(run["prompt_id"].as_str().unwrap_or("Legacy"));
+            let metrics = columns(
+                &workload,
                 &run["num_ctx"].to_string(),
+                &screens::number(run, "prefill_tps_median", ""),
                 &screens::number(run, "decode_tps_median", ""),
                 &screens::number(run, "ttft_ms_median", ""),
-            )));
+            );
+            items.push(if stacked {
+                ListItem::new(vec![Line::from(workload), Line::from(metrics)])
+            } else {
+                ListItem::new(metrics)
+            });
         }
+        let item_starts: Vec<usize> = items
+            .iter()
+            .scan(0, |line, item| {
+                let start = *line;
+                *line += item.height();
+                Some(start)
+            })
+            .collect();
         self.browser.state.select(selectable.get(index).copied());
         frame.render_stateful_widget(
             List::new(items)
@@ -169,10 +203,10 @@ impl App {
             body,
             &mut self.browser.state,
         );
-        let start = self.browser.state.offset();
+        let start = item_starts[self.browser.state.offset()];
         let end = start + body.height as usize;
-        self.page_size = (selectable.partition_point(|&row| row < end)
-            - selectable.partition_point(|&row| row < start))
+        self.page_size = (selectable.partition_point(|&row| item_starts[row] < end)
+            - selectable.partition_point(|&row| item_starts[row] < start))
         .max(1);
     }
 }
