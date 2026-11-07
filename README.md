@@ -47,7 +47,7 @@ No API keys are required. Inference and saved history work locally after setup w
 The `anchor` binary is published separately, under `cli-v*` tags:
 
 ```bash
-curl -fsSL https://github.com/amapara27/anchor/releases/download/cli-v0.1.0/anchor-cli-0.1.0-macos-arm64.tar.gz | tar -xz
+curl -fsSL https://github.com/amapara27/anchor/releases/download/cli-v1.0.0/anchor-cli-1.0.0-macos-arm64.tar.gz | tar -xz
 sudo mv anchor /usr/local/bin/
 ```
 

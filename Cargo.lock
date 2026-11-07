@@ -52,7 +52,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "anchor-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anchor-core",
  "anchor-hub",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "anchor-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "anchor-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anchor-core",
  "anchor-hub",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "anchor-hub"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anchor-core",
  "anchor-system",
@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "anchor-system"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anchor-core",
  "serde",
