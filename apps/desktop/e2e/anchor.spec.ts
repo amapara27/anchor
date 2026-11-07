@@ -223,7 +223,8 @@ for(const width of [800,1440]) test(`streaming chat respects reading position an
   await page.getByRole('button',{name:'Send message'}).click();
   const log=page.getByRole('log',{name:'Conversation'});
   await expect.poll(()=>log.evaluate(el=>el.scrollHeight-el.clientHeight)).toBeGreaterThan(500);
-  await log.hover();await page.mouse.wheel(0,-10000);
+  await log.hover();
+  for(let i=0;i<20&&await log.evaluate(el=>el.scrollTop)>0;i++) await page.mouse.wheel(0,-800);
   await expect.poll(()=>log.evaluate(el=>el.scrollTop)).toBe(0);
   const length=(await log.innerText()).length;
   await expect.poll(async()=>(await log.innerText()).length).toBeGreaterThan(length+500);
