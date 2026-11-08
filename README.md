@@ -44,14 +44,16 @@ No API keys are required. Inference and saved history work locally after setup w
 
 ### CLI
 
-The `anchor` binary is published separately, under `cli-v*` tags:
+The CLI is packaged for PyPI as `anchr`, with the executable named `anchor`.
+After the first PyPI release, install it on macOS Apple Silicon with:
 
 ```bash
-curl -fsSL https://github.com/amapara27/anchor/releases/download/cli-v1.0.0/anchor-cli-1.0.0-macos-arm64.tar.gz | tar -xz
-sudo mv anchor /usr/local/bin/
+uv tool install anchr
+anchor
 ```
 
-Use `curl` rather than a browser — the CLI is a bare binary with no notarization ticket, so a browser download gets quarantined and macOS refuses to run it.
+Update with `uv tool upgrade anchr`. First-release account setup and
+`cli-v*` tag publishing are documented in [CLI publishing](docs/cli-publishing.md).
 
 ## Features
 

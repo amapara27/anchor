@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin==1.16.0"]
+build-backend = "maturin"
+
+[project]
+name = "anchr"
+dynamic = ["version"]
+description = "Benchmark and manage local AI models on Apple Silicon."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Aayan Mapara" }]
+classifiers = [
+    "Environment :: Console",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Rust",
+]
+
+[project.urls]
+Homepage = "https://github.com/amapara27/anchor"
+Repository = "https://github.com/amapara27/anchor"
+Issues = "https://github.com/amapara27/anchor/issues"
+
+[tool.maturin]
+bindings = "bin"
+manifest-path = "crates/anchor-cli/Cargo.toml"
+locked = true
+strip = true

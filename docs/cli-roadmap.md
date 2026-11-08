@@ -1,6 +1,6 @@
 # CLI parity and distribution plan
 
-Status: CLI capability work below is implemented in source. PyPI/uv distribution remains planned and unpublished. See docs/testing.md for the unified acceptance scopes and retained reports.
+Status: CLI capability work and anchr wheel packaging are implemented in source. The first PyPI publication is pending account setup and release approval. See docs/testing.md for the unified acceptance scopes and retained reports.
 
 ## What already works
 
@@ -63,33 +63,26 @@ Follow [the benchmark methodology](benchmark-methodology.md) and [MLX measuremen
 - Keep downloads, checksum verification and environment preparation outside inference measurement windows. Preserve fresh native caches and offline inference.
 - Counterpart catalog entries identify related models, not identical weights, quantization, templates or proven answer quality.
 
-## Priority 3 — distribute through PyPI and uv
+## PyPI and uv distribution
 
-Package the existing Rust executable in platform-specific Python wheels using [Maturin's `bin` mode](https://www.maturin.rs/bindings#bin). Python packaging provides distribution; the CLI implementation stays in Rust.
+The package name is `anchr`; the executable is `anchor`. Root `pyproject.toml`
+uses pinned Maturin binary bindings and the CLI Cargo version. The initial
+release ships a production macOS Apple Silicon wheel.
 
-Start with macOS Apple Silicon, matching the exercised runtime support. Additional platforms require their own build/runtime acceptance before being advertised.
+`pnpm test:e2e --only cli-package` builds and installs the wheel outside the
+checkout in an isolated uv tool directory. It checks production storage paths,
+embedded scenario/model catalogs, reinstall and terminal restoration. Verified
+wheels are copied to `target/wheels/`.
 
-Required work:
+`.github/workflows/publish-cli.yml` builds and checks the wheel on macOS,
+then publishes the exact artifact from a separate Ubuntu job using Trusted
+Publishing. A matching `cli-v*` tag triggers publishing through the `pypi`
+GitHub environment. Manual dispatch only builds and checks.
 
-1. Confirm a suitable PyPI package name and ownership. Name availability is not checked yet; the installed executable can remain `anchor` even if the distribution has another name.
-2. Add packaging metadata pointing at the CLI Cargo manifest and explicit binary bindings. Coordinate package, binary and release versions; the current Cargo workspace version and desktop version differ.
-3. Build release wheels containing the production binary. Never enable the CLI `e2e` feature or ship the native automation app.
-4. Ensure source distributions include workspace/path dependencies, catalog data and embedded worker/project/lock files needed for a build.
-5. Keep optional MLX dependencies in the existing locked worker environment; install them when the MLX workflow needs them.
-6. Test wheel installation and execution outside the repository with no Rust toolchain required for the prebuilt wheel. Confirm shared desktop/CLI storage paths, metadata/resources, exit codes, Ctrl-C and subsequent tool upgrades.
-7. Add a reviewed release workflow. Preserve the existing separation between CLI releases and the desktop updater's GitHub `latest` release. Publishing to PyPI is a separate, explicitly authorized step.
-8. Update installation/support documentation. Ollama remains an external runtime requirement for Ollama commands; uv manages the optional MLX worker.
-
-Intended user experience after publication (`PACKAGE_NAME` is a placeholder):
-
-```text
-uv tool install PACKAGE_NAME
-anchor --help
-uvx --from PACKAGE_NAME anchor bench scenarios
-uv tool upgrade PACKAGE_NAME
-```
-
-[uv supports installing tools and running commands from differently named distributions](https://docs.astral.sh/uv/guides/tools/). A package name, wheel build and PyPI release have not yet been verified.
+Follow [CLI publishing](cli-publishing.md) for the PyPI publisher fields,
+GitHub environment setup and first release. The user chose PyPI/uv as the single
+distribution channel. PyPI account setup and actual publication remain pending;
+source distributions and additional platform wheels need separate acceptance.
 
 ## Verification and remaining delivery
 
@@ -104,4 +97,4 @@ pnpm test:e2e                                 # combined GUI and CLI acceptance
 
 CLI fixtures cover JSON, preset updates/continuation, regeneration, stdin/files, comparison failure, partial-chat cancellation, busy refusal, crash recovery, injected persistence failure, offline inspection and deletion confirmation. Live CLI stages cover clean MLX/Ollama downloads/cancel/retry, all nine workloads, selected workloads, reports, raw replay and Stop. Native checks use the same isolated database to verify GUI/CLI chats, presets, sessions and bidirectional contention. Reports distinguish full CLI, full application, selected, fixture and blocked scopes.
 
-Remaining delivery work is PyPI/uv packaging above: choose/verify the distribution name, build/install a production wheel outside the repository, verify upgrades/resources, and prepare publication for explicit review. Functional acceptance does not establish answer-quality equivalence, GPU-only timing or instrumentation overhead. No package publication, signing/notarization or destructive test against normal user data is part of this capability pass.
+Remaining delivery work is to configure the anchr Trusted Publisher and GitHub environment, review and push the release commit, and approve the first publication. Future-version upgrades and other platforms still need their own acceptance. Functional acceptance does not establish answer-quality equivalence, GPU-only timing or instrumentation overhead. No package publication, signing/notarization or destructive test against normal user data is part of this capability pass.

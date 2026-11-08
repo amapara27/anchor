@@ -47,13 +47,14 @@ const stages = [
     { id: 'measurements', title: 'HTTP streaming → benchmark evidence → SQLite → offline replay', commands: [['cargo', 'test', '--locked', '-p', 'anchor-hub', '--test', 'measurements_e2e', '--', '--nocapture']], tools: ['cargo'], sources: ['crates/anchor-hub/src/ollama.rs', 'crates/anchor-hub/src/bench', 'crates/anchor-hub/tests/measurements_e2e.rs'], minutes: 8 },
     { id: 'cli-build', title: 'Production CLI compilation without the desktop or webview', commands: [['cargo', 'build', '--locked', '-p', 'anchor-cli']], tools: ['cargo'], sources: ['crates/anchor-cli', 'crates/anchor-hub'], minutes: 10 },
     { id: 'cli', title: 'Actual CLI processes, fit catalog, hardware fallback, chat, benchmarks and storage', commands: [['cargo', 'build', '--locked', '-p', 'anchor-cli', '--features', 'e2e', '--target-dir', 'target/cli-e2e'], ['node', 'tests/e2e/cli.mjs']], tools: ['cargo', 'node', 'sqlite3', 'cc', ...(process.platform === 'darwin' ? ['xcrun'] : [])], sources: ['tests/e2e/terminal.mjs', 'tests/e2e/terminal-workflows.mjs', 'tests/e2e/pty.c', 'crates/anchor-cli/src', 'crates/anchor-core/src/fit.rs', 'crates/anchor-system/src', 'tests/e2e/cli.mjs', 'crates/anchor-hub/src/chat.rs'], minutes: 10, build: 'cli-build' },
+    { id: 'cli-package', title: 'Production anchr wheel → isolated uv installation → installed CLI and terminal', commands: [['node', 'tests/e2e/cli-package.mjs']], tools: ['cargo', 'node', 'uv', 'unzip', 'cc', 'xcrun'], sources: ['pyproject.toml', '.github/workflows/publish-cli.yml', 'tests/e2e/cli-package.mjs', 'crates/anchor-cli', 'workers/mlx'], minutes: 15, mac: true },
     { id: 'browser', title: 'React workflows, recovery, keyboard and responsive/light/dark layouts', commands: [[...pnpm, 'test:e2e:browser']], tools: ['pnpm'], sources: ['apps/desktop/src/components', 'apps/desktop/src/lib', 'apps/desktop/e2e/anchor.spec.ts'], minutes: 8, build: true },
     { id: 'native', title: 'WKWebView → real IPC/Rust/SQLite, permissions, persistence and cancellation', commands: [[...pnpm, 'test:e2e:native']], tools: ['pnpm', 'cargo', 'sqlite3'], sources: ['apps/desktop/src-tauri/src/lib.rs', 'apps/desktop/e2e/native.mjs', 'apps/desktop/src/lib', 'crates/anchor-hub/src/chat.rs'], minutes: 15, mac: true, build: true },
     { id: 'discovery', title: 'Published Ollama library/tags → ranged GGUF → persisted architecture cache', commands: [['cargo', 'test', '--locked', '-p', 'anchor-hub', '--test', 'network_catalog_e2e', '--', '--ignored', '--nocapture']], tools: ['cargo'], sources: ['crates/anchor-hub/src/library.rs', 'crates/anchor-hub/src/gguf.rs', 'crates/anchor-hub/src/lib.rs', 'crates/anchor-hub/tests/network_catalog_e2e.rs'], minutes: 5, network: true },
     { id: 'ollama', title: 'Isolated installed Ollama → real generations, validation and evidence replay', commands: [['node', 'tests/e2e/ollama.mjs']], tools: ['ollama', 'cargo', 'node'], sources: ['crates/anchor-hub/src/bench/calibration.rs', 'crates/anchor-hub/src/bench/evidence.rs', 'crates/anchor-hub/tests/ollama_decode_e2e.rs'], minutes: 20, mac: true, gpu: true, build: true },
     { id: 'mlx', title: 'Clean model download/cancel/retry → native GUI → all nine MLX workloads/Stop', commands: [[...pnpm, 'test:e2e:native']], tools: ['pnpm', 'cargo', 'uv', 'sqlite3'], sources: ['workers/mlx/download.py', 'workers/mlx/suite.py', 'crates/anchor-hub/src/bench/mlx_catalog.rs', 'crates/anchor-hub/src/bench/mlx_suite.rs', 'apps/desktop/src/lib/useMlxModels.ts'], minutes: 20, mac: true, gpu: true, build: true },
     ...['ollama', 'mlx'].map(runtime => ({ id: 'cli-' + runtime, title: 'Real CLI ' + runtime + ' download/cancel/retry, GPU suite, history and replay', commands: [['node', 'tests/e2e/cli-live.mjs', runtime]], tools: ['node', 'cargo', 'cc', 'xcrun', runtime === 'mlx' ? 'uv' : 'ollama'], sources: ['crates/anchor-cli/src', 'crates/anchor-hub/src/bench', 'tests/e2e/cli-live.mjs'], minutes: 25, mac: true, gpu: true, build: 'cli-build' })),
-    { id: 'release', title: 'Real release script safe refusal and updater public configuration', commands: [['node', 'tests/e2e/release.mjs']], tools: ['node', 'bash'], sources: ['scripts/release-macos.sh', 'apps/desktop/src-tauri/tauri.conf.json', 'apps/desktop/src/components/UpdateBanner.tsx'], minutes: 1 },
+    { id: 'release', title: 'Real release script safe refusal and updater public configuration', commands: [['node', 'tests/e2e/release.mjs']], tools: ['node', 'bash'], sources: ['scripts/release-macos.sh', 'scripts/bundle-macos.sh', 'apps/desktop/src-tauri/tauri.conf.json', 'apps/desktop/src/components/UpdateBanner.tsx'], minutes: 1 },
 ];
 const ids = new Set(stages.map(s => s.id));
 if (only?.some(id => !ids.has(id))) {
@@ -65,7 +66,7 @@ if (only?.length === 0) {
         console.log(s.id.padEnd(15) + s.title);
     process.exit(0);
 }
-const cliStages = new Set(['harness', 'cli-build', 'state', 'measurements', 'cli', 'discovery', 'cli-ollama', 'cli-mlx']);
+const cliStages = new Set(['harness', 'cli-build', 'state', 'measurements', 'cli', 'cli-package', 'discovery', 'cli-ollama', 'cli-mlx']);
 const chosen = new Set(only ?? stages.filter(s => (surface === 'all' || cliStages.has(s.id)) && (profile === 'full' || (!s.gpu && !s.network && (profile !== 'ci' || !s.mac)))).map(s => s.id));
 for (const s of stages) if (chosen.has(s.id) && s.build) chosen.add(s.build === true ? 'build' : s.build);
 const id = new Date().toISOString().replaceAll(/[:.]/g, '-') + '-' + process.pid;
@@ -120,7 +121,7 @@ async function stopGroup(pid) {
 }
 for (const signal of ['SIGINT', 'SIGTERM'])
     process.on(signal, () => { interrupted = true; active?.(); });
-const exists = tool => spawnSync(tool, ['--version'], { cwd: root, stdio: 'ignore', timeout: 10000 }).status === 0;
+const exists = tool => spawnSync(tool, [tool === 'unzip' ? '-v' : '--version'], { cwd: root, stdio: 'ignore', timeout: 10000 }).status === 0;
 const portFree = port => new Promise(resolve => {
     const probe = createServer();
     probe.once('error', () => resolve(false));

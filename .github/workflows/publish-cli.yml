@@ -1,0 +1,71 @@
+name: Publish CLI
+
+on:
+  push:
+    tags: ['cli-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-anchr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.13.1
+      - name: Check CLI version and architecture
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          VERSION=$(cargo metadata --no-deps --format-version 1 | node -e 'let s="";process.stdin.on("data",b=>s+=b);process.stdin.on("end",()=>console.log(JSON.parse(s).packages.find(p=>p.name==="anchor-cli").version));')
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF_NAME" = "cli-v$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - run: pnpm test:e2e --surface cli --only cli,cli-package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anchr-wheel
+          path: target/wheels/anchr-${{ steps.version.outputs.version }}-*.whl
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: anchr-e2e-report
+          path: .internal/testing/
+          include-hidden-files: true
+          retention-days: 7
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/cli-v')
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/anchr
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: anchr-wheel
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
