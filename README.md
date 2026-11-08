@@ -16,13 +16,6 @@
   <img alt="Ollama and MLX" src="https://img.shields.io/badge/runtimes-ollama%20%7C%20mlx-8b7fd4?style=flat-square&labelColor=4a4a4a">
 </p>
 
-> **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/find-fit-128k-light.png">
-  <img src="docs/screenshots/find-fit-128k-dark.png" alt="Anchor's model finder judging Llama 3.2 3B at 128K context">
-</picture>
-
 ## About
 
 Running a model locally usually goes: pick one, download several gigabytes, find out it doesn't fit, and never learn how fast it would have been. Anchor answers those questions **before** you pay for them, then measures the real numbers on your own Mac.
@@ -72,8 +65,8 @@ Open **Explore** to browse a curated catalog (filter by name, publisher or use c
 - **Use from other apps.** Copyable `ollama run`, OpenAI-compatible base URL and a `curl` snippet for any installed model.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/find-fit-32k-light.png">
-  <img src="docs/screenshots/find-fit-32k-dark.png" alt="Model finder at 32K context">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/find-fit-128k-light.png">
+  <img src="docs/screenshots/find-fit-128k-dark.png" alt="Anchor's model finder judging Llama 3.2 3B at 128K context">
 </picture>
 
 ### Benchmark
