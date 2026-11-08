@@ -138,48 +138,9 @@ A real scan of Ollama's on-disk store: total blob and manifest size, savings fro
   <img src="docs/screenshots/settings_dark.png" alt="Appearance settings">
 </picture>
 
-## Using the CLI
+## CLI
 
-`anchor` is the terminal front-end over the same crates — and the same database, so a trial started in either is stored in one place, and a benchmark run there lands in the app's history. New commands documented here require building current source until the next CLI release is published.
-
-Run `anchor` (or `anchor tui`) in a terminal. Type `/` at the prompt to search commands, Tab to complete and Enter to run. Ollama and MLX are listed in the header. Use `/runtime` to choose one or type `/runtime mlx` directly. `/model` picks a local model, `/models` manages installed models, and `/library` finds downloads. `/bench` opens setup and asks for a model if needed. `/results`, `/leaderboard` and `/sessions` browse saved measurements. Type to filter lists, use arrows or Page Up/Down to move, and press Enter for the primary action or Tab for more actions. Escape returns to the previous view. In a conversation, type at the prompt and press Enter to reply; replies stream into the transcript. Confirmations accept `y` or `n`. Ctrl-C clears the prompt, and pressing it twice quits. Ctrl-L refreshes, and `/help` shows controls.
-
-Jobs stay visible across navigation. `/activity` shows the current or last job, including benchmark progress and a summary of decode rate and time to first token. Ctrl-C stops a running job; a second press forces it. `/quit` confirms stopping active work before exiting. Benchmark, chat and preset drafts survive Escape until submitted. Evidence export asks for a new filename and includes prompts/output; it never overwrites an existing file. The workspace requires a real terminal; explicit commands and `--json` remain available for scripts. MLX provides model downloads and benchmarking; chat, comparison, memory fit and store cleanup retain their existing Ollama scope.
-
-```bash
-anchor models ls                            # installed models
-anchor models browse --filter qwen          # everything on ollama.com
-anchor models catalog --runtime mlx         # supported pinned MLX checkpoints
-anchor models pull mlx-community/gemma-3-270m-it-4bit --runtime mlx
-anchor models compare llama3.2:1b qwen3.5:9b "why is the sky blue?"
-anchor fit deepseek-v2 --ctx 32768          # weights + KV cache + verdict
-anchor chat -m llama3.2:1b                  # interactive; omit -m to continue with --conversation
-anchor bench scenarios                      # what the suite measures
-anchor bench run llama3.2:1b --repeats fast
-anchor bench run llama3.2:1b --scenario classify --repeats fast
-anchor bench run mlx-community/gemma-3-270m-it-4bit --runtime mlx --repeats fast
-anchor bench ls --runtime mlx                # saved results, no live runtime needed
-anchor bench top --scenario balanced        # rank every model on one scenario
-anchor bench sessions                       # includes failed/cancelled executions
-anchor bench export SESSION_ID --include-content > evidence.json
-anchor bench replay evidence.json           # offline recalculation from raw evidence
-anchor bench validate llama3.2:1b            # validate Ollama measurements (calibrate remains an alias)
-anchor bench report SESSION_ID              # saved settings and validation reports
-anchor bench calibrate llama3.2:1b --output ./calibration  # isolated DB + full synthetic evidence
-node tools/calibrate-ollama.mjs ./calibration/SESSION_ID.json  # independent replay/arithmetic check
-anchor storage scan
-anchor settings server --start
-```
-
-Use `--json` for scripting and `--host` to point at a non-default Ollama. JSON stdout contains the result; progress and errors go to stderr. Interactive chat requires a prompt, `--file PATH` or `--stdin` when using JSON. One-shot chat returns its conversation ID, model, cancellation state and response/thinking/stats. Comparison returns both slot outcomes and exits nonzero if either fails. Successful commands return 0, operational failures 1, argument errors 2 and interrupted work 130; a declined deletion returns a `declined` result without changing data.
-
-`models ls|info|browse|pull` and `bench run|ls|top|samples` accept `--runtime ollama|mlx` (default Ollama). MLX accepts a supported downloaded catalog ID or a local checkpoint directory for execution. `bench top --runtime mlx` requires `--model` or `--reference` to keep tokenizer/template/runtime comparisons compatible; rankings default to the balanced workload. Sessions span both runtimes unless filtered with `--runtime`. Ollama and MLX rates/memory remain runtime-scoped. CLI repeats retain their existing Thorough default; use `--repeats fast` to match the GUI default.
-
-Create or edit a preset with `anchor settings presets save ID --name NAME --system TEXT --num-ctx 8192`; unspecified fields stay unchanged, and `--clear system,num-ctx` restores runtime defaults for those fields. `anchor chat preset CONVERSATION_ID PRESET_ID` assigns it; omit the preset ID to return to the default. `--preset` also applies when continuing a conversation. `anchor chat regenerate CONVERSATION_ID` replaces the newest assistant turn using its original prompt. Chat and comparison accept `--file PATH` or `--stdin` for longer prompts.
-
-Anything that deletes — `models rm`, `chat rm`, `storage clean` — asks first, and takes `--yes` to skip the prompt. The prompt reads from stdin, so a piped or redirected invocation without `--yes` declines rather than proceeding; scripts need the flag. The first Ctrl-C gracefully stops chat, comparisons, downloads and benchmark/validation runs. Partial chat output is saved; completed benchmark results and interrupted execution evidence are retained. Press Ctrl-C twice to exit immediately.
-
-The app and CLI run as separate processes over the same Rust services and database. An OS-owned work lock refuses competing inference/measurement and model unload/removal operations; ordinary reads remain available, and the lock releases when an owner exits or crashes. Other applications and raw Ollama clients do not participate in this lock, so close unrelated inference work before benchmarking.
+The `anchor` CLI shares benchmark history and chat storage with the desktop app. Install it with `uv tool install anchr` after the PyPI release, or build it from source. See the [CLI guide](docs/cli-guide.md) for interactive controls, command examples, and scripting details.
 
 ## Build from source
 
@@ -250,7 +211,7 @@ pnpm test:e2e --only native                  # targeted reproduction + required 
 
 Full local acceptance requires Apple Silicon/macOS, Rust, pnpm, uv, Ollama, network access and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). Fixture scopes use isolated HTTP/database/filesystem data; full acceptance also downloads small models into disposable caches and exercises actual runtime/GPU paths. Your installed models and normal app database are untouched. Signing, notarization and actual updater installation remain separate manual checks.
 
-Opt-in MLX E2E reads a local checkpoint on an Apple GPU: set `ANCHOR_MLX_E2E_MODEL` to its directory and run `cargo test -p anchor-hub --test mlx_suite_e2e -- --ignored --nocapture`. With the same variable, `pnpm --filter @anchor/desktop test:e2e:native` also checks the real GUI → uv worker → GPU → SQLite path and Stop. Real-text suite artifacts stay in `.internal/benchmarking/mlx-suite-validation/`; the separate legacy synthetic harness is exercised with `--test mlx_e2e` and retains artifacts in `.internal/benchmarking/mlx-validation/`; fixture scopes remain model-free. Worker dependencies live in `workers/mlx/{pyproject.toml,uv.lock}`; `requirements.txt` is the generated hash-pinned export. Regenerate it with `uv export --project workers/mlx --frozen --no-dev --no-emit-project --output-file workers/mlx/requirements.txt` after changing the lock.
+Opt-in MLX E2E reads a local checkpoint on an Apple GPU: set `ANCHOR_MLX_E2E_MODEL` to its directory and run `cargo test -p anchor-hub --test mlx_suite_e2e -- --ignored --nocapture`. With the same variable, `pnpm --filter @anchor/desktop test:e2e:native` also checks the real GUI → uv worker → GPU → SQLite path and Stop. Real-text suite artifacts stay in `.internal/benchmarking/mlx-suite-validation/`; the separate legacy synthetic harness is exercised with `--test mlx_e2e` and retains artifacts in `.internal/benchmarking/mlx-validation/`; fixture scopes remain model-free. Worker dependencies live in `workers/mlx/{pyproject.toml,uv.lock}`.
 
 To exercise a first-time MLX install, run `ANCHOR_MLX_DOWNLOAD_E2E=1 pnpm --filter @anchor/desktop test:e2e:native` on Apple Silicon with uv and network access. This downloads Gemma 3 270M (about 191 MB) through the actual app into an empty temporary Hugging Face cache, cancels during the weight transfer using Activity, retries, independently checks every pinned checksum, and runs all nine workloads plus Stop through native IPC. It ignores `ANCHOR_MLX_E2E_MODEL`, preserves your usual model cache, and removes its temporary checkpoint after success. JSON results and a screenshot remain in `.internal/benchmarking/mlx-download-validation/`; failed runs retain their temporary directory for inspection. The separate ignored `mlx_download_e2e` remains a cached-file corruption/repair check, not a clean-install test. Neither live test runs in normal CI.
 
@@ -278,7 +239,7 @@ Roadmap items, not promises with dates:
 - **Importing models from Hugging Face** — pull a GGUF straight from a repo instead of waiting for it to land in Ollama's library.
 - **Windows and Linux** support.
 - **Additional inference engines** beyond Ollama, starting with direct llama.cpp integration.
-- **Compact density and a live tokens/sec readout** in chat.
+- **Compact density controls** in chat.
 
 ## License
 
