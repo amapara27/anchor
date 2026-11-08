@@ -1,10 +1,10 @@
 //! Opt-in installed runtime → versioned evidence → post-first decode → backward-compatible replay.
 use anchor_core::HwIdentity;
-use anchor_hub::{bench::evidence::Outcome, Registry, RepeatsMode};
+use anchor_hub::{bench::evidence::{DecodeConvention, Outcome}, Registry, RepeatsMode};
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 
 #[tokio::test]
-#[ignore = "requires ANCHOR_OLLAMA_E2E_HOST and ANCHOR_OLLAMA_E2E_MODEL on the supported local build"]
+#[ignore = "requires ANCHOR_OLLAMA_E2E_HOST and ANCHOR_OLLAMA_E2E_MODEL (a GGUF model) on local Ollama 0.32+"]
 async fn post_first_decode_uses_the_observed_backend_and_retains_raw_counters() {
     let host = std::env::var("ANCHOR_OLLAMA_E2E_HOST").expect("set the isolated local server host");
     let model = std::env::var("ANCHOR_OLLAMA_E2E_MODEL").expect("set an installed model");
@@ -36,6 +36,10 @@ async fn post_first_decode_uses_the_observed_backend_and_retains_raw_counters() 
     let e = registry.bench_evidence(&runs[0].id).unwrap();
     assert_eq!(e.session.outcome, Outcome::Completed);
     assert_eq!(e.session.formula_version, 2);
+    assert_eq!(e.session.config.decode_convention, Some(DecodeConvention::FirstTokenUntimed), "GGUF model");
+    // The matching runner observation is only collected on the 0.34.4 build it was recorded against.
+    let pinned = e.session.config.runtime_version.as_deref() == Some("0.34.4");
+    let mut step_ns = f64::MAX;
     let mut legacy = e.clone();
     legacy.session.formula_version = 1;
     let old = legacy.recalculate().unwrap();
@@ -45,19 +49,16 @@ async fn post_first_decode_uses_the_observed_backend_and_retains_raw_counters() 
         .zip(&e.derived.attempts)
         .zip(&old.attempts)
     {
-        let observation = attempt
-            .calibration
-            .as_ref()
-            .unwrap()
-            .decode_timing
-            .as_ref()
-            .unwrap();
-        assert_eq!(observation.runtime_version, "0.34.4");
-        assert_eq!(observation.build_info, "b1-161755f29");
-        assert_eq!(observation.model, model);
+        if pinned {
+            let observation = attempt.calibration.as_ref().unwrap().decode_timing.as_ref().unwrap();
+            assert_eq!(observation.runtime_version, "0.34.4");
+            assert_eq!(observation.build_info, "b1-161755f29");
+            assert_eq!(observation.model, model);
+        }
         let n = metric.counters.eval_count.unwrap();
         let ns = metric.counters.eval_duration_ns.unwrap();
         assert!(n > 1 && ns > 0);
+        step_ns = step_ns.min(ns as f64 / (n - 1) as f64);
         assert_eq!(
             metric.decode_tps.value,
             Some((n - 1) as f64 / (ns as f64 / 1e9))
@@ -93,6 +94,10 @@ async fn post_first_decode_uses_the_observed_backend_and_retains_raw_counters() 
         .unwrap();
     let one = &calibration.derived.attempts[index];
     assert_eq!(one.counters.eval_count, Some(1));
+    // The convention itself, measured on this build: a one-token reply's generation timer holds
+    // none of that token's work, so it stays far below one ordinary decode step.
+    assert!((one.counters.eval_duration_ns.unwrap() as f64) < step_ns / 2.0,
+        "cap-one eval_duration {:?} ns vs decode step {step_ns} ns", one.counters.eval_duration_ns);
     assert_eq!(
         one.decode_tps.unavailable_reason.as_deref(),
         Some("no_post_first_token_decode_work")

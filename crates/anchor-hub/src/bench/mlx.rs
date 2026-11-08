@@ -585,10 +585,11 @@ impl Worker {
                 std::fs::write(root.join(name), contents).map_err(|e| invalid(e.to_string()))?;
             }
         }
-        let uv = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .map(|p| p.join(".local/bin/uv"))
-            .filter(|p| p.is_file())
+        // Finder-launched apps don't inherit the shell PATH, so probe the standard installs first.
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let uv = [".local/bin/uv", ".cargo/bin/uv"].iter().filter_map(|p| home.as_ref().map(|h| h.join(p)))
+            .chain(["/opt/homebrew/bin/uv", "/usr/local/bin/uv"].map(PathBuf::from))
+            .find(|p| p.is_file())
             .unwrap_or_else(|| "uv".into());
         let mut command = Command::new(uv);
         command
@@ -808,7 +809,7 @@ impl Registry {
                     .to_string_lossy()
                     .into()
             });
-        let session=self.begin_bench_session(SessionConfig{protocol:PROTOCOL.into(),suite_id:"mlx-native".into(),suite_version:1,prompt_version:1,hw:hw.clone(),install_id:install_id.into(),
+        let session=self.begin_bench_session(SessionConfig{decode_convention:None,protocol:PROTOCOL.into(),suite_id:"mlx-native".into(),suite_version:1,prompt_version:1,hw:hw.clone(),install_id:install_id.into(),
             model_name,model_digest:identity.and_then(|v|v["model_digest"].as_str()).unwrap_or("unverified").into(),quant:identity.and_then(|v|v.get("quantization")).map(Value::to_string),
             runtime_version:identity.map(|v|format!("MLX {} / MLX-LM {}",v["versions"]["mlx"].as_str().unwrap_or("unknown"),v["versions"]["mlx-lm"].as_str().unwrap_or("unknown"))),server_is_local:true,concurrency:1,
             connection_policy:"exclusive native uv worker; no HTTP".into(),cache_policy:"fresh standard KVCache per attempt, depth 0; warmup retained; allocator cache cleared outside windows".into(),

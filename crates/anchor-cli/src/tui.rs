@@ -1181,6 +1181,8 @@ pub fn run() -> Result<(), String> {
     }
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop = shutdown.clone();
+    let heartbeat = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let beat = heartbeat.clone();
     let signals = tokio::spawn(async move {
         use tokio::signal::unix::{signal, SignalKind};
         let (Ok(mut term), Ok(mut hup), Ok(mut interrupt)) = (
@@ -1190,11 +1192,22 @@ pub fn run() -> Result<(), String> {
         ) else {
             return;
         };
-        tokio::select! { _ = term.recv() => {}, _ = hup.recv() => {}, _ = interrupt.recv() => {} }
+        let code = tokio::select! { _ = term.recv() => 143, _ = hup.recv() => 129, _ = interrupt.recv() => 130 };
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        // crossterm 0.29 rereads a closed tty forever, so the loop may never see `stop`.
+        // A loop still waiting on a graceful job stop keeps beating; only a stuck one exits here.
+        std::thread::spawn(move || loop {
+            let seen = beat.load(std::sync::atomic::Ordering::Relaxed);
+            std::thread::sleep(Duration::from_secs(2));
+            if beat.load(std::sync::atomic::Ordering::Relaxed) == seen {
+                drop(Restore);
+                std::process::exit(code);
+            }
+        });
     });
     let mut dirty = true;
     loop {
+        heartbeat.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let working = app.read.is_some() || app.job.is_some() || app.exit_armed.is_some();
         app.update();
         if shutdown.load(std::sync::atomic::Ordering::Relaxed) && !app.quitting {

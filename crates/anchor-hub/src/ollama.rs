@@ -79,6 +79,15 @@ pub async fn digest_of(host: &str, id: &str) -> Result<Option<String>> {
 
 /// `(name, digest)` for every installed model that reports a digest.
 pub async fn installed_digests(host: &str) -> Result<Vec<(String, String)>> {
+    Ok(local_tags(host).await?.into_iter().filter_map(|m| Some((m.name, m.digest?))).collect())
+}
+
+/// Weight format of an installed model: `gguf`, or `safetensors` for Ollama's MLX runner.
+pub async fn format_of(host: &str, id: &str) -> Result<Option<String>> {
+    Ok(local_tags(host).await?.into_iter().find(|m| m.name == id).and_then(|m| m.details.format))
+}
+
+async fn local_tags(host: &str) -> Result<Vec<TagEntry>> {
     let url = format!("{host}/api/tags");
     let resp: TagsResponse = request_client()?
         .get(&url)
@@ -87,7 +96,7 @@ pub async fn installed_digests(host: &str) -> Result<Vec<(String, String)>> {
         .error_for_status()?
         .json()
         .await?;
-    Ok(resp.models.into_iter().filter(TagEntry::is_local).filter_map(|m| Some((m.name, m.digest?))).collect())
+    Ok(resp.models.into_iter().filter(TagEntry::is_local).collect())
 }
 
 fn client_builder() -> reqwest::ClientBuilder {
@@ -157,6 +166,8 @@ struct TagDetails {
     parameter_size: Option<String>,
     #[serde(default)]
     quantization_level: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
 }
 
 /// Response shape of `POST /api/show` (only the bits we use).

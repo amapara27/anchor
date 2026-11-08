@@ -941,6 +941,13 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+/// Whether this Mac meets an update's `minimum_system_version`, so the banner never installs
+/// a bundle macOS would refuse to open.
+#[tauri::command]
+fn os_supports(minimum: String) -> bool {
+    anchor_system::macos_at_least(&minimum)
+}
+
 /// Relaunches after an update has been staged. Tauri swaps the .app bundle on
 /// disk but leaves the old binary running, so nothing changes until this fires.
 #[tauri::command]
@@ -1029,6 +1036,7 @@ pub fn run() {
             mlx_suite_runs,
             mlx_leaderboard,
             restart_app,
+            os_supports,
             bench_runs_for_model,
             bench_history,
             bench_sessions,

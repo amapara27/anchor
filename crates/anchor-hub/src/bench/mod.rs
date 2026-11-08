@@ -283,6 +283,8 @@ impl Registry {
         let ollama_version = ollama::version(&self.host).await.ok();
         let quant = ollama::list_local_models(&self.host).await?
             .into_iter().find(|m| m.id == model).and_then(|m| m.quantization);
+        // Older Ollama has no MLX runner, so an unreported format is GGUF.
+        let format = ollama::format_of(&self.host, model).await.ok().flatten();
 
         let groups: Vec<_> = prompts::grouped_by_ctx()
             .into_iter()
@@ -315,8 +317,9 @@ impl Registry {
             server_is_local: crate::is_local_host(&self.host), concurrency: 1,
             connection_policy: "new HTTP client per attempt; connection setup included".into(),
             cache_policy: "unverified; distinct warmup prompt; runtime counters retained".into(),
-            counter_calibration: "post-first-token decode requires a recorded matching runner convention; source counters remain separate; TTFT is client-observed".into(), attempts: plan,
+            counter_calibration: "decode follows the recorded runner convention (GGUF excludes the first token; MLX runner times it); source counters remain separate; TTFT is client-observed".into(), attempts: plan,
             calibration: None, native: None, mlx: None,
+            decode_convention: Some(if format.as_deref() == Some("safetensors") { evidence::DecodeConvention::FirstTokenTimed } else { evidence::DecodeConvention::FirstTokenUntimed }),
         })?;
         let total = groups.iter().map(|(_, g)| g.len()).sum::<usize>() as u32;
         let mut index = 0u32;
@@ -447,7 +450,7 @@ impl Registry {
                     Some(format!("requested {} context, but Ollama loaded {ctx}", plan.request.num_ctx.unwrap())),
                 _ => None,
             };
-            let metrics = evidence::recalculate(&attempt, session.formula_version)?;
+            let metrics = evidence::recalculate_with(&attempt, session.formula_version, session.config.decode_convention)?;
             let identity_error = match attempt.observed_digest.as_deref() {
                 None => Some("Ollama did not report the loaded digest".to_string()),
                 Some(digest) if digest.trim_start_matches("sha256:") != session.config.model_digest.trim_start_matches("sha256:") =>
@@ -483,7 +486,7 @@ impl Registry {
         }
         self.finish_bench_attempt(&attempt)?;
         if let Some(error) = failure { return Err(error); }
-        let metrics = evidence::recalculate(&attempt, session.formula_version)?;
+        let metrics = evidence::recalculate_with(&attempt, session.formula_version, session.config.decode_convention)?;
         Ok((attempt, metrics))
     }
 }

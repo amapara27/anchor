@@ -59,9 +59,9 @@ try {
             await new Promise(r => setTimeout(r, 100));
         }
         assert(version, 'owned Ollama must become ready');
-        if (version.version !== '0.34.4') {
+        if (!(v => { const [a, b] = v.split('.').map(n => parseInt(n, 10)); return a > 0 || b >= 32; })(version.version)) {
             blocked = true; process.exitCode = 77;
-            console.error('BLOCKED: live measurement acceptance requires recorded Ollama 0.34.4; found ' + version.version);
+            console.error('BLOCKED: live measurement acceptance requires Ollama 0.32 or later; found ' + version.version);
         }
     } else {
         // MLX commands must not attempt to start or contact Ollama.
@@ -106,6 +106,7 @@ try {
         const runs = await run(['bench', 'run', model, '--runtime', runtime, '--repeats', 'fast', '--json']);
         assert.equal(runs.length, 9); assert.equal(new Set(runs.map(r => r.prompt_id)).size, 9);
         assert(runs.every(r => r.ttft_ms_median !== null));
+        if (runtime === 'ollama') assert(runs.every(r => r.decode_tps_median !== null), 'decode is reported on the installed Ollama version');
         let selected = model;
         if (runtime === 'mlx') {
             const entry = (await run(['models', 'catalog', '--runtime', runtime, '--json'])).find(m => m.id === model);

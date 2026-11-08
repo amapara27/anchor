@@ -23,7 +23,7 @@ pnpm test:e2e --list               # stage names and purposes
 
 `full` is the default. `--surface cli` selects harness, state, measurements, production CLI build, CLI fixtures, discovery and live CLI Ollama/MLX stages. It reports `passed-cli-full`, never a full GUI/app pass; fixture/CI CLI scopes stay narrower. The CLI build dependency compiles only the CLI and shared crates. `--only` still selects explicit stages, independent of surface.
 
- `fixtures` and `ci` have narrower scope and report `passed-fixtures` / `passed-ci`, never a full-app pass. `--only` reports `passed-selected`. Selecting `mlx` explicitly still runs the real download/GPU path regardless of profile. Tests are not silently skipped when prerequisites are missing: a requested stage is **blocked** and the command returns nonzero. An installed Ollama build outside the currently supported phase-timing convention is also blocked for the live rate-acceptance stage; this does not imply that normal generation on that version is unsupported.
+ `fixtures` and `ci` have narrower scope and report `passed-fixtures` / `passed-ci`, never a full-app pass. `--only` reports `passed-selected`. Selecting `mlx` explicitly still runs the real download/GPU path regardless of profile. Tests are not silently skipped when prerequisites are missing: a requested stage is **blocked** and the command returns nonzero. The live Ollama stages run on any installed Ollama 0.32 or later and are blocked below that floor. They measure the GGUF decode-timing convention on the installed build (a one-token reply's generation timer stays below one decode step); runner-identity checks apply only on the recorded 0.34.4 build.
 
 ## Reports and the agent repair loop
 

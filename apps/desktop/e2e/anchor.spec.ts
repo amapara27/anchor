@@ -10,7 +10,7 @@ test.afterEach(({page}) => { expect(pageErrors.get(page) ?? [], 'uncaught render
 
 // Browser-side Tauri transport double: the real React app and real Channel reducer
 // run unchanged. Backend HTTP/SQLite behavior is checked by cargo tests separately.
-async function boot(page: Page, options: {longChat?: boolean; availableUpdate?: boolean; updateCheckFails?: boolean; fitCase?: any; empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
+async function boot(page: Page, options: {longChat?: boolean; availableUpdate?: boolean; updateNeedsMacos?: boolean; updateCheckFails?: boolean; fitCase?: any; empty?: boolean; emptyMlx?: boolean; fullCatalog?: boolean; noDecode?: boolean; offline?: boolean; failDownload?: boolean; measurements?: boolean; variants?: boolean; failCalibration?: boolean; failNative?: boolean} = {}) {
   await page.addInitScript(({catalog, mlxCatalog, options}) => {
     const w = window as any;
     let sequence = 0;
@@ -172,7 +172,8 @@ async function boot(page: Page, options: {longChat?: boolean; availableUpdate?: 
           case 'stop_benchmark':state.benchStop=true;return;
           case 'scan_storage':return {root:'/test/models',blobs_bytes:3*1024**3,manifests_bytes:100,orphaned_bytes:0,dedup_savings_bytes:0,orphaned_blobs:[],unreadable_manifests:0};
           case 'unload_model': return;
-          case 'plugin:updater|check': if(options.updateCheckFails)throw 'fixture endpoint unavailable';return options.availableUpdate?{rid:42,currentVersion:'1.0.0',version:'1.0.1',body:'Fixture update',rawJson:{}}:null;
+          case 'plugin:updater|check': if(options.updateCheckFails)throw 'fixture endpoint unavailable';return options.availableUpdate?{rid:42,currentVersion:'1.0.0',version:'1.0.1',body:'Fixture update',rawJson:{minimum_system_version:'15.0'}}:null;
+          case 'os_supports': return args.minimum==='15.0'&&!options.updateNeedsMacos;
           case 'plugin:updater|download_and_install': emit(args.onEvent,{event:'Started',data:{contentLength:100}});await sleep(150);if(state.updateFail)throw 'fixture package download failed';emit(args.onEvent,{event:'Progress',data:{chunkLength:100}});return;
           case 'restart_app': return;
           default: throw new Error('Unhandled E2E command: '+cmd);
@@ -915,6 +916,13 @@ test('settings preset create edit apply delete and appearance persist across nav
 
 test('update notice can be dismissed without an install',async({page})=>{
   await boot(page,{availableUpdate:true});await expect(page.getByText('Anchor 1.0.1',{exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Dismiss update notice'}).click();await expect(page.getByText('Anchor 1.0.1',{exact:true})).toHaveCount(0);
+  expect(await page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:updater|download_and_install'||c.cmd==='restart_app'))).toBe(false);
+});
+
+test('an update needing a newer macOS is announced but never installed',async({page})=>{
+  await boot(page,{availableUpdate:true,updateNeedsMacos:true});await expect(page.getByText('needs macOS 15.0 or later.')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Update and restart'})).toHaveCount(0);
   await page.getByRole('button',{name:'Dismiss update notice'}).click();await expect(page.getByText('Anchor 1.0.1',{exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>(window as any).__e2e.calls.some((c:any)=>c.cmd==='plugin:updater|download_and_install'||c.cmd==='restart_app'))).toBe(false);
 });

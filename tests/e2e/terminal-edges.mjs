@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 export async function terminalEdges({ terminal, scratch, run, models, requests, setStream, setOffline, setAnswer, checkpoint }) {
     const ui = terminal();
@@ -105,5 +106,19 @@ export async function terminalEdges({ terminal, scratch, run, models, requests, 
     await signal.waitScreen('Type / for commands');
     signal.child.kill('SIGTERM');
     await signal.finish();
+    checkpoint('terminal-hangup-exit');
+    // Closing the terminal window: the PTY master disappears and the kernel sends SIGHUP.
+    const hangup = terminal();
+    await hangup.waitScreen('Type / for commands');
+    const childrenOf = pid => execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).trim().split('\n').map(Number);
+    const [program] = childrenOf(childrenOf(hangup.child.pid)[0]);
+    const alive = () => { try { process.kill(program, 0); return true; } catch { return false; } };
+    hangup.child.kill('SIGKILL');
+    await hangup.exited;
+    const until = Date.now() + 8000;
+    while (alive() && Date.now() < until) await new Promise(r => setTimeout(r, 100));
+    const stuck = alive();
+    if (stuck) process.kill(program, 'SIGKILL');
+    assert(!stuck, 'the workspace exits when its terminal closes instead of spinning on a dead tty');
     assert(models.some(m => m.name === 'fixture:1b'));
 }

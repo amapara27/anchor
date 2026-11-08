@@ -47,7 +47,7 @@ impl Fixture {
                 let route = header.lines().next().unwrap().split_whitespace().nth(1).unwrap();
                 let mode = server_mode.load(Ordering::Relaxed);
                 let response = match route {
-                    "/api/tags" => json!({"models":[{"name":"fixture:latest","digest":"build-1","size":16_000_000_000u64,"details":{"family":"llama","parameter_size":"8B","quantization_level":"F16"}}]}).to_string(),
+                    "/api/tags" => json!({"models":[{"name":"fixture:latest","digest":"build-1","size":16_000_000_000u64,"details":{"format":"gguf","family":"llama","parameter_size":"8B","quantization_level":"F16"}}]}).to_string(),
                     "/api/version" => json!({"version":if mode == 8 {"e2e-2"} else {"e2e"}}).to_string(),
                     "/api/show" => json!({"model_info":{"general.architecture":"llama","llama.context_length":131072,"llama.block_count":16,"llama.attention.head_count_kv":8,"llama.attention.key_length":64,"llama.attention.value_length":64}}).to_string(),
                     "/api/ps" => json!({"models":context.map(|ctx| vec![json!({"name":"fixture:latest","digest":if mode == 16 {Value::Null} else if mode == 17 {json!("repointed-build")} else {json!("build-1")},"size":3_000_000_000u64,"context_length":if mode == 3 {512} else {ctx}})]).unwrap_or_default()}).to_string(),
@@ -141,7 +141,9 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert!(done); assert_eq!(runs.len(), 9);
     let mut repeats = 0;
     for run in &runs {
-        assert_eq!(run.decode_tps_median, None, "an HTTP fixture cannot establish a native decode-clock convention");
+        // Fixture: eval_count = min(cap, 42) at a median 21 tok/s; GGUF decode drops the first token, no runner observation needed.
+        let count = anchor_hub::bench::CATALOG.iter().find(|s| Some(s.id) == run.prompt_id.as_deref()).unwrap().gen_tokens.min(42) as f64;
+        assert!((run.decode_tps_median.unwrap() - 21.0 * (count - 1.0) / count).abs() < 1e-6, "post-first decode from the recorded GGUF convention");
         assert_eq!(run.prefill_tps_median, Some(1000.0));
         assert!(run.ttft_ms_median.unwrap() >= 70.0);
         assert_eq!(run.load_ms, Some(2000));
@@ -187,6 +189,10 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     let mut legacy = evidence.clone();
     legacy.session.formula_version = 1;
     let legacy_replay = legacy.recalculate().unwrap();
+    assert_eq!(session.config.decode_convention, Some(anchor_hub::bench::evidence::DecodeConvention::FirstTokenUntimed), "GGUF format selects the post-first convention");
+    let mut pre_convention_export = evidence.clone();
+    pre_convention_export.session.config.decode_convention = None;
+    let pre_convention = pre_convention_export.recalculate().unwrap();
     assert!(legacy_replay.scenarios.iter().all(|s| (s.decode_tps_median.unwrap() - 21.0).abs() < 1e-6));
     for (index, (attempt, metrics)) in evidence.attempts.iter().zip(&replay.attempts).enumerate() {
         let plan = &session.config.attempts[attempt.plan_index];
@@ -195,7 +201,11 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
         // Independent arithmetic on the exported wire counters, not stored stats/rates.
         let expected_decode = terminal["eval_count"].as_u64().unwrap() as f64 * 1e9 / terminal["eval_duration"].as_u64().unwrap() as f64;
         assert!((legacy_replay.attempts[index].decode_tps.value.unwrap() - expected_decode).abs() < 1e-9);
-        assert_eq!(metrics.decode_tps.unavailable_reason.as_deref(), Some("decode_timing_convention_unverified"));
+        // GGUF runners count the first token but start timing after it, on any Ollama version.
+        let post_first = (terminal["eval_count"].as_u64().unwrap() - 1) as f64 * 1e9 / terminal["eval_duration"].as_u64().unwrap() as f64;
+        assert!((metrics.decode_tps.value.unwrap() - post_first).abs() < 1e-9);
+        assert_eq!(pre_convention.attempts[index].decode_tps.unavailable_reason.as_deref(), Some("decode_timing_convention_unverified"),
+            "sessions recorded before the convention keep their original replay");
         assert_eq!(metrics.prefill_tps.value, Some(1000.0));
         assert_eq!(metrics.finish_reason.as_deref(), Some("length"));
         assert!(metrics.completion_ms.value.unwrap() >= metrics.last_content_ms.value.unwrap());
@@ -237,11 +247,21 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     }), ..Default::default()});
     let corrected = anchor_hub::bench::evidence::recalculate(&trace, 2).unwrap();
     assert_eq!(corrected.decode_tps.value, Some(49.5));
+    use anchor_hub::bench::evidence::{recalculate_with, DecodeConvention};
+    trace.calibration = None;
+    assert_eq!(recalculate_with(&trace, 2, Some(DecodeConvention::FirstTokenUntimed)).unwrap().decode_tps.value, Some(49.5), "no runner observation needed once the convention is recorded");
+    assert_eq!(recalculate_with(&trace, 2, Some(DecodeConvention::FirstTokenTimed)).unwrap().decode_tps.value, Some(50.0), "the MLX runner times the first token");
+    assert_eq!(recalculate_with(&trace, 1, Some(DecodeConvention::FirstTokenTimed)).unwrap().decode_tps.value, Some(50.0), "formula 1 ignores the convention");
+    trace.calibration = Some(ProbeObservation {decode_timing:Some(DecodeTimingObservation {
+        model:"fixture:latest".into(), runtime_version:"0.34.4".into(),
+        runner_fingerprint:Fingerprint{sha256:"a".repeat(64)}, build_info:"b1-161755f29".into(), model_blob:"/tmp/model.gguf".into(),
+    }), ..Default::default()});
     assert_eq!(corrected.first_output_ms, metrics.first_output_ms, "TTFT is unchanged by the decode calculation");
     let original_terminal = trace.events[5].clone();
     trace.events[5].kind = EventKind::Frame {bytes:br#"{"done":true,"eval_count":1,"eval_duration":1000}"#.to_vec()};
     let one = anchor_hub::bench::evidence::recalculate(&trace, 2).unwrap();
     assert_eq!(one.decode_tps.unavailable_reason.as_deref(), Some("no_post_first_token_decode_work"));
+    assert_eq!(recalculate_with(&trace, 2, Some(DecodeConvention::FirstTokenUntimed)).unwrap().decode_tps.unavailable_reason.as_deref(), Some("no_post_first_token_decode_work"));
     assert_eq!(one.counters.eval_duration_ns, Some(1000), "the original counter is retained");
     assert_eq!(anchor_hub::bench::evidence::recalculate(&trace, 1).unwrap().decode_tps.value, Some(1_000_000.0));
     trace.events[5] = original_terminal;
@@ -348,7 +368,7 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     fixture.mode.store(5, Ordering::Relaxed);
     let fully_cached = fixture.registry("cached.db").run_benchmark("fixture:latest",&hw,"e2e",RepeatsMode::Fast,None, &cancel, |_|{}).await.unwrap();
     assert_eq!(fully_cached.len(), 9);
-    assert!(fully_cached.iter().all(|r| r.prefill_tps_median.is_none() && r.decode_tps_median.is_none()));
+    assert!(fully_cached.iter().all(|r| r.prefill_tps_median.is_none() && r.decode_tps_median.is_some()), "a fully cached prompt has no prefill rate but still decodes");
     let mut old_cached = fixture.registry("cached.db").bench_evidence(&fully_cached[0].id).unwrap();
     old_cached.session.formula_version = 1;
     assert!(old_cached.recalculate().unwrap().scenarios.iter().all(|s| s.prefill_tps_median.is_none() && s.decode_tps_median.is_some()));
@@ -374,7 +394,8 @@ async fn measurements_survive_http_streaming_persistence_and_legacy_migration() 
     assert_eq!(streamed.len(), 1, "cancellation retains completed scenarios");
     assert!(!chunks.is_empty());
     assert!(chunks.iter().all(|v| v.is_finite() && *v > 0.0));
-    assert_eq!(streamed[0].decode_tps_median, None);
+    let count = anchor_hub::bench::CATALOG.iter().find(|s| Some(s.id) == streamed[0].prompt_id.as_deref()).unwrap().gen_tokens.min(42) as f64;
+    assert!((streamed[0].decode_tps_median.unwrap() - 21.0 * (count - 1.0) / count).abs() < 1e-6);
     let mut old_streamed = fixture.registry("streamed.db").bench_evidence(&streamed[0].id).unwrap();
     old_streamed.session.formula_version = 1;
     assert!((old_streamed.recalculate().unwrap().scenarios[0].decode_tps_median.unwrap() - 21.0).abs() < 1e-6);

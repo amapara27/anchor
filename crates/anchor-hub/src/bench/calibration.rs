@@ -229,7 +229,7 @@ impl Registry {
             server_is_local:true, concurrency:1, connection_policy:"new HTTP client per attempt; connection setup included".into(),
             cache_policy:"predeclared unload/repeat/prefix probes; classify observed counts only".into(),
             counter_calibration:"diagnostic: count cross-checks do not verify native phase timer boundaries".into(),
-            attempts, calibration:Some(identity), native:None, mlx:None,
+            attempts, calibration:Some(identity), native:None, mlx:None, decode_convention:None,
         })?;
         let mut failed = false;
         for (index, (name, _, _, unload, _)) in cases.iter().enumerate() {

@@ -4,7 +4,7 @@ set +x
 set -euo pipefail
 unset APPLE_PASSWORD
 
-pnpm tauri bundle
+pnpm tauri bundle ${ANCHOR_FLOOR_OVERRIDE:+--config "$ANCHOR_FLOOR_OVERRIDE"}
 unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
 
@@ -27,15 +27,19 @@ xcrun stapler staple "$DMG"
 # Stapling lets Gatekeeper clear it offline; --context matches how a mount is judged.
 spctl --assess --type open --context context:primary-signature -vv "$DMG"
 
-# writes current version for updater plugin to compare to
+# update.json is what guarded copies read; it carries the macOS floor they check before installing.
+# latest.json serves copies older than the guard: the bridge itself, then that same bridge forever.
 VERSION=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
-OUT="target/release/bundle/latest.json"
+BUNDLE="target/release/bundle"
 node -e '
 const fs = require("fs");
-const [version, sig] = [process.argv[1], fs.readFileSync(process.argv[2], "utf8").trim()];
-fs.writeFileSync(process.argv[3], JSON.stringify({
+const [version, sig, out, override] = [process.argv[1], fs.readFileSync(process.argv[2], "utf8").trim(), process.argv[3], process.argv[4]];
+const config = JSON.parse(fs.readFileSync("apps/desktop/src-tauri/tauri.conf.json", "utf8"));
+const minimum = (override ? JSON.parse(override) : config).bundle?.macOS?.minimumSystemVersion ?? "10.13";
+fs.writeFileSync(out, JSON.stringify({
   version,
   pub_date: new Date().toISOString(),
+  minimum_system_version: minimum,
   platforms: {
     // Apple Silicon only: the build is aarch64 and Anchor targets M-series.
     "darwin-aarch64": {
@@ -44,5 +48,18 @@ fs.writeFileSync(process.argv[3], JSON.stringify({
     },
   },
 }, null, 2) + "\n");
-' "$VERSION" "$APP.tar.gz.sig" "$OUT"
-echo "wrote $OUT for v$VERSION"
+' "$VERSION" "$APP.tar.gz.sig" "$BUNDLE/update.json" "${ANCHOR_FLOOR_OVERRIDE:-}"
+if [ -n "${ANCHOR_FLOOR_OVERRIDE:-}" ]; then
+  cp "$BUNDLE/update.json" "$BUNDLE/latest.json"
+else
+  curl -fsSL -o "$BUNDLE/latest.json" https://github.com/amapara27/anchor/releases/latest/download/latest.json
+  node -e '
+const m = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const floor = m.minimum_system_version;
+if (!m.platforms?.["darwin-aarch64"]?.url || (floor && floor !== "11.0" && floor !== "10.13")) {
+  console.error("the live latest.json is not a floor-free bridge; refusing to strand pre-guard copies");
+  process.exit(1);
+}
+' "$BUNDLE/latest.json"
+fi
+echo "wrote update.json and latest.json for v$VERSION"

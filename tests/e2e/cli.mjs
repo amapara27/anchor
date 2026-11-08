@@ -246,9 +246,11 @@ try {
     checkpoint('benchmark-export-replay-and-interruption');
     const runs = await run(['bench', 'run', 'fixture:1b', '--repeats', 'fast', '--json'], { json: true });
     assert.equal(runs.length, 9);
-    assert(runs.every(r => r.decode_tps_median === null && r.ttft_ms_median !== null), 'unsupported clocks remain unknown');
+    assert(runs.every(r => r.decode_tps_median !== null && r.ttft_ms_median !== null), 'GGUF decode is available without a version-specific runner observation');
     const one = await run(['bench', 'run', 'fixture:1b', '--scenario', 'classify', '--repeats', 'fast', '--json'], { json: true });
     assert.equal(one.length, 1); assert.equal(one[0].prompt_id, 'classify');
+    // Fixture reports eval_count = num_predict (32 for classify) over 0.5 s; the first token is excluded.
+    assert.equal(one[0].decode_tps_median, (32 - 1) / 0.5);
     await run(['bench', 'samples', one[0].id, '--json'], { json: true });
     const sessions = await run(['bench', 'sessions', '--json'], { json: true });
     const session = sessions.find(s => s.outcome === 'completed' && s.planned_attempts === 21);
@@ -317,7 +319,7 @@ try {
     await progress.wait('chunks/s');
     await progress.wait('completed classify');
     await progress.finish();
-    assert.match(progress.raw, /chunks\/s\r\x1b\[2K(?:Completed repeat|completed)/, 'clear live output before the next permanent status');
+    assert.match(progress.raw, /chunks\/s\r\x1b\[2K(?:Completed repeat|completed|repeat \d+\/\d+)/, 'clear live output before the next permanent status');
     assert(!/chunks\/s(?:completed|repeat|\d\/\d)/.test(progress.raw), 'progress and statuses must not join without a terminal clear');
     await progress.capture('terminal-progress');
     slow = false;

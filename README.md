@@ -146,7 +146,7 @@ The `anchor` CLI shares benchmark history and chat storage with the desktop app.
 
 ### Prerequisites
 
-- macOS (Apple Silicon recommended)
+- macOS 15 Sequoia or later on Apple Silicon
 - [Ollama](https://ollama.com/download) installed
 - Rust (stable) — [rustup](https://rustup.rs)
 - Node 20+ and pnpm 10+
@@ -225,8 +225,8 @@ Conventions worth knowing before contributing:
 
 ## Currently supported
 
-- **macOS**, Apple Silicon as the primary target. Intel Macs build and run but are untested.
-- **[Ollama](https://ollama.com)** for interactive inference and serving benchmarks; optional **MLX-LM text models** on Apple Silicon, with runtime-scoped results and a shared curated text catalog.
+- **macOS 15 Sequoia or later on Apple Silicon.** Intel Macs and older macOS are unsupported.
+- **[Ollama](https://ollama.com) 0.32 or later** for interactive inference and serving benchmarks (prefill rates need 0.33.3+); optional **MLX-LM text models** on Apple Silicon, with runtime-scoped results and a shared curated text catalog.
 - **Desktop app and CLI**, sharing one database, released separately: `v*` tags for the app, `cli-v*` for the CLI.
 
 ## In the pipeline

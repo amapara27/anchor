@@ -102,11 +102,11 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     ui.resize(18, 50);
     await ui.waitScreen('TTFT ms');
     await ui.waitScreen('PRE tok/s');
-    assert.match(ui.screen, /› classify\s+900\.0\s+N\/A\s+\d+\.\d$/m);
+    assert.match(ui.screen, /› classify\s+900\.0\s+62\.0\s+\d+\.\d$/m);
     await ui.capture('terminal-grouped-workloads-50');
     ui.resize(18, 40);
     await ui.waitScreen('PRE tok/s');
-    assert.match(ui.screen, /900\.0\s+N\/A\s+\d+\.\d$/m);
+    assert.match(ui.screen, /900\.0\s+62\.0\s+\d+\.\d$/m);
     ui.send('\x1b[B');
     await ui.waitScreen('Measured workloads  2/');
     ui.send('\x1b[H');
@@ -124,7 +124,7 @@ export async function terminalWorkflows({ terminal, scratch, run, requests, mode
     button(0);
     await ui.waitScreen('Measurement report');
     await ui.waitScreen('classify · 3/3 repeats');
-    await ui.waitScreen('decode N/A');
+    await ui.waitScreen('decode 62.0 tok/s'); // fixture: 32 tokens over 0.5 s, first excluded
     assert.doesNotMatch(ui.screen, /"attempts"|"scenarios"|"decode_tps_median"/);
     await ui.capture('terminal-saved-report-50');
     ui.resize(30, 100);

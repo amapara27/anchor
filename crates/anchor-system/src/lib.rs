@@ -102,6 +102,19 @@ impl Profiler {
     }
 }
 
+/// Whether this Mac runs at least macOS `minimum` (dotted, e.g. `15.0`), read fresh rather than
+/// from the profile cache, which predates OS upgrades. Unknown counts as too old.
+pub fn macos_at_least(minimum: &str) -> bool {
+    let current = std::process::Command::new("/usr/bin/sw_vers").arg("-productVersion").output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+    let parts = |v: &str| v.split('.').map(|p| p.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>();
+    let (mut have, mut need) = (parts(&current), parts(minimum));
+    let len = have.len().max(need.len());
+    have.resize(len, 0);
+    need.resize(len, 0);
+    !current.is_empty() && have >= need
+}
+
 /// Runs `system_profiler -json SPHardwareDataType SPSoftwareDataType SPDisplaysDataType`.
 fn run_system_profiler() -> Result<String> {
     let output = std::process::Command::new("system_profiler")

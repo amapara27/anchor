@@ -34,8 +34,9 @@ try {
     }
     assert(version, 'owned server must become ready');
     console.log('STEP ollama.runtime ' + version.version);
-    if (version.version !== '0.34.4') {
-        console.error('BLOCKED: phase-rate acceptance requires the recorded supported 0.34.4 build; found ' + version.version);
+    // Supported floor; decode uses the source-checked runner convention on every version from here.
+    if (!(v => { const [a, b] = v.split('.').map(n => parseInt(n, 10)); return a > 0 || b >= 32; })(version.version)) {
+        console.error('BLOCKED: live acceptance requires Ollama 0.32 or later; found ' + version.version);
         process.exitCode = 77;
     }
     else {

@@ -577,7 +577,7 @@ impl Registry {
                     .to_string_lossy()
                     .into()
             });
-        let session=self.begin_bench_session(SessionConfig{protocol:PROTOCOL.into(),suite_id:SUITE_ID.into(),suite_version:SUITE_VERSION,prompt_version:prompts::PROMPT_CATALOG_VERSION,hw:hw.clone(),install_id:install.into(),model_name:name,
+        let session=self.begin_bench_session(SessionConfig{decode_convention:None,protocol:PROTOCOL.into(),suite_id:SUITE_ID.into(),suite_version:SUITE_VERSION,prompt_version:prompts::PROMPT_CATALOG_VERSION,hw:hw.clone(),install_id:install.into(),model_name:name,
             model_digest:identity.as_ref().and_then(|v|v["model_digest"].as_str()).unwrap_or("unverified").into(),quant:identity.as_ref().and_then(|v|v["quantization"]["bits"].as_u64()).map(|b|format!("{b}-bit")),runtime_version:identity.as_ref().map(|v|format!("MLX {} / MLX-LM {}",v["versions"]["mlx"].as_str().unwrap_or("unknown"),v["versions"]["mlx-lm"].as_str().unwrap_or("unknown"))),
             server_is_local:true,concurrency:1,connection_policy:"resident worker; each framed request closes at attempt_finished; client latency includes IPC/formatting, not HTTP".into(),cache_policy:"fresh empty model-native cache per request; one distinct warmup per context; no prefix reuse".into(),counter_calibration:"post-first sampled-token worker clock through terminal stream drain; TTFT separate; upstream rates retained independently".into(),attempts:plans,calibration:None,native:None,mlx:Some(MlxConfig{protocol_version:2,model_path:path,identity})})?;
         let mut attempt = self.begin_bench_attempt(&session, 0)?;

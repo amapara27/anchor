@@ -51,6 +51,20 @@ pub struct SessionConfig {
     pub native: Option<super::mlx::NativeConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mlx: Option<super::mlx_suite::MlxConfig>,
+    /// Absent on sessions recorded before it existed; those keep the per-attempt runner check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_convention: Option<DecodeConvention>,
+}
+
+/// How a runner's generation timer relates to its output count. Ollama's GGUF runners (Go
+/// runners and llama.cpp server, source-checked 0.3–0.40) count the first token but time from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecodeConvention {
+    /// GGUF: `(eval_count − 1) / eval_duration`.
+    FirstTokenUntimed,
+    /// Ollama's MLX runner (safetensors) also times the step producing the first token: `eval_count / eval_duration`.
+    FirstTokenTimed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,6 +174,11 @@ pub(super) fn rate(count: Option<u64>, duration: Option<u64>) -> Metric {
 
 /// Cumulative counters are consumed once, at a single valid terminal frame.
 pub fn recalculate(attempt: &Attempt, formula_version: u32) -> Result<AttemptMetrics> {
+    recalculate_with(attempt, formula_version, None)
+}
+
+/// [`recalculate`] with the session's recorded [`DecodeConvention`].
+pub fn recalculate_with(attempt: &Attempt, formula_version: u32, convention: Option<DecodeConvention>) -> Result<AttemptMetrics> {
     if !matches!(formula_version, 1 | 2) {
         return Err(crate::Error::Ollama(format!("unsupported benchmark formula version {formula_version}")));
     }
@@ -230,9 +249,13 @@ pub fn recalculate(attempt: &Attempt, formula_version: u32) -> Result<AttemptMet
     if cached_exceeds_total { errors.push("cached_count_exceeds_total".into()); }
     let mut decode = rate(counters.eval_count, counters.eval_duration_ns);
     if formula_version >= 2 {
-        decode = match counters.eval_count {
-            Some(0 | 1) => Metric::unknown("no_post_first_token_decode_work"),
-            Some(n) if super::calibration::has_post_first_decode_clock(attempt) => rate(Some(n - 1), counters.eval_duration_ns),
+        use DecodeConvention::{FirstTokenTimed, FirstTokenUntimed};
+        decode = match (counters.eval_count, convention) {
+            (Some(0), _) | (Some(1), Some(FirstTokenUntimed) | None) => Metric::unknown("no_post_first_token_decode_work"),
+            (Some(n), Some(FirstTokenTimed)) => rate(Some(n), counters.eval_duration_ns),
+            (Some(n), Some(FirstTokenUntimed)) => rate(Some(n - 1), counters.eval_duration_ns),
+            (None, Some(_)) => Metric::unknown("missing_counter"),
+            (Some(n), None) if super::calibration::has_post_first_decode_clock(attempt) => rate(Some(n - 1), counters.eval_duration_ns),
             _ => Metric::unknown("decode_timing_convention_unverified"),
         };
     }
@@ -407,7 +430,7 @@ impl EvidenceExport {
         if is_mlx && (self.session.config.protocol!=super::mlx_suite::PROTOCOL || self.session.config.mlx.as_ref().is_none_or(|m|!matches!(m.protocol_version,1|2))) {
             return Err(crate::Error::Native("unsupported MLX text protocol".into()));
         }
-        let mut metrics: Vec<_> = self.attempts.iter().map(|a| if is_mlx {super::mlx_suite::metrics(a,&self.session)} else {recalculate(a, self.session.formula_version)}).collect::<Result<_>>()?;
+        let mut metrics: Vec<_> = self.attempts.iter().map(|a| if is_mlx {super::mlx_suite::metrics(a,&self.session)} else {recalculate_with(a, self.session.formula_version, self.session.config.decode_convention)}).collect::<Result<_>>()?;
         if self.session.formula_version >= 2 && !is_mlx {
             for (a, m) in self.attempts.iter().zip(&mut metrics) {
                 if a.calibration.as_ref().and_then(|o| o.decode_timing.as_ref()).is_some_and(|o|

@@ -11,6 +11,8 @@ type Phase = { kind: "idle" } | { kind: "installing"; pct: number } | { kind: "f
  *  state before the first release is published. */
 export function UpdateBanner() {
   const [update, setUpdate] = useState<Update | null>(null);
+  // The macOS an update needs when this Mac is older; it is announced, never installed.
+  const [needsMacos, setNeedsMacos] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
   useEffect(() => {
@@ -18,7 +20,13 @@ export function UpdateBanner() {
     // add a timer only if sessions turn out to run for days.
     let live = true;
     check()
-      .then((u) => live && setUpdate(u))
+      .then(async (u) => {
+        const minimum = u?.rawJson.minimum_system_version;
+        const supported = typeof minimum !== "string" || (await invoke<boolean>("os_supports", { minimum }));
+        if (!live) return;
+        setUpdate(u);
+        setNeedsMacos(supported ? null : (minimum as string));
+      })
       .catch(() => {}); // offline or no release yet — not worth a warning
     return () => {
       live = false;
@@ -49,7 +57,12 @@ export function UpdateBanner() {
   return (
     <div className="flex items-center gap-3 border-b border-hair bg-raised px-4 py-2 text-sm">
       <span className="min-w-0 flex-1 truncate">
-        {phase.kind === "failed" ? (
+        {needsMacos ? (
+          <>
+            <span className="font-medium">Anchor {update.version}</span>{" "}
+            <span className="text-fg-muted">needs macOS {needsMacos} or later.</span>
+          </>
+        ) : phase.kind === "failed" ? (
           <span className="text-fg-muted">Update failed — {phase.message}</span>
         ) : (
           <>
@@ -64,6 +77,10 @@ export function UpdateBanner() {
           <ProgressTrack pct={phase.pct} className="h-1.5 flex-1" />
           <span className="data text-xs text-fg-subtle">{phase.pct}%</span>
         </div>
+      ) : needsMacos ? (
+        <Button variant="text" onClick={() => setUpdate(null)} aria-label="Dismiss update notice">
+          Dismiss
+        </Button>
       ) : (
         <>
           <Button variant="primary" onClick={install}>

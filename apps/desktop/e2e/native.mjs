@@ -117,6 +117,9 @@ try{
   checkpoint('cloud-models-blocked-on-loopback');
   const invoke=(name,args={})=>execute('return window.__TAURI_INTERNALS__.invoke('+JSON.stringify(name)+','+JSON.stringify(args)+').then(value=>({value}),error=>({rejection:String(error)}));');
   const listed=await invoke('list_models');
+  const sw=execFileSync('/usr/bin/sw_vers',['-productVersion'],{encoding:'utf8'}).trim();
+  assert.deepEqual(await invoke('os_supports',{minimum:sw}),{value:true},'this Mac meets its own macOS version');
+  assert.deepEqual(await invoke('os_supports',{minimum:String(Number(sw.split('.')[0])+1)+'.0'}),{value:false},'a newer major macOS is not met');
   assert(!listed.value.some(m=>m.id===cloudAlias),'remote alias is hidden despite its local-looking name');
   const beforeCloud=requests.length;
   const onEvent='__CHANNEL__:123456';

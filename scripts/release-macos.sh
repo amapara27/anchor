@@ -42,7 +42,17 @@ fi
 KEY_PATH="${TAURI_KEY_PATH:-$HOME/.tauri/anchor.key}"
 [ -f "$KEY_PATH" ] || { echo "no updater key at $KEY_PATH" >&2; exit 1; }
 
-pnpm tauri build --no-bundle --no-sign -- --locked
+# Copies older than the update guard install whatever latest.json offers and never check macOS.
+# Until a guarded release (one publishing update.json) is live, build without the macOS floor so
+# this release can bridge them; later releases reach them only through it (see bundle-macos.sh).
+ANCHOR_FLOOR_OVERRIDE=""
+if ! curl -fsSLo /dev/null https://github.com/amapara27/anchor/releases/latest/download/update.json; then
+  ANCHOR_FLOOR_OVERRIDE='{"bundle":{"macOS":{"minimumSystemVersion":"11.0"}}}'
+  echo "no guarded release is live: building this one as the bridge without the macOS floor"
+fi
+export ANCHOR_FLOOR_OVERRIDE
+
+pnpm tauri build --no-bundle --no-sign ${ANCHOR_FLOOR_OVERRIDE:+--config "$ANCHOR_FLOOR_OVERRIDE"} -- --locked
 
 # Only the bundler and its signing helpers inherit the updater secrets.
 (

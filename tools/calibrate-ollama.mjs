@@ -51,7 +51,10 @@ for (const [index, attempt] of evidence.attempts.entries()) {
   const supported=timing?.runtime_version==='0.34.4' && timing.build_info==='b1-161755f29'
     && /^[a-fA-F0-9]{64}$/.test(timing.runner_fingerprint.sha256) && timing.model_blob.startsWith('/')
     && timing.runtime_version===evidence.session.config.runtime_version && timing.model===plan.request.model;
-  const numerator=evidence.session.formula_version>=2 ? supported && raw.eval_count>1 ? raw.eval_count-1 : null : raw.eval_count;
+  const convention=evidence.session.config.decode_convention;
+  const numerator=evidence.session.formula_version<2 ? raw.eval_count
+    : convention==="first_token_timed" ? (raw.eval_count>0 ? raw.eval_count : null)
+    : (supported || convention==="first_token_untimed") && raw.eval_count>1 ? raw.eval_count-1 : null;
   close(metrics.decode_tps.value, numerator!==null && raw.eval_duration>0 ? numerator*1e9/raw.eval_duration : null, 'versioned decode');
   if (evidence.session.formula_version>=2) close(probe.post_first_decode_tps,metrics.decode_tps.value,'post-first report');
   const cached = raw.prompt_eval_cached_count;

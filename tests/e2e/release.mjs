@@ -31,6 +31,8 @@ try {
     assert(config.plugins.updater.pubkey && config.plugins.updater.endpoints.length, 'shipped updater needs its public key and endpoint');
     assert.equal(config.bundle.createUpdaterArtifacts, true);
     assert(!config.build.beforeBundleCommand, 'Keep build hooks outside the credential-bearing bundling step');
+    assert.equal(config.bundle.macOS.minimumSystemVersion, '15.0', 'supported floor: macOS 15 Sequoia');
+    assert(config.plugins.updater.endpoints.every(e => e.endsWith('/update.json')), 'guarded copies read the manifest that carries the floor');
     const credentials = path.join(scratch, 'fake-home');
     const project = path.join(scratch, 'project');
     const log = path.join(scratch, 'release-steps');
@@ -53,7 +55,7 @@ printf '%s' fixture-updater-password
     await writeFile(path.join(bin, 'pnpm'), `#!/bin/sh
 set -eu
 case "$*" in
-  "tauri build --no-bundle --no-sign -- --locked")
+  "tauri build --no-bundle --no-sign "*"-- --locked")
     [ -z "\${TAURI_SIGNING_PRIVATE_KEY:-}" ]
     [ -z "\${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]
     [ -z "\${APPLE_PASSWORD:-}" ]
@@ -61,15 +63,17 @@ case "$*" in
     [ -z "\${APPLE_CERTIFICATE:-}" ]
     [ -z "\${APPLE_CERTIFICATE_PASSWORD:-}" ]
     printf '%s\\n' build >> "$RELEASE_TEST_LOG"
+    printf '%s\\n' "$*" >> "$RELEASE_TEST_ARGS"
     [ "\${RELEASE_TEST_FAIL_BUILD:-0}" = 0 ] || exit 73
     ;;
-  "tauri bundle")
+  "tauri bundle"*)
     [ "$TAURI_SIGNING_PRIVATE_KEY" = fixture-updater-key ]
     [ "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" = fixture-updater-password ]
     [ "$APPLE_API_KEY" = FIXTURE ]
     [ "$APPLE_API_ISSUER" = fixture-issuer ]
     [ "$APPLE_SIGNING_IDENTITY" = FEDCBA ]
     printf '%s\\n' bundle >> "$RELEASE_TEST_LOG"
+    printf '%s\\n' "$*" >> "$RELEASE_TEST_ARGS"
     mkdir -p target/release/bundle/macos/Anchor.app target/release/bundle/dmg
     printf '%s' fixture-signature > target/release/bundle/macos/Anchor.app.tar.gz.sig
     touch "target/release/bundle/dmg/Anchor_$RELEASE_TEST_VERSION"_aarch64.dmg
@@ -86,32 +90,61 @@ set -eu
 [ -z "\${APPLE_CERTIFICATE_PASSWORD:-}" ]
 printf '%s\\n' ${name} >> "$RELEASE_TEST_LOG"
 `, { mode: 0o755 });
+    // GitHub stand-in: whether a guarded release (update.json) is live, and the live legacy latest.json.
+    await writeFile(path.join(bin, 'curl'), `#!/bin/sh
+set -eu
+url=""; out=""
+while [ $# -gt 0 ]; do case "$1" in -o|-fsSLo) out="$2"; shift 2 ;; -*) shift ;; *) url="$1"; shift ;; esac; done
+[ "\${RELEASE_TEST_GUARDED:-0}" = 1 ] || exit 22
+case "$url" in
+  https://github.com/amapara27/anchor/releases/latest/download/update.json) ;;
+  https://github.com/amapara27/anchor/releases/latest/download/latest.json) printf '%s' "$RELEASE_TEST_LEGACY" > "$out" ;;
+  *) exit 6 ;;
+esac
+`, { mode: 0o755 });
+    const args = path.join(scratch, 'release-args');
+    const bridge = { version: '1.0.2', minimum_system_version: '11.0', platforms: { 'darwin-aarch64': { signature: 'bridge-signature',
+        url: 'https://github.com/amapara27/anchor/releases/download/v1.0.2/Anchor.app.tar.gz' } } };
     const environment = {
         ...process.env, PATH: bin + path.delimiter + process.env.PATH, HOME: credentials,
         APPLE_SIGNING_IDENTITY: 'FEDCBA', TAURI_KEY_PATH: key, RELEASE_TEST_LOG: log,
         RELEASE_TEST_VERSION: config.version, APPLE_PASSWORD: 'inherited-fixture-password',
+        RELEASE_TEST_ARGS: args, RELEASE_TEST_GUARDED: '1', RELEASE_TEST_LEGACY: JSON.stringify(bridge),
         TAURI_SIGNING_PRIVATE_KEY: 'inherited-fixture-key',
         TAURI_SIGNING_PRIVATE_KEY_PASSWORD: 'inherited-fixture-updater-password',
         APPLE_API_KEY_PATH: '/inherited-fixture-path',
         APPLE_CERTIFICATE: 'inherited-fixture-certificate', APPLE_CERTIFICATE_PASSWORD: 'inherited-fixture-certificate-password',
     };
     const script = path.join(root, 'scripts/release-macos.sh');
-    for (const failBuild of [true, false]) {
-        await writeFile(log, '');
+    const floorFree = '--config {"bundle":{"macOS":{"minimumSystemVersion":"11.0"}}}';
+    for (const [name, failBuild, guarded, legacy, status] of [
+        ['failed build', true, '1', bridge, 73],
+        ['bridge release', false, '0', bridge, 0],
+        ['floor release', false, '1', bridge, 0],
+        ['floor over a non-bridge latest.json', false, '1', { ...bridge, minimum_system_version: '15.0' }, 1],
+    ]) {
+        await writeFile(log, ''); await writeFile(args, '');
+        await rm(path.join(project, 'target'), { recursive: true, force: true });
         const result = spawnSync('bash', ['-x', script], { cwd: project, encoding: 'utf8', timeout: 10000,
-            env: { ...environment, RELEASE_TEST_FAIL_BUILD: failBuild ? '1' : '0' } });
-        assert.equal(result.status, failBuild ? 73 : 0, result.stderr);
+            env: { ...environment, RELEASE_TEST_FAIL_BUILD: failBuild ? '1' : '0', RELEASE_TEST_GUARDED: guarded, RELEASE_TEST_LEGACY: JSON.stringify(legacy) } });
+        assert.equal(result.status, status, name + '\n' + result.stderr);
         assert.doesNotMatch(result.stdout + result.stderr, /fixture-updater-key|fixture-updater-password|inherited-fixture/);
         const steps = (await readFile(log, 'utf8')).trim().split('\n');
-        if (failBuild) assert.deepEqual(steps, ['build'], 'failed compilation must not fetch signing secrets');
-        else {
-            assert.deepEqual(steps.slice(0, 4), ['build', 'password-read', 'bundle', 'codesign']);
-            const manifest = JSON.parse(await readFile(path.join(project, 'target/release/bundle/latest.json'), 'utf8'));
-            assert.equal(manifest.version, config.version);
-            assert.equal(manifest.platforms['darwin-aarch64'].signature, 'fixture-signature');
-            assert.equal(manifest.platforms['darwin-aarch64'].url,
-                'https://github.com/amapara27/anchor/releases/download/v' + config.version + '/Anchor.app.tar.gz');
-        }
+        if (failBuild) { assert.deepEqual(steps, ['build'], 'failed compilation must not fetch signing secrets'); continue; }
+        assert.deepEqual(steps.slice(0, 4), ['build', 'password-read', 'bundle', 'codesign']);
+        const calls = (await readFile(args, 'utf8')).trim().split('\n');
+        assert(calls.every(c => c.includes(floorFree) === (guarded === '0')), name + ': build and bundle share the floor decision\n' + calls.join('\n'));
+        if (status) { assert.match(result.stderr, /not a floor-free bridge/); continue; }
+        const read = file => readFile(path.join(project, 'target/release/bundle', file), 'utf8').then(JSON.parse);
+        const manifest = await read('update.json');
+        assert.equal(manifest.version, config.version);
+        assert.equal(manifest.minimum_system_version, guarded === '0' ? '11.0' : config.bundle.macOS.minimumSystemVersion);
+        assert.equal(manifest.platforms['darwin-aarch64'].signature, 'fixture-signature');
+        assert.equal(manifest.platforms['darwin-aarch64'].url,
+            'https://github.com/amapara27/anchor/releases/download/v' + config.version + '/Anchor.app.tar.gz');
+        // Pre-guard copies install whatever latest.json offers: the bridge itself, then that same bridge.
+        assert.deepEqual(await read('latest.json'), guarded === '0' ? manifest : bridge, name);
+        console.log('STEP release.' + name);
     }
     await writeFile(log, '');
     const ciResult = spawnSync('bash', ['-x', path.join(root, 'scripts/bundle-macos.sh')], {
