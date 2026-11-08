@@ -16,8 +16,6 @@
   <img alt="Ollama and MLX" src="https://img.shields.io/badge/runtimes-ollama%20%7C%20mlx-8b7fd4?style=flat-square&labelColor=4a4a4a">
 </p>
 
-> **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
-
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/fit-128k_light.png">
   <img src="docs/screenshots/fit-128k_dark.png" alt="Anchor's model finder judging Llama 3.2 3B at 128K context">
