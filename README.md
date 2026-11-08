@@ -13,146 +13,146 @@
   <img alt="Rust 2021" src="https://img.shields.io/badge/rust-2021-c8703c?style=flat-square&labelColor=4a4a4a">
   <img alt="Tauri 2" src="https://img.shields.io/badge/tauri-2-3aa9a4?style=flat-square&labelColor=4a4a4a">
   <img alt="React 19" src="https://img.shields.io/badge/react-19-5fb8d8?style=flat-square&labelColor=4a4a4a">
-  <img alt="Ollama backend" src="https://img.shields.io/badge/ollama-backend-8b7fd4?style=flat-square&labelColor=4a4a4a">
+  <img alt="Ollama and MLX" src="https://img.shields.io/badge/runtimes-ollama%20%7C%20mlx-8b7fd4?style=flat-square&labelColor=4a4a4a">
 </p>
 
 > **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/fit-128k_light.png">
+  <img src="docs/screenshots/fit-128k_dark.png" alt="Anchor's model finder judging Llama 3.2 3B at 128K context">
+</picture>
+
 ## About
 
-Anchor is a compact native macOS tool for finding, checking and testing local AI models. It sits on top of [Ollama](https://ollama.com) and handles the orchestration that makes local models actually usable: discovering and installing models, checking whether one will fit your machine before you pull it, trying what you have installed, benchmarking real throughput on your own hardware, and configuring how models behave — all from one place, no terminal required.
+Running a model locally usually goes: pick one, download several gigabytes, find out it doesn't fit, and never learn how fast it would have been. Anchor answers those questions **before** you pay for them, then measures the real numbers on your own Mac.
 
-Anchor orchestrates existing runtimes: Ollama for interactive inference and serving benchmarks, plus an optional isolated MLX-LM worker for real-text benchmarks.
+It is a native macOS app (and a terminal CLI over the same database) for Apple Silicon. It sits on top of [Ollama](https://ollama.com), plus an optional isolated [MLX-LM](https://github.com/ml-explore/mlx-lm) worker, and follows one story:
 
-Anchor also owns the Ollama server lifecycle: it starts `ollama serve` on launch and shuts it down on quit, so you never need the menubar app or a terminal.
+1. **Find** a model, from a curated catalog or the whole Ollama library.
+2. **Fit** — see whether it will run on this machine, at the context length you want, before downloading.
+3. **Benchmark** — measure decode speed and time to first token on your hardware, on Ollama or MLX.
+4. **Try and compare** — chat with it, or run one prompt through two models side by side.
+5. **Manage** — see what your models cost on disk and clean up.
 
-Built for developers, students, researchers, and small business operators who want capable AI running locally without touching a command line. Apple Silicon is the primary target.
+Anchor also owns the Ollama server lifecycle (it starts `ollama serve` on launch and stops it on quit), so you never need the menubar app or a terminal. It is built for developers, students, researchers and anyone who wants capable AI running locally. No API keys, and no automatic telemetry.
 
-**Here for the benchmark numbers?** [Read how Anchor measures performance](docs/benchmark-methodology.md), including the timing boundaries, validation checks, and limits of comparisons.
+**Here for the benchmark numbers?** [Read how Anchor measures performance](docs/benchmark-methodology.md): timing boundaries, validation checks and the limits of comparisons.
 
 ## Install
 
-**Requirement:** [Ollama](https://ollama.com/download) must be installed. Anchor starts and stops the server for you, but it does not bundle the inference engine.
+**Requirements:** macOS 15 Sequoia or later on Apple Silicon, and [Ollama](https://ollama.com/download) 0.32 or later. Anchor starts and stops the server for you but does not bundle the inference engine.
 
 ### Desktop app
 
-Download the latest `.dmg` from [Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to Applications. It is signed and notarized, so it opens without a Gatekeeper prompt, and it updates itself from then on.
-
-Open **Models → Add model**, pick a suggested model or browse the Ollama library, inspect its memory estimate, and download it. Select an installed model and choose **Try model** to start a chat at the chosen context. Past chats stay in SQLite and are listed by `anchor chat ls`.
-
-No API keys are required. Inference and saved history work locally after setup when Ollama is configured on this Mac. Model downloads, fresh library data, update checks and external sharing use the network.
+Download the latest `.dmg` from [Releases](https://github.com/amapara27/anchor/releases/latest) and drag Anchor to Applications. It is signed and notarized, opens without a Gatekeeper prompt, and updates itself from then on. Anchor profiles your hardware on first launch.
 
 ### CLI
 
-The CLI is packaged for PyPI as `anchr`, with the executable named `anchor`.
-After the first PyPI release, install it on macOS Apple Silicon with:
+The CLI is published on PyPI as `anchr`; the executable is `anchor`.
 
 ```bash
-uv tool install anchr
-anchor
+uv tool install anchr      # needs uv: https://docs.astral.sh/uv/
+anchor                     # open the terminal workspace
+uv tool upgrade anchr      # update later
 ```
 
-Update with `uv tool upgrade anchr`. First-release account setup and
-`cli-v*` tag publishing are documented in [CLI publishing](docs/cli-publishing.md).
+See [The CLI](#the-cli) below, or build from source (see [Build from source](#build-from-source)).
 
 ## Features
 
-### Try
+### Find and fit
 
-A quick streaming chat with any installed model, with reasoning/thinking output rendered separately from the answer. Stop a generation mid-stream and keep the partial answer, or regenerate the last turn. **New chat** starts a fresh thread; every chat persists in SQLite (readable with `anchor chat ls|show`) and carries its inference preset. Before Anchor loads a model that isn't already resident, it checks whether swapping it in would blow your memory budget and asks first rather than letting Ollama choke.
+Open **Explore** to browse a curated catalog (filter by name, publisher or use case, sorted by what fits this Mac) or the full ollama.com library. Every model shows one verdict — fits, tight, or won't fit — computed from your chip and memory by a single estimator, so the catalog, search, compare picker and chat picker can never disagree.
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/chat_light.png">
-  <img src="docs/screenshots/chat.png" alt="Chat">
-</picture>
-
-### Exploring models
-
-- **Model hub** — every installed Ollama model in one place, cached to SQLite so the list is instant on launch. Download with inline progress, remove, and inspect per-model detail: parameter count, quantization, context window, and file size.
-- **Suggested models** — a curated catalog with real GGUF architecture metadata, filterable by name, publisher or use case and sorted by what fits this Mac.
-- **Browse the full library** — every model and tag on ollama.com, not just the curated catalog, for when you know what you want by name.
-- **Side-by-side comparison** — run the same prompt through two models sequentially and compare their output and measured generation speed.
+- **One context for every verdict.** Pick 2K to 128K in the header and every column, filter and inspector re-judges at that context (capped at the model's own limit).
+- **Full breakdown.** Weights, KV cache, compute buffer and OS reserve before you spend disk or memory finding out the hard way.
+- **Per-quant table.** Every published quantization of a model size with its download, estimated RAM and headroom, so you can pick the variant that fits.
+- **Predicted vs observed.** After a measurement, the inspector shows the estimate next to what Ollama actually allocated.
+- **Use from other apps.** Copyable `ollama run`, OpenAI-compatible base URL and a `curl` snippet for any installed model.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/models_light.png">
-  <img src="docs/screenshots/models_dark.png" alt="Model hub">
+  <img src="docs/screenshots/models_dark.png" alt="Model finder at 32K context">
+</picture>
+
+### Benchmark
+
+Run nine text workloads (classification, summarization, explanation, creative writing, document Q&A, detailed replies, reasoning and code generation) on **Ollama** or the optional **MLX** runtime. Pick a model, then **Run suite**. Fast and Thorough control the repeat budget.
+
+The headline numbers are **decode speed after the first token** and **TTFT**, the wait from request dispatch to first output. A live waveform shows chunks/s during the run, and the **Leaderboard** ranks every benchmarked model per workload and runtime.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmark_light.png">
+  <img src="docs/screenshots/benchmark_dark.png" alt="Benchmark suite results on Ollama">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/leaderboard_light.png">
+  <img src="docs/screenshots/leaderboard_dark.png" alt="Leaderboard ranking models on this Mac">
+</picture>
+
+- **Evidence, not just numbers.** Every session keeps its configuration, raw events, warmups and failed or cancelled attempts. Missing measurements stay unavailable instead of showing as zero.
+- **Measurement validation.** One click checks token counts, cache reuse and response completion against what the runtime reports.
+- **MLX in the same flow.** On Apple Silicon with [uv](https://docs.astral.sh/uv/), choose **MLX → model → Download model → Run suite**. Anchor verifies pinned checksums and builds the locked worker environment. 64 paired catalog entries span Ollama and MLX, including Qwen 3–3.8, Gemma 3/4 and Ministral 3.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/mlx_light.png">
+  <img src="docs/screenshots/mlx_dark.png" alt="Benchmark suite results on MLX">
+</picture>
+
+Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims are not checked. The [methodology](docs/benchmark-methodology.md) has the workload table, timing formulas and reproduction steps. Scoped findings: [Ollama](docs/ollama-calibration.md), [MLX catalog coverage](docs/mlx-measurements.md#catalog-review--october-29-2026).
+
+### Try and compare
+
+**Try** is a streaming chat with any installed model, with reasoning output shown separately. Stop mid-stream and keep the partial answer, or regenerate the last turn. Before loading a model that isn't resident, Anchor checks whether the swap would blow your memory budget and asks first. Chats persist in SQLite and carry their inference preset (system prompt, temperature, top-p, context).
+
+**Compare** runs one prompt through two models and shows both outputs with measured generation speed.
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/try_light.png">
+  <img src="docs/screenshots/try_dark.png" alt="Try: a streaming chat">
 </picture>
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/compare_light.png">
-  <img src="docs/screenshots/compare_dark.png" alt="Model comparison">
+  <img src="docs/screenshots/compare_dark.png" alt="Side-by-side model comparison">
 </picture>
-
-### Fit
-
-The question every other feature answers from a different angle: will this model actually run here? First-launch hardware profiling of CPU, RAM, and GPU — Apple Silicon is special-cased via `system_profiler` for accurate unified-memory readings — feeds a memory-fit engine that sizes weights, KV cache, and compute buffer per (model, quantization, context length) and renders one verdict everywhere a model shows up: the catalog, search results, the compare picker, and the chat model picker can never disagree, because they all call the same estimator. Every installed and not-yet-installed model gets a full breakdown — weights / KV cache / compute buffer / OS reserve — before you spend disk space or memory finding out the hard way.
-
-- **One context for every verdict** — pick 2K to 128K in the Models header and every fit column, filter and inspector re-judges at it (capped at each model's own limit).
-- **Per-quant table** — the inspector lists every published quantization of the same model size with its download, estimated RAM and headroom at that context, so you can pick the variant that fits before pulling it.
-- **Predicted vs observed memory** — after a measurement, the inspector shows the estimate next to what Ollama actually allocated at that context.
-- **Use from other apps** — copyable `ollama run`, OpenAI-compatible base URL and a `curl` snippet for any installed model.
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/fit_light.png">
-  <img src="docs/screenshots/fit.png" alt="Fit">
-</picture>
-
-[Screen recording (dark)](docs/recordings/fit_dark.mp4) · [Screen recording (light)](docs/recordings/fit_light.mp4)
-
-### Benchmarks
-
-Run nine text workloads covering classification, summarization, explanation, creative writing, document Q&A, detailed replies, reasoning and code generation. Choose **Ollama** or the optional **MLX** runtime, select a model and use **Run suite**. Each scenario has its own result; Fast and Thorough control the repeat budget.
-
-The main measurements are **decode speed after the first token** and **TTFT**, the wait from request dispatch to first output. Memory observations retain their runtime-specific scope. The live waveform shows chunks/s. Input sizes are approximate targets and output lengths are caps; actual counts and early stops are saved.
-
-Every session keeps its configuration, raw events, counters, warmups and started attempts, including failures and cancellation. Run history keeps the reports in the app; the CLI can export and replay raw evidence offline. Missing measurements stay unavailable. Current method-v5 results use formula 2; older results remain in history. Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims remain unchecked.
-
-**[Read the benchmark methodology](docs/benchmark-methodology.md)** for the workload table, timing formulas, cache and memory scopes, validation coverage, runtime support limits and reproduction instructions.
-
-Ollama's **Measurement validation → Validate measurements** checks token counts, cache reuse, representative generations and response completion below the results. MLX runs timing/allocator checks automatically with its suite. Benchmark setup offers **64 paired catalog entries** across Ollama and MLX for text-generation benchmarks, including Qwen 3–3.8, Gemma 3/4 and Ministral 3. Runtime-specific downloads preserve an explicitly selected model across runtime switches. On Apple Silicon, install [uv](https://docs.astral.sh/uv/), choose **MLX → model → Download model → Run suite**. Anchor handles checkpoint files, verifies pinned checksums and creates the locked worker environment. Existing cached models and local-folder import remain available. Catalog parity does not imply identical artifacts, image/audio benchmark support or compatibility with every model in either engine; see [Ollama findings](docs/ollama-calibration.md) and [current catalog coverage and limits](docs/mlx-measurements.md#catalog-review--october-29-2026).
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmarks_light.png">
-  <img src="docs/screenshots/benchmarks.png" alt="Benchmarks">
-</picture>
-
-[Screen recording (dark)](docs/recordings/benchmarks_dark.mp4) · [Screen recording (light)](docs/recordings/benchmarks_light.mp4)
 
 ### Storage
 
-A real scan of Ollama's on-disk store: total blob and manifest size, savings from shared files, and blobs that aren't referenced by an installed model. The desktop scan is read-only because an active download may still need an unreferenced blob. You can still remove installed models through Ollama.
+A real scan of Ollama's on-disk store: total size, savings from shared files, which models are largest or unused, and blobs no installed model references. The scan is read-only because an active download may still need an unreferenced blob; remove installed models through Ollama.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/storage_light.png">
-  <img src="docs/screenshots/storage_dark.png" alt="Storage">
+  <img src="docs/screenshots/storage_dark.png" alt="Storage overview">
 </picture>
 
-### Configuration
+### Settings
 
-- **Inference presets** — system prompt, temperature, top-p, and context length per conversation, autosaved as you type.
-- **Hardware panel** — the profiled chip, memory, and core counts Anchor is basing every fit verdict on, with a manual re-profile.
-- **Appearance** — dark (graphite/violet) or light (cream/gold) theme, or follow the system.
-- **Privacy** — a standing reminder that inference, chats, and history never leave the machine.
+Inference presets, a hardware panel (the chip and memory every verdict is based on, with a manual re-profile), and a dark (graphite/violet) or light (cream/gold) theme that can follow the system.
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/settings_light.png">
-  <img src="docs/screenshots/settings_dark.png" alt="Appearance settings">
-</picture>
+## The CLI
 
-## CLI
+The `anchor` CLI is the same product in a terminal: it shares benchmark history, chats and presets with the desktop app. Run `anchor` for a keyboard workspace, type `/` to search commands, and use `Tab` and `Esc` to move around. Everything is also scriptable with plain commands and `--json`.
 
-The `anchor` CLI shares benchmark history and chat storage with the desktop app. Install it with `uv tool install anchr` after the PyPI release, or build it from source. See the [CLI guide](docs/cli-guide.md) for interactive controls, command examples, and scripting details.
+<img src="docs/screenshots/cli_fit.png" alt="anchor /fit showing a 128K context does not fit" width="760">
+
+<img src="docs/screenshots/cli_leaderboard.png" alt="anchor /leaderboard ranking models" width="760">
+
+<img src="docs/screenshots/cli_results.png" alt="anchor /results listing saved benchmark runs" width="760">
+
+```bash
+anchor models browse --filter qwen          # everything on ollama.com
+anchor fit deepseek-v2 --ctx 32768          # weights + KV cache + verdict
+anchor bench run llama3.2:1b --repeats fast
+anchor bench top --scenario balanced        # rank every model on one workload
+anchor models compare llama3.2:1b qwen3.5:9b "why is the sky blue?"
+```
+
+Slash commands inside the workspace: `/model`, `/runtime`, `/library`, `/fit`, `/bench`, `/leaderboard`, `/results`, `/chat`, `/compare`, `/help`. The [CLI guide](docs/cli-guide.md) covers interactive controls, every command and scripting details.
 
 ## Build from source
 
-### Prerequisites
-
-- macOS 15 Sequoia or later on Apple Silicon
-- [Ollama](https://ollama.com/download) installed
-- Rust (stable) — [rustup](https://rustup.rs)
-- Node 20+ and pnpm 10+
-- Xcode Command Line Tools (`xcode-select --install`)
-
-### Run it
+Prerequisites: macOS 15+ on Apple Silicon, [Ollama](https://ollama.com/download), Rust (stable, via [rustup](https://rustup.rs)), Node 20+ with pnpm 10+, and Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/amapara27/anchor.git
@@ -162,24 +162,23 @@ pnpm dev                                   # app in dev mode
 cargo install --path crates/anchor-cli     # the CLI, from source
 ```
 
-Anchor profiles your hardware on first use.
-
 `pnpm build` produces an unsigned local bundle. Signed, notarized releases are cut with `pnpm release:mac`, which needs a Developer ID certificate and an App Store Connect API key.
 
 ## Architecture
 
-A pnpm + Cargo monorepo. Domain logic lives in the crates; both front-ends — the Tauri layer and the CLI — are thin wrappers over them, which keeps everything testable without a webview.
+A pnpm + Cargo monorepo. Domain logic lives in the crates; both front-ends (the Tauri layer and the CLI) are thin wrappers over them, which keeps everything testable without a webview.
 
 ```
 anchor/
 ├── apps/desktop/
 │   ├── src/                # React + Tailwind v4 frontend (TypeScript)
-│   └── src-tauri/          # Tauri 2 shell — thin command wrappers only
-└── crates/
-    ├── anchor-cli/         # `anchor` terminal front-end over the same crates + database
-    ├── anchor-core/        # shared domain types, the curated catalog + the memory-fit engine; UI- and Tauri-free
-    ├── anchor-hub/         # model registry, SQLite, Ollama REST, server lifecycle
-    └── anchor-system/      # macOS hardware profiling via system_profiler
+│   └── src-tauri/          # Tauri 2 shell: thin command wrappers only
+├── crates/
+│   ├── anchor-cli/         # `anchor` terminal front-end over the same crates + database
+│   ├── anchor-core/        # domain types, curated catalog, memory-fit engine; UI- and Tauri-free
+│   ├── anchor-hub/         # model registry, SQLite, Ollama REST, benchmarks, server lifecycle
+│   └── anchor-system/      # macOS hardware profiling via system_profiler
+└── workers/mlx/            # optional isolated MLX-LM worker (uv-managed)
 ```
 
 | Layer | Technology |
@@ -187,11 +186,11 @@ anchor/
 | Frontend | React 19, Tailwind v4, Vite |
 | App framework | Tauri 2 |
 | Backend | Rust, Tokio, `reqwest` |
-| Inference | Ollama REST API |
+| Inference | Ollama REST API; optional MLX-LM worker |
 | Storage | SQLite via `rusqlite`, versioned migrations |
 | Hardware | `system_profiler` subprocess |
 
-All state — the registry, conversations and benchmark runs — lives under the app's data directory (`~/Library/Application Support/…/registry.db`). Inference and stored chats remain local when Ollama uses its default local host. A remote `OLLAMA_HOST` receives your prompts. Downloads, fresh library/metadata requests, update checks and explicit sharing can use the network; the app has no automatic telemetry path.
+**Privacy.** All state (registry, chats, benchmark runs) lives in the app's data directory (`~/Library/Application Support/com.anchor.desktop/registry.db`). Inference and stored chats stay local when Ollama uses its default local host; a remote `OLLAMA_HOST` receives your prompts. Downloads, library and metadata requests, update checks and explicit sharing use the network. There is no automatic telemetry.
 
 ## Development
 
@@ -199,46 +198,33 @@ All state — the registry, conversations and benchmark runs — lives under the
 pnpm dev                                     # run the app (Vite on :1420)
 pnpm --filter @anchor/desktop build          # typecheck + frontend build (fast, no Rust)
 cargo run -p anchor-cli -- models ls         # run the CLI from the workspace
-pnpm test:e2e                                # full app, including real Ollama + MLX
-pnpm test:e2e --surface cli                  # CLI-only full acceptance, real Ollama + MLX
-pnpm test:e2e --surface cli --profile fixtures # CLI fixtures, no GUI or model downloads
+pnpm test:e2e                                # full acceptance, incl. real Ollama + MLX
+pnpm test:e2e --surface cli                  # CLI-only acceptance
 pnpm test:e2e --profile fixtures             # model-free local workflows + native app
-pnpm test:e2e --profile ci                   # build, persistence, measurements, CLI, browser, release refusal
-pnpm test:e2e --only native                  # targeted reproduction + required build
+pnpm test:e2e --profile ci                   # what CI runs
+pnpm test:e2e --only native                  # one stage, for reproduction
 ```
 
-**[Testing map and agent repair loop](docs/testing.md)** documents every stage, important code owners, failure artifacts, targeted reruns and manual limits. This single runner replaces the unit-test/self-check entry points and is used by CI. Reports live in `.internal/testing/`; failed, blocked and narrower passes stay distinct.
-
-Full local acceptance requires Apple Silicon/macOS, Rust, pnpm, uv, Ollama, network access and Playwright Chromium (`pnpm --filter @anchor/desktop exec playwright install chromium`). Fixture scopes use isolated HTTP/database/filesystem data; full acceptance also downloads small models into disposable caches and exercises actual runtime/GPU paths. Your installed models and normal app database are untouched. Signing, notarization and actual updater installation remain separate manual checks.
-
-Opt-in MLX E2E reads a local checkpoint on an Apple GPU: set `ANCHOR_MLX_E2E_MODEL` to its directory and run `cargo test -p anchor-hub --test mlx_suite_e2e -- --ignored --nocapture`. With the same variable, `pnpm --filter @anchor/desktop test:e2e:native` also checks the real GUI → uv worker → GPU → SQLite path and Stop. Real-text suite artifacts stay in `.internal/benchmarking/mlx-suite-validation/`; the separate legacy synthetic harness is exercised with `--test mlx_e2e` and retains artifacts in `.internal/benchmarking/mlx-validation/`; fixture scopes remain model-free. Worker dependencies live in `workers/mlx/{pyproject.toml,uv.lock}`.
-
-To exercise a first-time MLX install, run `ANCHOR_MLX_DOWNLOAD_E2E=1 pnpm --filter @anchor/desktop test:e2e:native` on Apple Silicon with uv and network access. This downloads Gemma 3 270M (about 191 MB) through the actual app into an empty temporary Hugging Face cache, cancels during the weight transfer using Activity, retries, independently checks every pinned checksum, and runs all nine workloads plus Stop through native IPC. It ignores `ANCHOR_MLX_E2E_MODEL`, preserves your usual model cache, and removes its temporary checkpoint after success. JSON results and a screenshot remain in `.internal/benchmarking/mlx-download-validation/`; failed runs retain their temporary directory for inspection. The separate ignored `mlx_download_e2e` remains a cached-file corruption/repair check, not a clean-install test. Neither live test runs in normal CI.
+One E2E runner replaces unit tests and is what CI uses. The [testing map and repair loop](docs/testing.md) document every stage, failure artifacts, targeted reruns, the opt-in live MLX checks and manual limits. Full local acceptance needs Apple Silicon, Rust, pnpm, uv, Ollama, network access and Playwright Chromium; your installed models and normal app database are untouched.
 
 Conventions worth knowing before contributing:
 
 - Domain logic goes in `crates/*`, never in `src-tauri` or `anchor-cli`. Both front-ends delegate.
-- The memory-fit math exists twice on purpose: `anchor_core::fit` (Rust) and `apps/desktop/src/lib/kv.ts` + `fit.ts` (TS, so the context slider recomputes without IPC). Both run against shared reference fixtures through CLI and rendered inspector E2E — change both, or neither.
-- Frontend types in `apps/desktop/src/types.ts` mirror the Rust serde types — keep them in sync.
-- Tailwind v4 via the Vite plugin. There is no `tailwind.config.js` or `postcss.config.js`.
+- The memory-fit math exists twice on purpose: `anchor_core::fit` (Rust) and `apps/desktop/src/lib/kv.ts` + `fit.ts` (TS, so the context slider recomputes without IPC). Both run against shared fixtures; change both, or neither.
+- Frontend types in `apps/desktop/src/types.ts` mirror the Rust serde types; keep them in sync.
+- Tailwind v4 via the Vite plugin: no `tailwind.config.js` or `postcss.config.js`.
 - SQLite migrations are append-only: never edit a shipped `V*` constant, add the next one.
+- The desktop app and CLI release separately: `v*` tags for the app, `cli-v*` for the CLI ([CLI publishing](docs/cli-publishing.md)).
 
-## Currently supported
+## Roadmap
 
-- **macOS 15 Sequoia or later on Apple Silicon.** Intel Macs and older macOS are unsupported.
-- **[Ollama](https://ollama.com) 0.32 or later** for interactive inference and serving benchmarks (prefill rates need 0.33.3+); optional **MLX-LM text models** on Apple Silicon, with runtime-scoped results and a shared curated text catalog.
-- **Desktop app and CLI**, sharing one database, released separately: `v*` tags for the app, `cli-v*` for the CLI.
+Items, not promises with dates:
 
-## In the pipeline
-
-Roadmap items, not promises with dates:
-
-- **A guided first run** — hardware profile, Ollama check, and a first model chosen to fit the machine, instead of dropping you into an empty app.
-- **A community benchmark leaderboard.** The schema is already there (`source`/`synced_at` columns on every bench run) and every run stores a full result today — there's just no results server yet, so all comparisons are local-only for now.
-- **Publishing controls** for what a shared benchmark run includes, once there's somewhere to publish it to.
-- **Importing models from Hugging Face** — pull a GGUF straight from a repo instead of waiting for it to land in Ollama's library.
-- **Windows and Linux** support.
-- **Additional inference engines** beyond Ollama, starting with direct llama.cpp integration.
+- **A guided first run**: hardware profile, Ollama check, and a first model chosen to fit the machine.
+- **A community benchmark leaderboard.** The schema is ready (`source`/`synced_at` on every run) but there is no results server yet, so comparisons are local-only.
+- **Publishing controls** for what a shared benchmark run includes.
+- **Importing models from Hugging Face** straight from a repo.
+- **Windows and Linux** support, and **more inference engines** starting with direct llama.cpp.
 - **Compact density controls** in chat.
 
 ## License
