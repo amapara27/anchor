@@ -127,11 +127,9 @@ Inference presets, a hardware panel (the chip and memory every verdict is based 
 
 The `anchor` CLI is the same product in a terminal: it shares benchmark history, chats and presets with the desktop app. Run `anchor` for a keyboard workspace, type `/` to search commands, and use `Tab` and `Esc` to move around. Everything is also scriptable with plain commands and `--json`.
 
-<img src="docs/screenshots/cli-fit.png" alt="anchor /fit showing a 128K context does not fit" width="528">
+<img src="docs/screenshots/cli-bench.png" alt="anchor /bench running the nine-workload suite">
 
-<img src="docs/screenshots/cli-leaderboard.png" alt="anchor /leaderboard ranking models" width="878">
-
-<img src="docs/screenshots/cli-results.png" alt="anchor /results listing saved benchmark runs" width="478">
+<img src="docs/screenshots/cli-results.png" alt="anchor /results listing saved benchmark runs">
 
 ```bash
 anchor models browse --filter qwen          # everything on ollama.com
