@@ -856,6 +856,12 @@ async fn mlx_leaderboard(app: AppHandle, prompt_id: Option<String>) -> Result<Ve
     }).await.map_err(|e| e.to_string())?
 }
 
+/// The digest of an installed model. `None` when it isn't installed or Ollama
+/// is unreachable: results are matched by digest, so there is nothing to show.
+async fn installed_digest(model: &str) -> Option<String> {
+    anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), model).await.ok().flatten()
+}
+
 /// Benchmark results from machines resembling this one, best match first.
 /// Each row carries the tier it matched at so the UI can group them.
 ///
@@ -877,12 +883,10 @@ async fn bench_runs_for_model(
     let registry = registry(&app)?;
     let hw = hw_identity(&app)?;
     let digest = match &model {
-        Some(model) => Some(
-            anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), model)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("{model} is not installed"))?,
-        ),
+        Some(model) => match installed_digest(model).await {
+            Some(digest) => Some(digest),
+            None => return Ok(Vec::new()),
+        },
         None => None,
     };
     registry
@@ -916,12 +920,10 @@ async fn bench_history(app: AppHandle, model: Option<String>, limit: u32) -> Res
     let registry = registry(&app)?;
     let hw = hw_identity(&app)?;
     let digest = match &model {
-        Some(model) => Some(
-            anchor_hub::ollama::digest_of(&anchor_hub::ollama_host(), model)
-                .await
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("{model} is not installed"))?,
-        ),
+        Some(model) => match installed_digest(model).await {
+            Some(digest) => Some(digest),
+            None => return Ok(Vec::new()),
+        },
         None => None,
     };
     registry.bench_history(&hw, digest.as_deref(), limit).map_err(|e| e.to_string())

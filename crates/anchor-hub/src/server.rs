@@ -42,10 +42,14 @@ pub enum EnsureOutcome {
 
 /// Locates the `ollama` binary, or `None` if it isn't installed.
 pub fn locate_binary() -> Option<PathBuf> {
+    // Without admin rights macOS installs apps to ~/Applications instead.
+    let user_app = std::env::var_os("HOME")
+        .map(|h| PathBuf::from(h).join("Applications/Ollama.app/Contents/Resources/ollama"));
     BINARY_CANDIDATES
         .iter()
         .map(PathBuf::from)
-        .find(|p| p.exists())
+        .chain(user_app)
+        .find(|p| p.is_file())
         .or_else(|| which_in_path("ollama"))
 }
 

@@ -347,7 +347,10 @@ async fn newest_run(
     ctx: Option<u32>,
     scenario: Option<&str>,
 ) -> Result<String, String> {
-    let digest = digest_of(model).await?;
+    let digest = match model {
+        Some(m) => Some(digest_of(m).await?.ok_or("no matching benchmark run — see `anchor bench ls`")?),
+        None => None,
+    };
     let run = registry()?
         .bench_history(&hw()?, digest.as_deref(), 200)
         .map_err(|e| e.to_string())?
@@ -615,21 +618,28 @@ impl From<Repeats> for RepeatsMode {
 }
 
 /// A model's content digest — the real identity behind a re-pointable tag, and
-/// what benchmark rows are keyed on.
-async fn digest_of(model: Option<&str>) -> Result<Option<String>, String> {
-    let Some(model) = model else { return Ok(None) };
-    let registry = registry()?;
-    let runs = registry
+/// what benchmark rows are keyed on. `None` when the model has no stored runs.
+async fn digest_of(model: &str) -> Result<Option<String>, String> {
+    let runs = registry()?
         .bench_history(&hw()?, None, u32::MAX)
         .map_err(|e| e.to_string())?;
-    runs.into_iter()
-        .find(|r| r.model_name == model)
-        .map(|r| Some(r.model_digest))
-        .ok_or_else(|| format!("no stored model or benchmark named {model}"))
+    Ok(runs.into_iter().find(|r| r.model_name == model).map(|r| r.model_digest))
+}
+
+/// Prints an empty result: a model with no runs yet is not an error.
+fn print_none(json: bool) -> Result<(), String> {
+    if json {
+        return print_json(&Vec::<BenchRun>::new());
+    }
+    print_runs(&[], false);
+    Ok(())
 }
 
 async fn history(model: Option<&str>, limit: u32, json: bool) -> Result<(), String> {
-    let digest = digest_of(model).await?;
+    let digest = match model {
+        Some(m) => match digest_of(m).await? { Some(d) => Some(d), None => return print_none(json) },
+        None => None,
+    };
     let runs = registry()?
         .bench_history(&hw()?, digest.as_deref(), limit)
         .map_err(|e| e.to_string())?;
@@ -647,7 +657,10 @@ async fn top(
     ctx: Option<u32>,
     json: bool,
 ) -> Result<(), String> {
-    let digest = digest_of(model).await?;
+    let digest = match model {
+        Some(m) => match digest_of(m).await? { Some(d) => Some(d), None => return print_none(json) },
+        None => None,
+    };
     let runs = registry()?
         .bench_runs_for(&hw()?, digest.as_deref(), suite, scenario, ctx)
         .map_err(|e| e.to_string())?;

@@ -336,6 +336,13 @@ test('offline recovery and failed download are visible',async({page})=>{
   await expect(page.getByRole('status',{name:'Activity'})).toContainText('Download failed');
 });
 
+test('Ollama installed while the app is open is picked up without Retry',async({page})=>{
+  await boot(page,{offline:true});await expect(page.getByRole('alert')).toContainText('not reachable');
+  await page.evaluate(()=>{(window as any).__e2e.offline=false;});
+  await expect(page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true})).toBeVisible({timeout:10_000});
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
 for(const width of [800,1000]) test('minimum/default window fits core controls at '+width,async({page})=>{
   await page.setViewportSize({width,height:600});await boot(page);
   const row=page.getByRole('button',{name:'Inspect '+catalog[0].name,exact:true});await expect(row).toBeVisible();

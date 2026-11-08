@@ -3,6 +3,8 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { DownloadState, LibraryModel, Model, ModelProfile, PullProgress } from "../types";
 import { buildLibrary } from "./catalog";
 
+const RETRY_MS = 5_000;
+
 /** Per-model, session-local annotations layered on top of catalog data. */
 interface Annotation {
   tags: string[];
@@ -32,8 +34,13 @@ function useModelsState() {
   // every progress tick and re-rendered every consumer holding it as a prop.
   const inFlight = useRef<Set<string>>(new Set());
 
-  const load = useCallback(() => {
-    setLoading(true);
+  // Retry timer while Ollama is missing or down. `list_models` starts the server,
+  // so installing Ollama while Anchor is open is picked up without a relaunch.
+  const retry = useRef<number | undefined>(undefined);
+
+  const load = useCallback((quiet = false) => {
+    window.clearTimeout(retry.current);
+    if (!quiet) setLoading(true);
     // The catalog of available models comes from the backend (curated profiles)
     // and is bundled, so it effectively never fails — fall back to empty so
     // installed models still render if it somehow does.
@@ -50,14 +57,18 @@ function useModelsState() {
         // Ollama unreachable: still render the catalog (available models). The
         // catalog promise already resolved with a fallback, so reuse it here so
         // a `list_models` failure doesn't also hide the available models.
-        catalog.then((cat) => setBase(buildLibrary([], cat)));
+        // A quiet retry already shows this; skip it so consumers don't re-render every 5s.
+        if (!quiet) catalog.then((cat) => setBase(buildLibrary([], cat)));
         setError(String(e));
+        window.clearTimeout(retry.current); // overlapping loads keep one timer
+        retry.current = window.setTimeout(() => load(true), RETRY_MS);
       })
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     load();
+    return () => window.clearTimeout(retry.current);
   }, [load]);
 
   // Merge base data with local annotation overlays into what the UI renders.
@@ -165,6 +176,9 @@ function useModelsState() {
     [load],
   );
 
+  // Wrapped so an onClick event is never read as `quiet`.
+  const reload = useCallback(() => load(), [load]);
+
   const setTags = useCallback((modelId: string, tags: string[]) => {
     setAnnotations((a) => ({ ...a, [modelId]: { tags, note: a[modelId]?.note ?? "" } }));
   }, []);
@@ -178,7 +192,7 @@ function useModelsState() {
     loading,
     error,
     downloads,
-    reload: load,
+    reload,
     startDownload,
     cancelDownload,
     removeModel,

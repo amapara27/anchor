@@ -147,8 +147,8 @@ export function useBenchmarks(modelId: string | null, runtime: BenchRuntime = "o
         setLoadError(null);
       } catch (e) {
         if(requestId!==loadId.current)return;
-        // A model that isn't installed has no digest to match on — not an error
-        // worth shouting about, just nothing to show.
+        // An uninstalled model or offline Ollama already comes back as empty
+        // results, so anything landing here is a real read failure.
         setGroups([]);
         setLoadError(String(e));
       }
