@@ -19,8 +19,8 @@
 > **Status: early-stage.** Signed builds ship from [Releases](https://github.com/amapara27/anchor/releases/latest) and the app updates itself, but interfaces and internals still change often.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/fit-128k_light.png">
-  <img src="docs/screenshots/fit-128k_dark.png" alt="Anchor's model finder judging Llama 3.2 3B at 128K context">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/find-fit-128k-light.png">
+  <img src="docs/screenshots/find-fit-128k-dark.png" alt="Anchor's model finder judging Llama 3.2 3B at 128K context">
 </picture>
 
 ## About
@@ -72,8 +72,8 @@ Open **Explore** to browse a curated catalog (filter by name, publisher or use c
 - **Use from other apps.** Copyable `ollama run`, OpenAI-compatible base URL and a `curl` snippet for any installed model.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/models_light.png">
-  <img src="docs/screenshots/models_dark.png" alt="Model finder at 32K context">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/find-fit-32k-light.png">
+  <img src="docs/screenshots/find-fit-32k-dark.png" alt="Model finder at 32K context">
 </picture>
 
 ### Benchmark
@@ -83,12 +83,12 @@ Run nine text workloads (classification, summarization, explanation, creative wr
 The headline numbers are **decode speed after the first token** and **TTFT**, the wait from request dispatch to first output. A live waveform shows chunks/s during the run, and the **Leaderboard** ranks every benchmarked model per workload and runtime.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/benchmark_light.png">
-  <img src="docs/screenshots/benchmark_dark.png" alt="Benchmark suite results on Ollama">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/bench-ollama-light.png">
+  <img src="docs/screenshots/bench-ollama-dark.png" alt="Benchmark suite results on Ollama">
 </picture>
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/leaderboard_light.png">
-  <img src="docs/screenshots/leaderboard_dark.png" alt="Leaderboard ranking models on this Mac">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/bench-leaderboard-light.png">
+  <img src="docs/screenshots/bench-leaderboard-dark.png" alt="Leaderboard ranking models on this Mac">
 </picture>
 
 - **Evidence, not just numbers.** Every session keeps its configuration, raw events, warmups and failed or cancelled attempts. Missing measurements stay unavailable instead of showing as zero.
@@ -96,8 +96,8 @@ The headline numbers are **decode speed after the first token** and **TTFT**, th
 - **MLX in the same flow.** On Apple Silicon with [uv](https://docs.astral.sh/uv/), choose **MLX → model → Download model → Run suite**. Anchor verifies pinned checksums and builds the locked worker environment. 64 paired catalog entries span Ollama and MLX, including Qwen 3–3.8, Gemma 3/4 and Ministral 3.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/mlx_light.png">
-  <img src="docs/screenshots/mlx_dark.png" alt="Benchmark suite results on MLX">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/bench-mlx-light.png">
+  <img src="docs/screenshots/bench-mlx-dark.png" alt="Benchmark suite results on MLX">
 </picture>
 
 Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims are not checked. The [methodology](docs/benchmark-methodology.md) has the workload table, timing formulas and reproduction steps. Scoped findings: [Ollama](docs/ollama-calibration.md), [MLX catalog coverage](docs/mlx-measurements.md#catalog-review--october-29-2026).
@@ -109,12 +109,12 @@ Rankings describe reported rates for the selected workload and runtime; quality 
 **Compare** runs one prompt through two models and shows both outputs with measured generation speed.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/try_light.png">
-  <img src="docs/screenshots/try_dark.png" alt="Try: a streaming chat">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/try-chat-light.png">
+  <img src="docs/screenshots/try-chat-dark.png" alt="Try: a streaming chat">
 </picture>
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/compare_light.png">
-  <img src="docs/screenshots/compare_dark.png" alt="Side-by-side model comparison">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/compare-models-light.png">
+  <img src="docs/screenshots/compare-models-dark.png" alt="Side-by-side model comparison">
 </picture>
 
 ### Storage
@@ -122,8 +122,8 @@ Rankings describe reported rates for the selected workload and runtime; quality 
 A real scan of Ollama's on-disk store: total size, savings from shared files, which models are largest or unused, and blobs no installed model references. The scan is read-only because an active download may still need an unreferenced blob; remove installed models through Ollama.
 
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/storage_light.png">
-  <img src="docs/screenshots/storage_dark.png" alt="Storage overview">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshots/storage-overview-light.png">
+  <img src="docs/screenshots/storage-overview-dark.png" alt="Storage overview">
 </picture>
 
 ### Settings
@@ -134,11 +134,11 @@ Inference presets, a hardware panel (the chip and memory every verdict is based 
 
 The `anchor` CLI is the same product in a terminal: it shares benchmark history, chats and presets with the desktop app. Run `anchor` for a keyboard workspace, type `/` to search commands, and use `Tab` and `Esc` to move around. Everything is also scriptable with plain commands and `--json`.
 
-<img src="docs/screenshots/cli_fit.png" alt="anchor /fit showing a 128K context does not fit" width="760">
+<img src="docs/screenshots/cli-fit.png" alt="anchor /fit showing a 128K context does not fit" width="528">
 
-<img src="docs/screenshots/cli_leaderboard.png" alt="anchor /leaderboard ranking models" width="760">
+<img src="docs/screenshots/cli-leaderboard.png" alt="anchor /leaderboard ranking models" width="878">
 
-<img src="docs/screenshots/cli_results.png" alt="anchor /results listing saved benchmark runs" width="760">
+<img src="docs/screenshots/cli-results.png" alt="anchor /results listing saved benchmark runs" width="478">
 
 ```bash
 anchor models browse --filter qwen          # everything on ollama.com
