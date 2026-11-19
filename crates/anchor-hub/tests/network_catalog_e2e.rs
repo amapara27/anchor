@@ -12,7 +12,7 @@ async fn published_models_resolve_through_the_real_discovery_pipeline() {
     let tags = library::fetch_tags("gemma3").await.unwrap();
     assert!(tags.iter().any(|t| t.tag == "gemma3:270m"));
     assert!(tags.iter().all(|t| !t.tag.ends_with("-cloud")));
-    let info = gguf::fetch_model_info("gemma3:270m").await.unwrap();
+    let info = gguf::fetch_model_info("gemma3:270m").await.unwrap().info;
     assert!(info["general.architecture"].as_str().is_some());
     assert!(info
         .iter()

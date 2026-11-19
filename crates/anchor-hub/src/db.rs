@@ -14,7 +14,7 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// The schema version this build expects. Bump alongside a new `V*` constant.
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 /// The preset a conversation falls back to when it has none of its own. Seeded
 /// by [`V6`] and never deleted — the Settings panel edits this row, which is why
@@ -405,6 +405,13 @@ const V13: &str = "
     DROP TABLE review_views;
 ";
 
+/// Cached architecture rows predate the per-layer fit fields (window pattern,
+/// array KV heads, recurrent layers, SSM/MLA keys), so they would keep sizing
+/// gemma4 and qwen3.5 with the old rules. Both are caches: sync refetches a
+/// model whose `arch` is NULL, and tag lookups refetch on a miss. Tables absent
+/// from a partial database have nothing to clear.
+const V14: &[(&str, &str)] = &[("models", "UPDATE models SET arch = NULL"), ("tag_arch", "DELETE FROM tag_arch")];
+
 /// Reads cached architecture metadata for `tag`, if it was recorded against
 /// this exact `digest`.
 ///
@@ -488,6 +495,18 @@ pub fn migrate(conn: &mut Connection) -> Result<()> {
     }
     if version < 13 {
         tx.execute_batch(V13)?;
+    }
+    if version < 14 {
+        for (table, sql) in V14 {
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                [table],
+                |r| r.get(0),
+            )?;
+            if exists {
+                tx.execute_batch(sql)?;
+            }
+        }
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;

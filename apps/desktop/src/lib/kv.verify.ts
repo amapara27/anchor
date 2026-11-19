@@ -20,7 +20,7 @@
 //    weights between Metal and CPU based on free VRAM, moving /api/ps `size` by
 //    ~6 GiB), and that noise once hid a 512 MiB KV term completely.
 import type { ArchMeta } from "../types";
-import { computeBufferBytes, kvCacheBytes, metadataKvBytesPerToken } from "./kv.ts";
+import { computeBufferBytes, draftKvCacheBytes, kvCacheBytes, metadataKvBytesPerToken, recurrentStateBytes } from "./kv.ts";
 
 // This is the one Node-only file under `src/`, which is otherwise typed for the
 // DOM. Declaring the handful of globals it needs keeps it inside `tsc --noEmit`
@@ -36,7 +36,10 @@ declare const process: {
 const NODE_FS = "node:fs";
 const fs: {
   statSync(p: string): { size: number };
-  readFileSync(p: string): { subarray(from: number): { toString(enc: string): string } };
+  readFileSync(p: string): { subarray(from: number): { toString(enc: string): string }; toString(enc: string): string };
+  openSync(p: string, flags: string): number;
+  readSync(fd: number, buf: Uint8Array, off: number, len: number, pos: number): number;
+  closeSync(fd: number): void;
 } = await import(NODE_FS);
 
 const HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
@@ -65,7 +68,7 @@ const SLACK_BYTES = 64 * 1024 ** 2;
  * allocation floor rather than the per-token growth under test. That regime is
  * also the one where everything fits anyway.
  */
-const CONTEXTS = [8192, 16384, 32768];
+const CONTEXTS = (process.env.KV_VERIFY_CONTEXTS ?? "8192,16384,32768").split(",").map(Number);
 
 const MIB = 1024 ** 2;
 
@@ -89,6 +92,15 @@ function archFrom(info: Record<string, unknown>): ArchMeta {
     const hit = exact ?? Object.entries(info).find(([k]) => k.endsWith(`.${suffix}`))?.[1];
     return typeof hit === "number" ? hit : null;
   };
+  // Per-layer arrays: exact key only, so a vision tower's array never leaks in.
+  const arr = <T,>(suffix: string, elem: (v: unknown) => T | null): T[] | null => {
+    const v = arch ? info[`${arch}.${suffix}`] : undefined;
+    if (!Array.isArray(v) || v.length === 0) return null;
+    const out = v.map(elem);
+    return out.every((x) => x !== null) ? (out as T[]) : null;
+  };
+  const flag = (v: unknown) => (typeof v === "boolean" ? v : typeof v === "number" ? v !== 0 : null);
+  const int = (v: unknown) => (typeof v === "number" ? v : null);
   return {
     architecture: arch,
     block_count: num("block_count"),
@@ -101,6 +113,18 @@ function archFrom(info: Record<string, unknown>): ArchMeta {
     key_length_swa: num("attention.key_length_swa"),
     value_length_swa: num("attention.value_length_swa"),
     shared_kv_layers: num("attention.shared_kv_layers"),
+    sliding_window_pattern: arr("attention.sliding_window_pattern", flag),
+    head_count_kv_layers: arr("attention.head_count_kv", int),
+    recurrent_layers: arr("attention.recurrent_layers", flag),
+    full_attention_interval: num("full_attention_interval"),
+    nextn_predict_layers: num("nextn_predict_layers"),
+    key_length_mla: num("attention.key_length_mla"),
+    value_length_mla: num("attention.value_length_mla"),
+    ssm_conv_kernel: num("ssm.conv_kernel"),
+    ssm_inner_size: num("ssm.inner_size"),
+    ssm_state_size: num("ssm.state_size"),
+    ssm_group_count: num("ssm.group_count"),
+    shortconv_l_cache: num("shortconv.l_cache"),
   };
 }
 
@@ -134,10 +158,25 @@ function logSince(offset: number): string | null {
  * line per cache — global and SWA are separate — so these are summed.
  */
 function kvBytesFromLog(text: string): number | null {
-  const re = /llama_kv_cache:\s*size\s*=\s*([\d.]+) MiB \(\s*(\d+) cells,\s*(\d+) layers/g;
+  return sumMiB(text, /llama_kv_cache:\s*size\s*=\s*([\d.]+) MiB \(\s*(\d+) cells,\s*(\d+) layers/g);
+}
+
+/** Sum of every `size = X MiB` match, or null when there are none. */
+function sumMiB(text: string, re: RegExp): number | null {
   let total: number | null = null;
   for (const m of text.matchAll(re)) total = (total ?? 0) + parseFloat(m[1]) * MIB;
   return total;
+}
+
+/**
+ * Splits a load's log at the speculative draft model. Ollama 0.40's llama-server
+ * loads an MTP drafter beside some models (`--spec-type draft-mtp`), with its
+ * own KV cache; the engine predicts the main model only, so the draft's lines
+ * are reported separately instead of being summed into the comparison.
+ */
+function splitDraft(text: string): { main: string; draft: string | null } {
+  const at = text.indexOf("loading draft model");
+  return at < 0 ? { main: text, draft: null } : { main: text.slice(0, at), draft: text.slice(at) };
 }
 
 /**
@@ -155,7 +194,9 @@ function flashAttnFromLog(text: string): boolean | null {
 /** The model's `/api/ps` row, or undefined if it isn't resident. */
 async function psEntry(model: string) {
   const ps = await api("/api/ps");
-  return ps.models?.find((m: any) => m.name === model || m.model === model);
+  // `/api/ps` always names the tag; a bare `command-r7b` is `command-r7b:latest`.
+  const tag = model.includes(":") ? model : `${model}:latest`;
+  return ps.models?.find((m: any) => m.name === tag || m.model === tag);
 }
 
 /**
@@ -187,10 +228,18 @@ async function residentAt(model: string, num_ctx: number) {
   }
   if (!entry) throw new Error(`${model} not resident after load`);
   const text = offset === null ? null : logSince(offset);
+  const parts = text === null ? null : splitDraft(text);
   const measured = {
     size: entry.size as number,
     contextLength: entry.context_length as number | undefined,
-    kvBytes: text === null ? null : kvBytesFromLog(text),
+    kvBytes: parts === null ? null : kvBytesFromLog(parts.main),
+    // Real allocations only: a drafter that aliases the target's layers prints
+    // `size =` totals for the views but no `KV buffer size` line.
+    draftKvBytes: parts?.draft ? (sumMiB(parts.draft, /KV buffer size\s*=\s*([\d.]+) MiB/g) ?? 0) : null,
+    recurrentBytes: parts === null ? null : sumMiB(parts.main, /llama_memory_recurrent:\s*size\s*=\s*([\d.]+) MiB/g),
+    // Extra state rows llama-server keeps per sequence while a drafter is loaded.
+    rsSeq: parts === null ? 0 : Number(/(\d+) rs_seq/.exec(parts.main)?.[1] ?? 0),
+    nBatch: parts === null ? null : Number(/llama_context: n_batch\s*=\s*(\d+)/.exec(parts.main)?.[1] ?? NaN) || null,
     flashAttn: text === null ? null : flashAttnFromLog(text),
   };
 
@@ -200,14 +249,81 @@ async function residentAt(model: string, num_ctx: number) {
   return measured;
 }
 
+/**
+ * The model's speculative draft header, from Ollama's local store (`/api/show`
+ * says nothing about drafters), shaped like `model_info`. Null when there is
+ * none. A minimal GGUF reader: scalars plus short numeric/bool arrays.
+ */
+function localDraftInfo(model: string): Record<string, unknown> | null {
+  const root = process.env.OLLAMA_MODELS || `${process.env.HOME}/.ollama/models`;
+  const [name, tag = "latest"] = model.split(":");
+  const path = name.includes("/") ? `registry.ollama.ai/${name}` : `registry.ollama.ai/library/${name}`;
+  let digest: string | undefined;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(`${root}/manifests/${path}/${tag}`).toString("utf8"));
+    digest = manifest.layers?.find((l: any) => l.mediaType === "application/vnd.ollama.image.draft")?.digest;
+  } catch {
+    return null;
+  }
+  if (!digest) return null;
+  const buf = new Uint8Array(16 * MIB);
+  const fd = fs.openSync(`${root}/blobs/${digest.replace(":", "-")}`, "r");
+  const n = fs.readSync(fd, buf, 0, buf.length, 0);
+  fs.closeSync(fd);
+  const view = new DataView(buf.buffer, 0, n);
+  let off = 8; // magic + version
+  const u32 = () => ((off += 4), view.getUint32(off - 4, true));
+  const u64 = () => ((off += 8), Number(view.getBigUint64(off - 8, true)));
+  const str = () => {
+    const len = u64();
+    off += len;
+    return new TextDecoder().decode(buf.subarray(off - len, off));
+  };
+  const width: Record<number, number> = { 0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1, 10: 8, 11: 8, 12: 8 };
+  const scalar = (t: number): unknown => {
+    const w = width[t];
+    off += w;
+    const at = off - w;
+    if (t === 7) return view.getUint8(at) !== 0;
+    if (t === 6) return view.getFloat32(at, true);
+    if (t === 12) return view.getFloat64(at, true);
+    if (w === 8) return Number(view.getBigUint64(at, true));
+    return w === 4 ? view.getUint32(at, true) : w === 2 ? view.getUint16(at, true) : view.getUint8(at);
+  };
+  const value = (t: number): unknown => {
+    if (t === 8) return str();
+    if (t !== 9) return scalar(t);
+    const elem = u32();
+    const count = u64();
+    if (elem === 8) {
+      for (let i = 0; i < count; i++) str();
+      return null;
+    }
+    if (count > 4096) return ((off += width[elem] * count), null);
+    return Array.from({ length: count }, () => scalar(elem));
+  };
+  u64(); // tensor count
+  const kvCount = u64();
+  const info: Record<string, unknown> = {};
+  for (let i = 0; i < kvCount; i++) {
+    const key = str();
+    info[key] = value(u32());
+  }
+  return info;
+}
+
 async function verify(model: string): Promise<boolean> {
   const show = await api("/api/show", { name: model });
   const arch = archFrom(show.model_info ?? {});
+  const draftInfo = localDraftInfo(model);
+  if (draftInfo) arch.draft = archFrom(draftInfo);
+  const draftN = /^draft_num_predict\s+(\d+)/m.exec(show.parameters ?? "")?.[1];
+  if (draftN) arch.draft_num_predict = Number(draftN);
   const perToken = metadataKvBytesPerToken(arch);
 
   console.log(`\n=== ${model}  (${arch.architecture ?? "unknown arch"})`);
   console.log(
-    `    layers=${arch.block_count} kv_heads=${arch.head_count_kv} ` +
+    `    layers=${arch.block_count} kv_heads=${arch.head_count_kv ?? (arch.head_count_kv_layers ? "per-layer" : null)} ` +
       `k=${arch.key_length} v=${arch.value_length}` +
       (arch.sliding_window ? ` swa_window=${arch.sliding_window}` : ""),
   );
@@ -219,10 +335,19 @@ async function verify(model: string): Promise<boolean> {
   const maxCtx = arch.block_count ? (show.model_info?.[`${arch.architecture}.context_length`] ?? 0) : 0;
   const contexts = CONTEXTS.filter((c) => !maxCtx || c <= maxCtx);
 
-  const samples: { ctx: number; size: number; kvBytes: number | null }[] = [];
+  const samples: {
+    ctx: number;
+    size: number;
+    kvBytes: number | null;
+    draftKvBytes: number | null;
+    recurrentBytes: number | null;
+    nBatch: number | null;
+    rsSeq: number;
+  }[] = [];
   let flashAttn: boolean | null = null;
   for (const ctx of contexts) {
-    const { size, contextLength, kvBytes, flashAttn: fa } = await residentAt(model, ctx);
+    const { size, contextLength, kvBytes, draftKvBytes, recurrentBytes, nBatch, rsSeq, flashAttn: fa } =
+      await residentAt(model, ctx);
     if (fa !== null) flashAttn = fa;
     // Ollama silently clamps num_ctx it can't honour. A clamped load measures a
     // different context than the one we're predicting, so it isn't a data point.
@@ -230,7 +355,7 @@ async function verify(model: string): Promise<boolean> {
       console.log(`    ctx ${ctx}: clamped to ${contextLength}, discarded`);
       continue;
     }
-    samples.push({ ctx, size, kvBytes });
+    samples.push({ ctx, size, kvBytes, draftKvBytes, recurrentBytes, nBatch, rsSeq });
   }
   // The compute-buffer term assumes flash attention. If a load ever reports it
   // off, that term is ~33x too small and the KV numbers below say nothing about
@@ -252,8 +377,32 @@ async function verify(model: string): Promise<boolean> {
       console.log(
         `    ctx ${String(s.ctx).padStart(6)}: kv predicted ${(predicted / MIB).toFixed(1)} MiB, ` +
           `allocated ${(s.kvBytes! / MIB).toFixed(1)} MiB, ` +
-          `error ${(error * 100).toFixed(1)}%  ${pass ? "PASS" : "FAIL"}   [from server log]`,
+          `error ${(error * 100).toFixed(1)}%  ${pass ? "PASS" : "FAIL"}   [from server log` +
+          (s.nBatch ? `, n_batch ${s.nBatch}` : "") +
+          "]",
       );
+      // Already includes the drafter's rollback rows when a draft is known.
+      const predictedState = recurrentStateBytes(arch);
+      if (s.recurrentBytes !== null || predictedState > 0) {
+        const got = s.recurrentBytes ?? 0;
+        const statePass = Math.abs(got - predictedState) <= Math.max(TOLERANCE * got, MIB);
+        ok &&= statePass;
+        console.log(
+          `                 recurrent state predicted ${(predictedState / MIB).toFixed(2)} MiB` +
+            (s.rsSeq ? ` (log: ${s.rsSeq} rs_seq)` : "") +
+            `, allocated ${(got / MIB).toFixed(2)} MiB  ${statePass ? "PASS" : "FAIL"}`,
+        );
+      }
+      const predictedDraft = draftKvCacheBytes(arch, s.ctx);
+      if (s.draftKvBytes !== null || predictedDraft > 0) {
+        const got = s.draftKvBytes ?? 0;
+        const draftPass = Math.abs(got - predictedDraft) <= Math.max(TOLERANCE * got, SLACK_BYTES);
+        ok &&= draftPass;
+        console.log(
+          `                 draft model KV predicted ${(predictedDraft / MIB).toFixed(1)} MiB, ` +
+            `allocated ${(got / MIB).toFixed(1)} MiB  ${draftPass ? "PASS" : "FAIL"}`,
+        );
+      }
     }
     return ok;
   }

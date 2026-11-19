@@ -29,10 +29,11 @@ export interface Model {
  * GGUF architecture fields from Ollama's `/api/show`, mirrored from
  * `anchor_core::ArchMeta`. Drives exact KV-cache sizing — see `lib/kv.ts`.
  *
- * Every field is nullable, and not only because older GGUFs omit them: Ollama
- * serialises *array-valued* metadata as JSON `null`, so genuinely present keys
- * arrive empty on models whose value varies per layer (qwen3.5's
- * `head_count_kv`, gemma4's `sliding_window_pattern`).
+ * Every field is nullable: older GGUFs omit some, and older Ollama versions drop
+ * array-valued metadata from `/api/show`. Ollama 0.40 returns short per-layer
+ * arrays (gemma4's `sliding_window_pattern`, qwen3.5's `head_count_kv`), and the
+ * registry GGUF reader always supplies them. The array fields are optional so
+ * older cached payloads still type-check.
  */
 export interface ArchMeta {
   architecture: string | null;
@@ -56,6 +57,30 @@ export interface ArchMeta {
   value_length_swa: number | null;
   /** Layers reusing another layer's KV cache; subtract from `block_count`. */
   shared_kv_layers: number | null;
+  /** Per-layer windowed flag (`attention.sliding_window_pattern`), true = windowed. */
+  sliding_window_pattern?: boolean[] | null;
+  /** Per-layer KV heads, when `attention.head_count_kv` is an array (0 = no KV). */
+  head_count_kv_layers?: number[] | null;
+  /** Per-layer recurrent (SSM) flag on hybrid models; recurrent layers hold no KV. */
+  recurrent_layers?: boolean[] | null;
+  /** Hybrid models: every Nth layer is full attention, the rest recurrent. */
+  full_attention_interval?: number | null;
+  /** Trailing MTP draft layers counted in `block_count` but holding no KV. */
+  nextn_predict_layers?: number | null;
+  /** MLA decompressed head dims; their presence means a K-only latent cache. */
+  key_length_mla?: number | null;
+  value_length_mla?: number | null;
+  /** Recurrent-state dims (`ssm.*`) on Mamba-family hybrids. */
+  ssm_conv_kernel?: number | null;
+  ssm_inner_size?: number | null;
+  ssm_state_size?: number | null;
+  ssm_group_count?: number | null;
+  /** LFM2's short-convolution cache length (`shortconv.l_cache`). */
+  shortconv_l_cache?: number | null;
+  /** The speculative draft model Ollama loads beside this one, from its own header. */
+  draft?: ArchMeta | null;
+  /** Draft tokens per step (`draft_num_predict` parameter); Ollama defaults to 4. */
+  draft_num_predict?: number | null;
 }
 
 /**

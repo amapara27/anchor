@@ -4,7 +4,7 @@
 import type { ArchMeta, FitResult, QuantId } from "../types";
 // Explicit .ts extension so the Node-run selfcheck can resolve it too.
 import { quantMeta } from "./quant.ts";
-import { computeBufferBytes, kvCacheBytes } from "./kv.ts";
+import { computeBufferBytes, draftKvCacheBytes, kvCacheBytes, recurrentStateBytes } from "./kv.ts";
 
 /**
  * How well a model fits the host's memory:
@@ -60,9 +60,10 @@ function weightsGiB(params_b: number, quant: QuantId, size_bytes?: number | null
  * one. The compute-buffer term needs no metadata at all.
  *
  * "Exact" is verified byte-for-byte by `kv.verify.ts` against llama.cpp's own
- * allocation lines on llama3.2:1b (GQA), phi3:mini (MHA), deepseek-v2 (MLA), and
- * gemma2/gemma3/gemma4 (sliding window). Architectures outside that set are
- * exact only insofar as they reuse those code paths.
+ * allocation lines on Ollama 0.40.15 — see docs/fit-methodology.md for the model
+ * list. Architectures outside it are exact only insofar as they reuse those
+ * code paths; models Ollama runs on its own engine (mllama, glm4moelite) are
+ * unverified.
  */
 export function estimateFit(
   params_b: number,
@@ -74,7 +75,10 @@ export function estimateFit(
   const availableGB = (hardware.memory_bytes ?? 0) / GIB;
   const weightsGB = weightsGiB(params_b, quant, model?.size_bytes);
   const kv = kvCacheBytes(model?.arch, contextLength, params_b);
-  const kvCacheGB = kv.bytes / GIB;
+  // Hybrid models' fixed recurrent state and the speculative drafter's cache
+  // ride with the KV cache: all are per-sequence memory allocated at load.
+  const kvCacheGB =
+    (kv.bytes + recurrentStateBytes(model?.arch) + draftKvCacheBytes(model?.arch, contextLength)) / GIB;
   // The attention mask. Grows with context like the KV cache but far slower —
   // ~128 MiB at 32k — so it's a rounding error next to the OS reserve. Kept
   // separate because the breakdown UI shows it, not because it moves a verdict.

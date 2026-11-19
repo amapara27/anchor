@@ -32,21 +32,18 @@ import type { ArchMeta } from "../types";
 const F16_BYTES = 2;
 
 /**
- * Ollama's batch size (`num_batch`). Sets both the compute buffer's width and
- * the padding on a sliding-window cache, and is exposed by no API response.
+ * Ollama's batch size (`-b`/`-ub`) for a context. Sets both the compute
+ * buffer's width and the padding on a sliding-window cache.
  *
- * Not actually a constant: Ollama passes `-b 1024` when the model has room and
- * drops to `-b 512` under memory pressure. Measured — llama3.2:1b, gemma2:2b and
- * gemma3:4b got 1024; phi3:mini, deepseek-v2 and gemma4:e4b (all with multi-GiB
- * KV caches) got 512. Nothing in `/api/show` predicts which one a load will get.
- *
- * 1024 is the larger, so both terms over-predict rather than under-predict on
- * the constrained models — the safe direction for a fit check, and worth at most
- * ~64 MiB either way.
- * ponytail: read `llama_context: n_batch` from the server log if that ceiling
- * ever stops being small enough to ignore.
+ * Ollama 0.40 proposes 512 up to 4K, 1024 up to 32K and 2048 beyond
+ * (`server/sched.go` `generationBatchForContext`), then steps down only when its
+ * own memory estimate is tight against free memory at load time — which no API
+ * predicts. Taking the proposal over-predicts under memory pressure, the safe
+ * direction for a fit check.
  */
-const DEFAULT_BATCH = 1024;
+export function batchForContext(contextLength: number): number {
+  return contextLength > 32768 ? 2048 : contextLength > 4096 ? 1024 : 512;
+}
 
 /**
  * How a memory figure was arrived at:
@@ -61,51 +58,158 @@ export interface KvEstimate {
   source: KvSource;
 }
 
-/**
- * Fraction of a sliding-window model's layers that keep a full-context KV cache;
- * the rest never exceed `sliding_window` tokens.
- *
- * GGUF carries `sliding_window` but the layer *pattern* is array-valued, and
- * Ollama serialises array metadata as JSON null — so it never reaches us and has
- * to be known per architecture.
- *
- * All three gemma entries are confirmed against llama.cpp's own allocation
- * lines, which name the layer counts outright:
- *
- *   gemma2:2b   416 MiB ( 8192 cells, 13 layers) + 260 MiB (5120 cells, 13)
- *   gemma3:4b   160 MiB ( 8192 cells,  5 layers) + 232 MiB (2048 cells, 29)
- *   gemma4:e4b  512 MiB (32768 cells,  4 layers) +  40 MiB (1024 cells, 20)
- *
- * `gemma3n` is the only unmeasured entry, carried over from Gemma 3's published
- * 5:1 pattern.
- *
- * Do NOT re-derive these by differencing `/api/ps` size. gemma4's resident
- * figure swings ~6 GiB between loads because llama.cpp splits weights across
- * Metal and CPU based on free VRAM at load time (`CPU model buffer 5901 MiB /
- * MTL0 2829 MiB` on one load, all-GPU on the next) and `/api/ps` counts only
- * the GPU side. That noise buried this term's real 512 MiB and is what made an
- * earlier pass conclude, wrongly, that gemma4 had zero global layers.
- * ponytail: the only hardcoded table left; an architecture missing from it falls
- * back to an estimate rather than guessing.
- */
-const GLOBAL_LAYER_FRACTION: Record<string, number> = {
-  gemma2: 1 / 2,
-  gemma3: 1 / 6,
-  gemma3n: 1 / 6,
-  gemma4: 1 / 6,
-};
+/** Cell granularity: llama.cpp pads every cache to a multiple of 256 cells. */
+const CELL_PAD = 256;
+const pad = (n: number) => Math.ceil(n / CELL_PAD) * CELL_PAD;
 
 /**
- * Layers that actually hold a KV cache: `block_count` minus the layers that
- * reuse another's (`shared_kv_layers`). Gemma 4 shares 18 of 42, so 24 cache.
+ * Hardcoded sliding-window layouts, from each architecture's `load_hparams` in
+ * llama.cpp (`load_swa_pattern(ml, N, dense_first)`). Layer `i` is windowed when
+ * `i % N < N - 1` (every Nth layer global), or `i % N != 0` when dense-first;
+ * N = 0 windows every layer. A GGUF `sliding_window_pattern` array overrides
+ * the period — gemma4's differs by size (e2b 5, e4b 6). `window` is a span
+ * llama.cpp forces regardless of the GGUF.
  *
- * This is the denominator `GLOBAL_LAYER_FRACTION` applies to — llama.cpp splits
- * the *cached* layers 1:5 global:local, not all `block_count` of them.
+ * Confirmed against llama.cpp's allocation lines, which name the layer counts:
+ *   gemma2:2b   416 MiB ( 8192 cells, 13 layers) + 260 MiB (5120 cells, 13)
+ *   gemma3:4b   160 MiB ( 8192 cells,  5 layers) + 232 MiB (2048 cells, 29)
+ *   gemma4:e2b  192 MiB (32768 cells,  3 layers) +  18 MiB (1536 cells, 12)
+ *
+ * An architecture absent here with no pattern array is dense: llama.cpp ignores
+ * a declared `sliding_window` it has no layout for (qwen2, mistral, phi3).
+ * Do NOT re-derive layouts by differencing `/api/ps` size: llama.cpp re-splits
+ * weights between Metal and CPU per load, swinging that figure by GiBs.
+ */
+const SWA_LAYOUT: Record<string, { period: number; denseFirst?: boolean; window?: number }> = {
+  gemma2: { period: 2 },
+  gemma3: { period: 6 },
+  gemma3n: { period: 5 },
+  gemma4: { period: 6 },
+  "gpt-oss": { period: 2 },
+  cohere2: { period: 4 },
+  cohere2moe: { period: 4, denseFirst: true },
+  smallthinker: { period: 4, denseFirst: true, window: 4096 },
+  "exaone-moe": { period: 4 },
+  exaone4: { period: 4 },
+  olmo2: { period: 4 },
+  // Chunked attention, 3 chunked : 1 full; same cache sizing as a window.
+  llama4: { period: 4, window: 8192 },
+  lfm2: { period: 0 },
+  lfm2moe: { period: 0 },
+};
+
+/** The window span and per-layer windowed test, or null for a dense model. */
+function swaLayout(a: ArchMeta): { window: number; isSwa: (i: number) => boolean } | null {
+  const layout = a.architecture ? SWA_LAYOUT[a.architecture] : undefined;
+  // exaone4 windows only its 32B (64-layer) variant; llama4 opts out with 0.
+  if (a.architecture === "exaone4" && a.block_count !== 64) return null;
+  if (a.architecture === "llama4" && a.sliding_window === 0) return null;
+  const window = layout?.window ?? a.sliding_window ?? 0;
+  if (window <= 0) return null;
+  const pattern = a.sliding_window_pattern;
+  if (pattern) return { window, isSwa: (i) => pattern[i] ?? false };
+  if (!layout) return null;
+  const n = layout.period;
+  return {
+    window,
+    isSwa: (i) => n === 0 || (layout.denseFirst ? i % n !== 0 : i % n < n - 1),
+  };
+}
+
+/**
+ * Architectures llama.cpp runs with no KV cache at all: every layer recurrent.
+ * ponytail: rwkv6/rwkv7 belong here too, but need their own state formula.
+ */
+const PURE_RECURRENT = new Set(["mamba", "mamba2"]);
+
+/**
+ * Ceiling on layer counts taken from a GGUF header. Real models stay under a
+ * few hundred; a corrupt or hostile header must not drive a per-layer loop.
+ */
+const MAX_LAYERS = 4096;
+
+/** Layers in the main model: MTP draft heads (`nextn_predict_layers`) excluded. */
+function mainLayerCount(a: ArchMeta): number | null {
+  if (!a.block_count || a.block_count > MAX_LAYERS) return null;
+  return a.block_count - (a.nextn_predict_layers ?? 0);
+}
+
+/**
+ * Layers that actually hold a KV cache: main layers minus those that reuse
+ * another's (`shared_kv_layers`). The owners are the *first* layers — gemma4:e2b
+ * caches 15 of 35, and the window pattern is read over those 15. gemma3n
+ * hardcodes 20 owners in llama.cpp rather than reading the key.
  */
 function kvLayerCount(a: ArchMeta): number | null {
-  if (!a.block_count) return null;
-  return a.block_count - (a.shared_kv_layers ?? 0);
+  const n = mainLayerCount(a);
+  if (n === null) return null;
+  if (a.architecture === "gemma3n" && a.shared_kv_layers == null) return Math.min(n, 20);
+  return n - (a.shared_kv_layers ?? 0);
 }
+
+/**
+ * KV heads per main layer, 0 on layers without attention.
+ *
+ * Hybrid SSM/attention models hold KV only on their attention layers. Three
+ * encodings mark those, all seen in the wild: a `recurrent_layers` bool array
+ * (qwen3.5:0.8b), a per-layer `head_count_kv` array with 0 on recurrent layers
+ * (qwen3.5:9b, granite4-h, lfm2), or just `full_attention_interval` (every Nth
+ * layer attends). Null when the KV-head count is unknown.
+ */
+function layerHeads(a: ArchMeta, from: number, to: number): number[] | null {
+  const out: number[] = [];
+  for (let i = from; i < to; i++) {
+    let heads = a.head_count_kv_layers?.[i] ?? a.head_count_kv;
+    if (heads == null) return null;
+    if (a.recurrent_layers) {
+      if (a.recurrent_layers[i]) heads = 0;
+    } else if (!a.head_count_kv_layers && a.full_attention_interval) {
+      if ((i + 1) % a.full_attention_interval !== 0) heads = 0;
+    }
+    out.push(heads);
+  }
+  return out;
+}
+
+/** One layer that owns a KV cache: its KV heads, and whether it is windowed. */
+interface CacheLayer {
+  heads: number;
+  swa: boolean;
+}
+
+/** Every cache-owning layer, or null when the metadata can't say. */
+function cacheLayers(a: ArchMeta): CacheLayer[] | null {
+  const n = kvLayerCount(a);
+  if (!n || n <= 0) return null;
+  return layersIn(a, 0, n);
+}
+
+/**
+ * A draft model's cache-owning layers. llama.cpp runs a drafter as an MTP
+ * context, which caches only its trailing `nextn_predict_layers` layers and
+ * ignores `shared_kv_layers`: qwen3.5's drafter (25 layers, 1 nextn) caches one
+ * attention layer, gemma4-assistant (4 of 4 nextn) caches all four.
+ */
+function draftCacheLayers(d: ArchMeta): CacheLayer[] | null {
+  if (!d.block_count || d.block_count > MAX_LAYERS) return null;
+  const nextn = Math.min(d.nextn_predict_layers ?? d.block_count, d.block_count);
+  return layersIn(d, d.block_count - nextn, d.block_count);
+}
+
+function layersIn(a: ArchMeta, from: number, to: number): CacheLayer[] | null {
+  const heads = layerHeads(a, from, to);
+  if (!heads || !heads.some((h) => h > 0)) return null;
+  const layout = swaLayout(a);
+  return heads.map((h, j) => ({ heads: h, swa: layout?.isSwa(from + j) ?? false }));
+}
+
+/**
+ * MLA models whose GGUF carries `key_length_mla`/`value_length_mla` cache the
+ * compressed latent: llama.cpp allocates K only (`has_v = !is_mla`), at
+ * `head_count_kv × key_length`. Older GGUFs without those keys (Ollama's
+ * deepseek-v2) take the decompressed path the dense formula already covers.
+ */
+const isMla = (a: ArchMeta) => !!(a.key_length_mla && a.value_length_mla);
 
 /** Per-head key/value dims, preferring explicit lengths over hidden/heads. */
 function headDims(a: ArchMeta): { k: number; v: number } | null {
@@ -122,23 +226,21 @@ function headDims(a: ArchMeta): { k: number; v: number } | null {
 /**
  * KV bytes per token of context, from architecture metadata, ignoring any
  * sliding window. Null when the metadata can't support an exact answer —
- * notably a missing layer or KV-head count. Ollama reports array-valued
- * metadata as JSON null, so `head_count_kv` is absent on models whose value
- * varies per layer (qwen3.5, a hybrid SSM/attention model), not only on old
- * GGUFs.
+ * notably a missing layer or KV-head count.
  */
-export function metadataKvBytesPerToken(a: ArchMeta | null | undefined): number | null {
-  if (!a) return null;
-  // MLA (deepseek2) needs no special case: llama.cpp caches the *decompressed*
-  // per-head K/V, not the compressed latent, so the dense formula below is
-  // already exact. Measured on deepseek-v2:16b — 27 × 16 × (192 + 128) × 2 =
-  // 270 KiB/token, matching `size = 8640.00 MiB (32768 cells, 27 layers)`.
-  // ponytail: llama.cpp prints n_embd_head_k_mla and does have a compressed
-  // path; if Ollama ever enables it this drops ~8.9x and needs kv_lora_rank.
+export function metadataKvBytesPerToken(raw: ArchMeta | null | undefined): number | null {
+  if (!raw) return null;
+  const a = ollamaCompat(raw);
+  if (a.architecture && PURE_RECURRENT.has(a.architecture)) return 0;
+  // MLA without the `_mla` keys (deepseek-v2 from Ollama's library) needs no
+  // special case: llama.cpp caches the decompressed per-head K/V, so the dense
+  // formula is exact — 27 × 16 × (192 + 128) × 2 = 270 KiB/token, matching
+  // `size = 1080.00 MiB (4096 cells, 27 layers)` on Ollama 0.40.15.
   const dims = headDims(a);
-  const layers = kvLayerCount(a);
-  if (!layers || !a.head_count_kv || !dims) return null;
-  return layers * a.head_count_kv * (dims.k + dims.v) * F16_BYTES;
+  const layers = cacheLayers(a);
+  if (!layers || !dims) return null;
+  const width = isMla(a) ? dims.k : dims.k + dims.v;
+  return layers.reduce((sum, l) => sum + l.heads, 0) * width * F16_BYTES;
 }
 
 /**
@@ -179,7 +281,7 @@ export function estimateKvBytesPerToken(params_b: number): number {
  * kv.verify.ts warns when a load reports it disabled.
  */
 export function computeBufferBytes(contextLength: number): number {
-  return contextLength * DEFAULT_BATCH * 4;
+  return contextLength * batchForContext(contextLength) * 4;
 }
 
 /**
@@ -195,56 +297,120 @@ export function kvCacheBytes(
   contextLength: number,
   params_b: number,
 ): KvEstimate {
-  const perToken = metadataKvBytesPerToken(arch);
-  if (perToken === null || !arch) {
-    return { bytes: contextLength * estimateKvBytesPerToken(params_b), source: "estimated" };
-  }
-  if (!arch.sliding_window) {
-    return { bytes: contextLength * perToken, source: "metadata" };
-  }
-  // A window at least as wide as the context never binds — every layer holds the
-  // full context, which is plain dense attention. phi3 declares a 262144-token
-  // window against a 131072 maximum, so it is never windowed in practice; before
-  // this check it fell through to the parameter bucket and under-reported by 8x
-  // (48 KiB/token guessed against 384 KiB/token measured).
-  //
-  // This is also what the windowed branch below would compute for a known arch
-  // in the same regime, since min(ctx, window + batch) is then ctx and the two
-  // layer groups sum back to `layers`. It runs first only to rescue the archs
-  // that branch has no fraction for.
-  if (contextLength <= arch.sliding_window) {
-    return { bytes: contextLength * perToken, source: "metadata" };
-  }
+  const estimated = (): KvEstimate => ({
+    bytes: contextLength * estimateKvBytesPerToken(params_b),
+    source: "estimated",
+  });
+  if (arch?.architecture && PURE_RECURRENT.has(arch.architecture)) return { bytes: 0, source: "metadata" };
+  if (arch) arch = ollamaCompat(arch);
+  const layers = arch ? cacheLayers(arch) : null;
+  const dims = arch ? headDims(arch) : null;
+  if (!arch || !layers || !dims) return estimated();
+  return { bytes: layerBytes(arch, layers, dims, contextLength), source: "metadata" };
+}
 
-  // Windowed model: we need to know how many layers escape the window.
-  const globalFraction = arch.architecture
-    ? GLOBAL_LAYER_FRACTION[arch.architecture]
-    : undefined;
-  if (globalFraction === undefined) {
-    return { bytes: contextLength * estimateKvBytesPerToken(params_b), source: "estimated" };
-  }
-
-  const dims = headDims(arch)!;
+/** KV bytes of `layers` at a context length. */
+function layerBytes(arch: ArchMeta, layers: CacheLayer[], dims: { k: number; v: number }, contextLength: number): number {
   // Windowed layers can carry narrower heads than the full-attention ones.
-  const swa =
+  const swaDims =
     arch.key_length_swa && arch.value_length_swa
       ? { k: arch.key_length_swa, v: arch.value_length_swa }
       : dims;
-  const perLayerToken = (d: { k: number; v: number }) =>
-    arch.head_count_kv! * (d.k + d.v) * F16_BYTES;
-
-  const layers = kvLayerCount(arch)!;
-  // Floor, not round: the pattern is "every Nth layer is global", so a partial
-  // trailing cycle contributes no global layer. gemma3:4b has 34 layers at 1/6
-  // and llama.cpp allocates 5 global — round() would say 6.
-  const globalLayers = Math.floor(layers * globalFraction);
-  const localLayers = layers - globalLayers;
-  // llama.cpp sizes a windowed cache at the window plus one batch, so it can
-  // hold the batch being processed alongside the tokens still in scope: gemma4
-  // allocates 1024 cells against a declared 512-token window.
-  const windowCells = Math.min(contextLength, arch.sliding_window + DEFAULT_BATCH);
-  const bytes =
-    globalLayers * perLayerToken(dims) * contextLength +
-    localLayers * perLayerToken(swa) * windowCells;
-  return { bytes, source: "metadata" };
+  const width = (d: { k: number; v: number }) => (isMla(arch) ? d.k : d.k + d.v);
+  // llama.cpp pads the context to 256 cells, and sizes a windowed cache at the
+  // window plus one micro-batch, so it can hold the batch being processed
+  // alongside the tokens still in scope: gemma4 allocates 1536 cells against a
+  // 512-token window at batch 1024. A window wider than the context never binds.
+  const cells = pad(contextLength);
+  const windowCells = pad(Math.min(cells, (swaLayout(arch)?.window ?? 0) + batchForContext(contextLength)));
+  let bytes = 0;
+  for (const l of layers) {
+    bytes += l.swa
+      ? l.heads * width(swaDims) * F16_BYTES * windowCells
+      : l.heads * width(dims) * F16_BYTES * cells;
+  }
+  return bytes;
 }
+
+/**
+ * KV bytes of the speculative draft model, 0 when there is none or its
+ * metadata can't say. gemma4-assistant allocates nothing: llama.cpp aliases its
+ * layers onto the target's last two (`sharing with layer 34`). Verified on
+ * gemma4:e2b's and qwen3.5:0.8b's drafters.
+ */
+export function draftKvCacheBytes(arch: ArchMeta | null | undefined, contextLength: number): number {
+  const d = arch?.draft;
+  if (d?.architecture === "gemma4-assistant") return 0;
+  const layers = d ? draftCacheLayers(d) : null;
+  const dims = d ? headDims(d) : null;
+  return d && layers && dims ? layerBytes(d, layers, dims, contextLength) : 0;
+}
+
+/**
+ * Ollama's default `draft_num_predict` (`--spec-draft-n-max`) when a model's
+ * parameters don't set one; qwen3.5:0.8b sets 2, gemma4:e2b 3.
+ */
+const DRAFT_N_MAX = 4;
+
+/**
+ * Bytes of recurrent (SSM) state on hybrid and recurrent models: f32, fixed in
+ * size, independent of context. llama.cpp allocates one row per recurrent layer
+ * per sequence (`llama_memory_recurrent`):
+ *
+ *   Mamba family  (d_conv − 1)·(d_inner + 2·n_group·d_state) + d_state·d_inner
+ *   LFM2          n_embd·(l_cache − 1)
+ *
+ * While a drafter is loaded llama-server keeps `n_max` extra rows per sequence
+ * to roll back rejected drafts (`1 + n_rs_seq`). Verified on qwen3.5:0.8b:
+ * 18 layers × 280,576 floats × 4 B = 19.27 MiB, × 3 = 57.80 MiB with its drafter.
+ * 0 when the architecture or its keys are unknown.
+ * ponytail: nemotron_h (needs per-layer feed_forward_length), rwkv and kimi
+ * linear are uncounted.
+ */
+export function recurrentStateBytes(a: ArchMeta | null | undefined): number {
+  const arch = a?.architecture;
+  const n = a ? mainLayerCount(a) : null;
+  if (!a || !arch || !n) return 0;
+  let layers: number;
+  if (PURE_RECURRENT.has(arch) || arch === "falcon-h1") layers = n;
+  else if (RECURRENT_WHERE_NO_KV.has(arch)) layers = (layerHeads(a, 0, n) ?? []).filter((h) => h === 0).length;
+  else return 0;
+  let floats = 0;
+  if (arch === "lfm2" || arch === "lfm2moe") {
+    if (a.embedding_length && a.shortconv_l_cache) floats = a.embedding_length * (a.shortconv_l_cache - 1);
+  } else if (a.ssm_conv_kernel && a.ssm_inner_size && a.ssm_state_size) {
+    const groups = a.ssm_group_count ?? 0;
+    floats =
+      (a.ssm_conv_kernel - 1) * (a.ssm_inner_size + 2 * groups * a.ssm_state_size) +
+      a.ssm_state_size * a.ssm_inner_size;
+  }
+  // Only architectures llama.cpp can roll back (`llm_arch_supports_rs_rollback`)
+  // keep the extra rows; elsewhere `n_rs_seq` is clamped to 0.
+  const rollback = !!a.draft && (arch === "qwen35" || arch === "qwen35moe");
+  return layers * floats * 4 * (rollback ? 1 + (a.draft_num_predict ?? DRAFT_N_MAX) : 1);
+}
+
+/**
+ * Ollama's load-time shim (`llama/compat/llama-ollama-compat.cpp`) rewrites its
+ * own `glm4moelite` GGUFs into llama.cpp's `deepseek2` MLA layout: one KV head,
+ * `key_length` = the latent width (`kv_lora_rank + rope`, Ollama's
+ * `key_length_mla`), and the per-head dims moved to the `_mla` keys. The cache
+ * is then the K-only latent.
+ */
+function ollamaCompat(a: ArchMeta): ArchMeta {
+  if (a.architecture !== "glm4moelite") return a;
+  return {
+    ...a,
+    head_count_kv: 1,
+    head_count_kv_layers: null,
+    key_length: a.key_length_mla ?? null,
+    value_length: a.value_length_mla ?? null,
+    key_length_mla: a.key_length,
+    value_length_mla: a.value_length,
+  };
+}
+
+/** Hybrids whose recurrent layers are exactly the ones without KV heads. */
+const RECURRENT_WHERE_NO_KV = new Set([
+  "qwen35", "qwen35moe", "qwen3next", "jamba", "granitehybrid", "plamo2", "lfm2", "lfm2moe",
+]);

@@ -17,6 +17,22 @@ const models = [{ name: 'fixture:1b', digest: 'sha256:fixture', size: 1024 ** 3,
 let offline = false, slow = false, terminalStream = false, tagsReady = null, resident = null, step = 'startup', success = false;
 const baseArch = { architecture: 'llama', block_count: 16, head_count: 32, head_count_kv: 8, key_length: 64, value_length: 64 };
 let arch = baseArch;
+// ArchMeta field → GGUF key, where the two differ (the array form of head_count_kv).
+const ggufKey = { head_count_kv_layers: 'attention.head_count_kv', nextn_predict_layers: 'nextn_predict_layers', key_length_mla: 'attention.key_length_mla', value_length_mla: 'attention.value_length_mla', ssm_conv_kernel: 'ssm.conv_kernel', ssm_inner_size: 'ssm.inner_size', ssm_state_size: 'ssm.state_size', ssm_group_count: 'ssm.group_count', shortconv_l_cache: 'shortconv.l_cache' };
+// ArchMeta → `/api/show`-shaped model_info, GGUF key names and all.
+const modelInfo = (a) => Object.fromEntries([['general.architecture', a.architecture], [a.architecture + '.context_length', 131072], ...Object.entries(a).filter(([k, v]) => !['architecture', 'draft', 'draft_num_predict'].includes(k) && v != null).map(([k, v]) => [a.architecture + '.' + (ggufKey[k] ?? (['block_count', 'embedding_length', 'full_attention_interval'].includes(k) ? k : 'attention.' + k)), v])]);
+// A header-only GGUF (v3, no tensors) carrying `a`'s metadata: the CLI reads a drafter from disk.
+function ggufHeader(a) {
+    const u32 = n => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+    const u64 = n => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(n)); return b; };
+    const str = t => Buffer.concat([u64(Buffer.byteLength(t)), Buffer.from(t)]);
+    const scalar = v => typeof v === 'boolean' ? Buffer.from([v ? 1 : 0]) : u32(v);
+    const kvs = Object.entries(modelInfo(a)).map(([k, v]) => Buffer.concat([str(k),
+        typeof v === 'string' ? Buffer.concat([u32(8), str(v)])
+        : Array.isArray(v) ? Buffer.concat([u32(9), u32(typeof v[0] === 'boolean' ? 7 : 4), u64(v.length), ...v.map(scalar)])
+        : Buffer.concat([u32(4), u32(v)])]));
+    return Buffer.concat([Buffer.from('GGUF'), u32(3), u64(0), u64(kvs.length), ...kvs]);
+}
 let chatAnswer = 'Fixture answer';
 const server = createServer(async (req, res) => {
     try {
@@ -37,7 +53,7 @@ const server = createServer(async (req, res) => {
             return json({ models });
         }
         if (req.url === '/api/show')
-            return json({ details: models[0].details, model_info: Object.fromEntries([['general.architecture', arch.architecture], [arch.architecture + '.context_length', 131072], ...Object.entries(arch).filter(([k]) => k !== 'architecture').map(([k, v]) => [arch.architecture + '.' + (['block_count', 'embedding_length'].includes(k) ? k : 'attention.' + k), v])]) });
+            return json({ details: models[0].details, model_info: modelInfo(arch), parameters: arch.draft_num_predict ? 'draft_num_predict ' + arch.draft_num_predict : '' });
         if (req.url === '/api/ps')
             return json({ models: resident ? [resident] : [] });
         if (req.url === '/api/pull') {
@@ -139,16 +155,35 @@ try {
     assert(Math.abs(quant.breakdown.weights_gb - 1e9 * 8.5 / 8 / 1024 ** 3) < 1e-12);
     await run(['fit', 'fixture:1b', '--ctx', '0'], { code: 1 });
     const fitCases = JSON.parse(await readFile(path.join(root, 'tests/e2e/fixtures/fit.json'), 'utf8'));
+    const fixtureManifest = path.join(store, 'manifests/registry.ollama.ai/library/fixture/1b');
+    const draftBlob = path.join(store, 'blobs', 'sha256-' + 'd'.repeat(64));
     for (const c of fitCases) {
         arch = c.arch;
+        await rm(fixtureManifest, { force: true });
+        await rm(draftBlob, { force: true });
+        if (c.arch.draft) {
+            await mkdir(path.dirname(fixtureManifest), { recursive: true });
+            await mkdir(path.dirname(draftBlob), { recursive: true });
+            await writeFile(draftBlob, ggufHeader(c.arch.draft));
+            await writeFile(fixtureManifest, JSON.stringify({ layers: [{ mediaType: 'application/vnd.ollama.image.draft', digest: 'sha256:' + 'd'.repeat(64) }] }));
+        }
         await run(['models', 'ls', '--json'], { json: true });
         for (const [ctx, bytes] of c.windows) {
             const f = await run(['fit', 'fixture:1b', '--ctx', String(ctx), '--json'], { json: true });
             assert.equal(f.kv_source, 'metadata', c.name);
             assert.equal(f.breakdown.kv_cache_gb, bytes / 1024 ** 3, c.name);
-            assert.equal(f.breakdown.compute_buffer_gb, ctx * 4096 / 1024 ** 3);
+            // Ollama proposes batch 512 up to 4K, 1024 up to 32K, 2048 beyond.
+            const batch = ctx > 32768 ? 2048 : ctx > 4096 ? 1024 : 512;
+            assert.equal(f.breakdown.compute_buffer_gb, ctx * batch * 4 / 1024 ** 3);
         }
     }
+    await rm(fixtureManifest, { force: true });
+    await rm(draftBlob, { force: true });
+    // A corrupt or hostile header must not drive the per-layer loop: past the
+    // layer ceiling the engine falls back to the labelled estimate, instantly.
+    arch = { ...baseArch, block_count: 1e12 };
+    await run(['models', 'ls', '--json'], { json: true });
+    assert.equal((await run(['fit', 'fixture:1b', '--ctx', '32768', '--json'], { json: true })).kv_source, 'estimated');
     arch = baseArch;
     await run(['models', 'ls', '--json'], { json: true });
     await writeFile(path.join(bin, 'system_profiler'), '#!/bin/sh\necho malformed\n', { mode: 0o755 });

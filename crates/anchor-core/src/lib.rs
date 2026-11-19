@@ -103,6 +103,54 @@ pub struct ArchMeta {
     /// `llama_kv_cache:` allocation lines.
     #[serde(default)]
     pub shared_kv_layers: Option<u64>,
+    /// Per-layer windowed flag (`{arch}.attention.sliding_window_pattern`),
+    /// true = windowed. Gemma 4's period differs by size (e2b 5, e4b 6), so the
+    /// array beats any per-architecture table.
+    #[serde(default)]
+    pub sliding_window_pattern: Option<Vec<bool>>,
+    /// Per-layer KV heads, when `{arch}.attention.head_count_kv` is an array;
+    /// 0 marks a layer without KV (qwen3.5:9b's recurrent layers).
+    #[serde(default)]
+    pub head_count_kv_layers: Option<Vec<u64>>,
+    /// Per-layer recurrent flag (`{arch}.attention.recurrent_layers`) on hybrid
+    /// SSM/attention models; recurrent layers hold no KV cache.
+    #[serde(default)]
+    pub recurrent_layers: Option<Vec<bool>>,
+    /// Hybrid models: every Nth layer is full attention
+    /// (`{arch}.full_attention_interval`), the rest recurrent.
+    #[serde(default)]
+    pub full_attention_interval: Option<u64>,
+    /// Trailing MTP draft layers (`{arch}.nextn_predict_layers`) counted in
+    /// `block_count` but excluded from the cache.
+    #[serde(default)]
+    pub nextn_predict_layers: Option<u64>,
+    /// MLA decompressed head dims (`{arch}.attention.key_length_mla` /
+    /// `value_length_mla`); their presence means a K-only latent cache.
+    #[serde(default)]
+    pub key_length_mla: Option<u64>,
+    #[serde(default)]
+    pub value_length_mla: Option<u64>,
+    /// Recurrent-state dims (`{arch}.ssm.*`) on Mamba-family hybrids.
+    #[serde(default)]
+    pub ssm_conv_kernel: Option<u64>,
+    #[serde(default)]
+    pub ssm_inner_size: Option<u64>,
+    #[serde(default)]
+    pub ssm_state_size: Option<u64>,
+    #[serde(default)]
+    pub ssm_group_count: Option<u64>,
+    /// LFM2's short-convolution cache length (`{arch}.shortconv.l_cache`).
+    #[serde(default)]
+    pub shortconv_l_cache: Option<u64>,
+    /// The speculative draft model Ollama loads beside this one (a `draft`
+    /// layer in the manifest), read from its own GGUF header. It brings its own
+    /// KV cache and adds rows to the target's recurrent state.
+    #[serde(default)]
+    pub draft: Option<Box<ArchMeta>>,
+    /// Draft tokens per step (`draft_num_predict` in the model's parameters);
+    /// Ollama defaults to 4. Sets the recurrent state's rollback rows.
+    #[serde(default)]
+    pub draft_num_predict: Option<u64>,
 }
 
 impl ArchMeta {

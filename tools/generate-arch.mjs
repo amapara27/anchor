@@ -27,6 +27,8 @@ const MODEL_LAYER = "application/vnd.ollama.image.model";
 const FIRST_CHUNK = 1024 * 1024;
 /** Cap on paging when a model buries its arch keys behind a big tokenizer array. */
 const MAX_CHUNK = 16 * 1024 * 1024;
+/** Longest array kept: past any layer count, far short of a vocabulary. */
+const MAX_LAYER_ARRAY = 4096;
 
 // --- GGUF ------------------------------------------------------------------
 
@@ -89,6 +91,11 @@ function parseGguf(buf) {
       const elem = u32();
       const count = u64();
       if (elem === 9) throw new Error("nested GGUF array");
+      // Short numeric/bool arrays are per-layer patterns (sliding_window_pattern,
+      // array-valued head_count_kv); keep them. Long ones are vocabularies.
+      if (WIDTH[elem] && count <= MAX_LAYER_ARRAY) {
+        return Array.from({ length: count }, () => skipValue(elem));
+      }
       if (WIDTH[elem]) {
         need(WIDTH[elem] * count);
         off += WIDTH[elem] * count;
@@ -97,7 +104,7 @@ function parseGguf(buf) {
       } else {
         throw new Error(`unknown GGUF array element type ${elem}`);
       }
-      return null; // arrays are never a KV-sizing input
+      return null; // string arrays and vocabularies are never a KV-sizing input
     }
     const width = WIDTH[type];
     if (!width) throw new Error(`unknown GGUF value type ${type}`);
@@ -124,14 +131,29 @@ function parseGguf(buf) {
 
 // --- registry --------------------------------------------------------------
 
-async function modelBlobDigest(name, tag) {
+/** The model, speculative draft and params layer digests of a tag. */
+async function layerDigests(name, tag) {
   const res = await fetch(`${REGISTRY}/${name}/manifests/${tag}`, {
     headers: { Accept: "application/vnd.docker.distribution.manifest.v2+json" },
   });
   if (!res.ok) throw new Error(`manifest ${res.status}`);
-  const layer = (await res.json()).layers?.find((l) => l.mediaType === MODEL_LAYER);
-  if (!layer) throw new Error("no model layer in manifest");
-  return layer.digest;
+  const layers = (await res.json()).layers ?? [];
+  const digest = (type) => layers.find((l) => l.mediaType === type)?.digest;
+  if (!digest(MODEL_LAYER)) throw new Error("no model layer in manifest");
+  return {
+    model: digest(MODEL_LAYER),
+    draft: digest("application/vnd.ollama.image.draft"),
+    params: digest("application/vnd.ollama.image.params"),
+  };
+}
+
+/** `draft_num_predict` from a tag's params layer, or null. */
+async function draftNumPredict(name, digest) {
+  if (!digest) return null;
+  const res = await fetch(`${REGISTRY}/${name}/blobs/${digest}`);
+  if (!res.ok) return null;
+  const v = (await res.json().catch(() => ({}))).draft_num_predict;
+  return typeof v === "number" ? v : null;
 }
 
 /**
@@ -176,6 +198,15 @@ function archFrom(meta) {
     const v = hit ?? Object.entries(meta).find(([k]) => k.endsWith(`.${suffix}`))?.[1];
     return typeof v === "number" ? v : null;
   };
+  // Per-layer arrays: exact key only, so a vision tower's array never leaks in.
+  const arr = (suffix, elem) => {
+    const v = a !== undefined ? meta[`${a}.${suffix}`] : undefined;
+    if (!Array.isArray(v) || v.length === 0) return null;
+    const out = v.map(elem);
+    return out.every((x) => x !== null) ? out : null;
+  };
+  const flag = (v) => (typeof v === "boolean" ? v : typeof v === "number" ? v !== 0 : null);
+  const int = (v) => (typeof v === "number" ? v : null);
   return {
     architecture: typeof a === "string" ? a : null,
     block_count: num("block_count"),
@@ -188,6 +219,18 @@ function archFrom(meta) {
     key_length_swa: num("attention.key_length_swa"),
     value_length_swa: num("attention.value_length_swa"),
     shared_kv_layers: num("attention.shared_kv_layers"),
+    sliding_window_pattern: arr("attention.sliding_window_pattern", flag),
+    head_count_kv_layers: arr("attention.head_count_kv", int),
+    recurrent_layers: arr("attention.recurrent_layers", flag),
+    full_attention_interval: num("full_attention_interval"),
+    nextn_predict_layers: num("nextn_predict_layers"),
+    key_length_mla: num("attention.key_length_mla"),
+    value_length_mla: num("attention.value_length_mla"),
+    ssm_conv_kernel: num("ssm.conv_kernel"),
+    ssm_inner_size: num("ssm.inner_size"),
+    ssm_state_size: num("ssm.state_size"),
+    ssm_group_count: num("ssm.group_count"),
+    shortconv_l_cache: num("shortconv.l_cache"),
   };
 }
 
@@ -206,8 +249,11 @@ const failed = [];
 for (const entry of catalog) {
   const [name, tag] = splitId(entry.id);
   try {
-    const digest = await modelBlobDigest(name, tag);
-    const arch = archFrom(await ggufHeader(name, digest));
+    const digests = await layerDigests(name, tag);
+    const arch = archFrom(await ggufHeader(name, digests.model));
+    // Ollama loads a speculative drafter beside models whose manifest has one.
+    arch.draft = digests.draft ? archFrom(await ggufHeader(name, digests.draft)) : null;
+    arch.draft_num_predict = digests.draft ? await draftNumPredict(name, digests.params) : null;
     if (!arch.block_count) throw new Error("no block_count in header");
     entry.arch = arch;
     const swa = arch.sliding_window ? ` swa ${arch.sliding_window}` : "";

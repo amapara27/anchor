@@ -185,6 +185,17 @@ struct ShowResponse {
     /// the model's enrichment).
     #[serde(default, deserialize_with = "null_as_empty_map")]
     model_info: serde_json::Map<String, serde_json::Value>,
+    /// The model's default options as Modelfile text (`name   value` lines).
+    #[serde(default)]
+    parameters: Option<String>,
+}
+
+/// One numeric option out of `/api/show`'s `parameters` text.
+pub(crate) fn parameter_u64(parameters: &str, name: &str) -> Option<u64> {
+    parameters.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        (parts.next()? == name).then(|| parts.next()?.parse().ok()).flatten()
+    })
 }
 
 /// Deserialises a possibly-`null` JSON object as an empty map.
@@ -431,6 +442,28 @@ fn info_u64(
         .and_then(serde_json::Value::as_u64)
 }
 
+/// Like [`info_u64`] for per-layer arrays, exact `{arch}.{suffix}` key only — a
+/// suffix scan would happily pick up a vision tower's array. `None` unless every
+/// element converts, so a malformed array never yields a partial pattern.
+fn info_array<T>(
+    info: &serde_json::Map<String, serde_json::Value>,
+    arch: Option<&str>,
+    suffix: &str,
+    elem: impl Fn(&serde_json::Value) -> Option<T>,
+) -> Option<Vec<T>> {
+    let values = info.get(&format!("{}.{suffix}", arch?))?.as_array()?;
+    if values.is_empty() {
+        return None;
+    }
+    values.iter().map(elem).collect()
+}
+
+/// GGUF bool arrays arrive as JSON bools from `/api/show` and as 0/1 integers
+/// from some converters; accept both.
+fn as_flag(v: &serde_json::Value) -> Option<bool> {
+    v.as_bool().or_else(|| v.as_u64().map(|n| n != 0))
+}
+
 /// Lists every model installed in the local Ollama server.
 pub async fn list_local_models(host: &str) -> Result<Vec<Model>> {
     let url = format!("{host}/api/tags");
@@ -480,7 +513,9 @@ pub async fn show_details(host: &str, id: &str) -> Result<ShowDetails> {
         .json()
         .await?;
 
-    Ok(details_from_info(&resp.model_info))
+    let mut details = details_from_info(&resp.model_info);
+    details.arch.draft_num_predict = resp.parameters.as_deref().and_then(|p| parameter_u64(p, "draft_num_predict"));
+    Ok(details)
 }
 
 /// The pure half of [`show_details`]: `model_info` map in, [`ShowDetails`] out.
@@ -514,7 +549,22 @@ pub(crate) fn details_from_info(info: &serde_json::Map<String, serde_json::Value
         key_length_swa: info_u64(info, a, "attention.key_length_swa"),
         value_length_swa: info_u64(info, a, "attention.value_length_swa"),
         shared_kv_layers: info_u64(info, a, "attention.shared_kv_layers"),
+        sliding_window_pattern: info_array(info, a, "attention.sliding_window_pattern", as_flag),
+        head_count_kv_layers: info_array(info, a, "attention.head_count_kv", serde_json::Value::as_u64),
+        recurrent_layers: info_array(info, a, "attention.recurrent_layers", as_flag),
+        full_attention_interval: info_u64(info, a, "full_attention_interval"),
+        nextn_predict_layers: info_u64(info, a, "nextn_predict_layers"),
+        key_length_mla: info_u64(info, a, "attention.key_length_mla"),
+        value_length_mla: info_u64(info, a, "attention.value_length_mla"),
+        ssm_conv_kernel: info_u64(info, a, "ssm.conv_kernel"),
+        ssm_inner_size: info_u64(info, a, "ssm.inner_size"),
+        ssm_state_size: info_u64(info, a, "ssm.state_size"),
+        ssm_group_count: info_u64(info, a, "ssm.group_count"),
+        shortconv_l_cache: info_u64(info, a, "shortconv.l_cache"),
         architecture,
+        // `/api/show` says nothing about a drafter; callers read it separately.
+        draft: None,
+        draft_num_predict: None,
     };
 
     ShowDetails {

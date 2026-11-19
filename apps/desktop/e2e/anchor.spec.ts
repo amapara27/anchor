@@ -881,7 +881,7 @@ for(const c of fitCases){
     for(const [ctx,bytes] of c.windows){
       await page.getByLabel('Fit context').selectOption(String(ctx));
       await expect.poll(()=>inspector.locator('dt').filter({hasText:'KV cache at'}).evaluate(el=>el.nextElementSibling?.textContent)).toBe((bytes/1024**3).toFixed(1)+' GiB');
-      await expect.poll(()=>inspector.locator('dt').filter({hasText:'Compute buffer'}).evaluate(el=>el.nextElementSibling?.textContent)).toBe((ctx*4096/1024**3).toFixed(2)+' GiB');
+      await expect.poll(()=>inspector.locator('dt').filter({hasText:'Compute buffer'}).evaluate(el=>el.nextElementSibling?.textContent)).toBe((ctx*(ctx>32768?2048:ctx>4096?1024:512)*4/1024**3).toFixed(2)+' GiB');
     }
     await expect(inspector).not.toContainText('KV cache size is estimated from parameter count.');
   });

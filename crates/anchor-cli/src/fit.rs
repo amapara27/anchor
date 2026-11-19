@@ -65,11 +65,12 @@ pub struct Breakdown {
 /// aren't installed yet, so an uninstalled model still gets exact KV math).
 async fn resolve(id: &str) -> Result<Subject, String> {
     let registry = registry()?;
-    // Cheap path first: whatever the app last synced. Only if that misses do we
-    // talk to Ollama — and a down server is not an error here, it just means we
-    // fall through to the catalog.
+    // Cheap path first: whatever the app last synced. Only if that misses — or
+    // the hit has no architecture metadata (failed enrichment, or a cache purged
+    // by a migration) — do we talk to Ollama. A down server is not an error here,
+    // it just means we fall through to the cache or catalog.
     let mut cached = registry.cached_models().unwrap_or_default();
-    if !cached.iter().any(|m| m.id == id || m.name == id) {
+    if !cached.iter().any(|m| (m.id == id || m.name == id) && m.arch.is_some()) {
         if let Ok(fresh) = registry.sync().await {
             cached = fresh;
         }
@@ -156,7 +157,10 @@ fn print(subject: &Subject, b: &Breakdown) {
             "arch {} · {} layers · {} kv heads",
             a.architecture.as_deref().unwrap_or("?"),
             a.block_count.map(|v| v.to_string()).unwrap_or("?".into()),
-            a.head_count_kv.map(|v| v.to_string()).unwrap_or("?".into()),
+            a.head_count_kv
+                .map(|v| v.to_string())
+                .or_else(|| a.head_count_kv_layers.as_ref().map(|_| "per-layer".into()))
+                .unwrap_or("?".into()),
         ),
         None => "no architecture metadata".to_string(),
     };

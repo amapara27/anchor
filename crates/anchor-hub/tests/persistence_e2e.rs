@@ -4,7 +4,7 @@
 use anchor_hub::db::*;
 use anchor_core::{ArchMeta, BenchRun, BenchSample, BenchSource, EnvTelemetry, HwIdentity, MatchQuality, Model, ModelStatus};
 use rusqlite::Connection;
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 
 fn model(id: &str, status: ModelStatus) -> Model {
     Model {

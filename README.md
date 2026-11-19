@@ -59,7 +59,7 @@ See [The CLI](#the-cli) below, or build from source (see [Build from source](#bu
 Open **Explore** to browse a curated catalog (filter by name, publisher or use case, sorted by what fits this Mac) or the full ollama.com library. Every model shows one verdict — fits, tight, or won't fit — computed from your chip and memory by a single estimator, so the catalog, search, compare picker and chat picker can never disagree.
 
 - **One context for every verdict.** Pick 2K to 128K in the header and every column, filter and inspector re-judges at that context (capped at the model's own limit).
-- **Full breakdown.** Weights, KV cache, compute buffer and OS reserve before you spend disk or memory finding out the hard way.
+- **Full breakdown.** Weights, KV cache, compute buffer and OS reserve before you spend disk or memory finding out the hard way. The KV term is checked against Ollama's own allocations; see [fit methodology](docs/fit-methodology.md).
 - **Per-quant table.** Every published quantization of a model size with its download, estimated RAM and headroom, so you can pick the variant that fits.
 - **Predicted vs observed.** After a measurement, the inspector shows the estimate next to what Ollama actually allocated.
 - **Use from other apps.** Copyable `ollama run`, OpenAI-compatible base URL and a `curl` snippet for any installed model.

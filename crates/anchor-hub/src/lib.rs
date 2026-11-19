@@ -306,9 +306,10 @@ impl Registry {
 
         for (model, detail) in models.iter_mut().zip(details) {
             match detail {
-                Some(Ok(d)) => {
+                Some(Ok(mut d)) => {
                     model.context_tokens = d.context_tokens;
                     model.publisher = d.publisher;
+                    d.arch.draft = draft_arch(gguf::local_draft_info(&model.id));
                     model.arch = (!d.arch.is_empty()).then_some(d.arch);
                 }
                 Some(Err(_)) => {}
@@ -508,8 +509,10 @@ impl Registry {
         }
         // A failed *fetch* is transient (offline, rate limit) and must not be
         // cached — only a successful read that yielded nothing usable is.
-        let info = gguf::fetch_model_info(tag).await?;
-        let arch = ollama::details_from_info(&info).arch;
+        let registry = gguf::fetch_model_info(tag).await?;
+        let mut arch = ollama::details_from_info(&registry.info).arch;
+        arch.draft = draft_arch(registry.draft);
+        arch.draft_num_predict = registry.draft_num_predict;
         let arch = (!arch.is_empty()).then_some(arch);
         db::write_tag_arch(&self.connect()?, tag, digest, arch.as_ref(), now_ms)?;
         Ok(arch)
@@ -689,4 +692,10 @@ impl Registry {
             }),
         }
     }
+}
+
+/// A drafter's header as architecture metadata; `None` when absent or empty.
+fn draft_arch(info: Option<serde_json::Map<String, serde_json::Value>>) -> Option<Box<anchor_core::ArchMeta>> {
+    let arch = ollama::details_from_info(&info?).arch;
+    (!arch.is_empty()).then(|| Box::new(arch))
 }
