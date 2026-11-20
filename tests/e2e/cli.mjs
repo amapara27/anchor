@@ -103,6 +103,8 @@ async function run(args, { json = false, input = '', code = 0, signalWhen = null
     children.add(child);
     let stdout = '', stderr = '', sent = false;
     const timer = setTimeout(() => child.kill('SIGKILL'), 90000);
+    // A command that never reads stdin can exit before the write lands; the exit-code assertion still judges it.
+    child.stdin.on('error', e => { if (e.code !== 'EPIPE') throw e; });
     child.stdin.end(input);
     let concurrent = Promise.resolve();
     const maybeSignal = () => { if (signalWhen && !sent && (stdout + stderr).includes(signalWhen)) {
