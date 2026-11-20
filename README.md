@@ -30,7 +30,7 @@ It is a native macOS app (and a terminal CLI over the same database) for Apple S
 
 Anchor also owns the Ollama server lifecycle (it starts `ollama serve` on launch and stops it on quit), so you never need the menubar app or a terminal. It is built for developers, students, researchers and anyone who wants capable AI running locally. No API keys, and no automatic telemetry.
 
-**Here for the benchmark numbers?** [Read how Anchor measures performance](docs/benchmark-methodology.md): timing boundaries, validation checks and the limits of comparisons.
+**Here for the numbers?** Read how Anchor [measures performance](docs/benchmark-methodology.md) and [predicts memory fit](docs/fit-methodology.md) (KV-cache predictions average 1.9% error and never under-predict).
 
 ## Install
 
@@ -93,7 +93,7 @@ The headline numbers are **decode speed after the first token** and **TTFT**, th
   <img src="docs/screenshots/bench-mlx-dark.png" alt="Benchmark suite results on MLX">
 </picture>
 
-Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims are not checked. The [methodology](docs/benchmark-methodology.md) has the workload table, timing formulas and reproduction steps. Scoped findings: [Ollama](docs/ollama-calibration.md), [MLX catalog coverage](docs/mlx-measurements.md#catalog-review--october-29-2026).
+Rankings describe reported rates for the selected workload and runtime; quality equivalence and cross-runtime winner claims are not checked. The [methodology](docs/benchmark-methodology.md) has the workload table, timing formulas, live validation results and reproduction steps.
 
 ### Try and compare
 
@@ -159,6 +159,33 @@ cargo install --path crates/anchor-cli     # the CLI, from source
 
 A pnpm + Cargo monorepo. Domain logic lives in the crates; both front-ends (the Tauri layer and the CLI) are thin wrappers over them, which keeps everything testable without a webview.
 
+```mermaid
+flowchart TB
+  subgraph fe["Front-ends"]
+    UI["Desktop app<br/>React UI + Tauri IPC"]
+    CLI["anchor CLI<br/>workspace + commands"]
+  end
+  subgraph crates["Rust crates: all domain logic"]
+    HUB["anchor-hub<br/>registry · benchmarks · chat · storage"]
+    CORE["anchor-core<br/>catalog · memory-fit engine"]
+    SYS["anchor-system<br/>hardware profile"]
+    DB[("SQLite<br/>registry.db")]
+  end
+  subgraph ext["Runtimes and network"]
+    OL["Ollama server<br/>started and stopped by Anchor"]
+    MLX["MLX-LM worker<br/>optional, uv-managed"]
+    NET["ollama.com · Hugging Face<br/>library, GGUF headers, downloads"]
+  end
+  UI --> HUB
+  CLI --> HUB
+  HUB --> CORE
+  HUB --> SYS
+  HUB --> DB
+  HUB --> OL
+  HUB --> MLX
+  HUB --> NET
+```
+
 ```
 anchor/
 ├── apps/desktop/
@@ -196,7 +223,7 @@ pnpm test:e2e --profile ci                   # what CI runs
 pnpm test:e2e --only native                  # one stage, for reproduction
 ```
 
-One E2E runner replaces unit tests and is what CI uses. The [testing map and repair loop](docs/testing.md) document every stage, failure artifacts, targeted reruns, the opt-in live MLX checks and manual limits. Full local acceptance needs Apple Silicon, Rust, pnpm, uv, Ollama, network access and Playwright Chromium; your installed models and normal app database are untouched.
+One E2E runner replaces unit tests and is what CI uses. The [development guide](docs/development.md) documents every stage, failure artifacts, targeted reruns, the opt-in live MLX checks and manual limits. Full local acceptance needs Apple Silicon, Rust, pnpm, uv, Ollama, network access and Playwright Chromium; your installed models and normal app database are untouched.
 
 Conventions worth knowing before contributing:
 
@@ -205,7 +232,16 @@ Conventions worth knowing before contributing:
 - Frontend types in `apps/desktop/src/types.ts` mirror the Rust serde types; keep them in sync.
 - Tailwind v4 via the Vite plugin: no `tailwind.config.js` or `postcss.config.js`.
 - SQLite migrations are append-only: never edit a shipped `V*` constant, add the next one.
-- The desktop app and CLI release separately: `v*` tags for the app, `cli-v*` for the CLI ([CLI publishing](docs/cli-publishing.md)).
+- The desktop app and CLI release separately: `v*` tags for the app, `cli-v*` for the CLI ([releasing](docs/development.md#releasing-the-desktop-app)).
+
+## Documentation
+
+| Doc | What's in it |
+| --- | --- |
+| [Benchmark methodology](docs/benchmark-methodology.md) | Workloads, timing formulas, validation and what has been checked live |
+| [Fit methodology](docs/fit-methodology.md) | How the memory verdict is computed and how accurate it is |
+| [CLI guide](docs/cli-guide.md) | Workspace controls, every command and scripting |
+| [Development](docs/development.md) | The E2E test runner, releasing the app and publishing the CLI |
 
 ## Roadmap
 

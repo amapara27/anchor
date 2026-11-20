@@ -1,173 +1,185 @@
 # Benchmark methodology
 
-**Method v5 · Formula 2 · Prompt catalog 1 · Updated October 29, 2026**
+**Method v5 · Formula 2 · Prompt catalog 1 · Updated November 19, 2026**
 
-Anchor runs the same set of text tasks on local models and records how each runtime performs on your Mac. This page explains what the numbers mean, how Anchor collects them, and what you can safely compare.
+Anchor runs the same set of text tasks on local models and records how each runtime performs on your Mac. This page explains what the numbers mean, how they are collected, what has been checked live, and what you can safely compare.
 
 ## The short version
 
-- **Decode rate** estimates generated tokens per second after the first token. Its timer is runtime-specific.
+- **Decode rate** is generated tokens per second *after* the first token.
 - **TTFT** (time to first output) is how long you wait from sending a request until text first appears.
-- **Memory** is reported as a runtime-specific observation; Ollama and MLX values do not mean the same thing.
-- **Ollama and MLX results stay separate.** A completed run passes its applicable data checks, but does not prove answer quality or declare an overall fastest model.
-- **Every session keeps its raw observations locally.** The app shows saved results; the CLI can export and recalculate them.
+- **Ollama and MLX results stay separate.** Their timers and memory figures measure different things, so Anchor never declares a cross-runtime winner.
+- **Every session keeps its raw evidence locally**, so any result can be exported and recalculated offline.
+- **Speed, not quality.** A fast wrong answer is still a valid speed observation.
 
-This is the methodology for the implementation that ships today, not a claim of MLPerf certification or an independent GPU-only measurement.
-
-[Workloads](#what-the-suite-runs) · [A benchmark run](#how-a-run-works) · [Measurements](#metrics-and-timing-boundaries) · [Validation](#how-measurements-are-validated) · [Engine support](#runtime-support-and-limits) · [Recalculate a result](#inspect-and-reproduce-a-result)
+This documents the implementation that ships today. It is not an MLPerf-certified result or an independent GPU-only measurement.
 
 ## What the suite runs
 
-The desktop app offers the same nine workloads through **Ollama** and an optional **MLX-LM worker**. Ollama receives streaming HTTP requests; MLX generates text in a separate local process. Each workload is reported separately. Anchor does not combine different workloads into one overall speed score.
+Nine workloads run on **Ollama** (streaming HTTP) or the optional **MLX-LM worker** (a separate local process). Each is reported on its own; there is no combined speed score.
 
-| Workload | Task | Target input tokens | Maximum output tokens | Requested context |
+| Workload | Task | Input tokens (target) | Max output | Context |
 |---|---|---:|---:|---:|
 | Classification | Classify a passage and extract keywords | 768 | 32 | 1,024 |
 | Summarization | Summarize a passage | 1,536 | 256 | 2,048 |
 | Expansion | Explain a passage with an example | 320 | 1,280 | 2,048 |
 | Creative writing | Write a story opening | 32 | 1,536 | 2,048 |
 | Balanced | Answer, draft documentation and include code | 896 | 1,024 | 2,048 |
-| Document Q&A | Answer questions using the supplied passage | 3,584 | 320 | 4,096 |
+| Document Q&A | Answer questions about the supplied passage | 3,584 | 320 | 4,096 |
 | Detailed reply | Draft a multi-paragraph response | 1,792 | 640 | 4,096 |
 | Reasoning | Analyze the passage's causal argument | 1,536 | 2,560 | 8,192 |
 | Code generation | Write a function and example tests | 1,024 | 1,536 | 4,096 |
 
-These are **workload shapes, not accuracy evaluations**. Most prompts use repeated prose about the printing press followed by a task instruction. Creative writing uses its story instruction directly. Document Q&A supplies the document in the prompt; no retrieval system is timed. The reasoning workload asks for an explanation; it does not enable or validate a separate hidden reasoning channel.
+- These are **workload shapes, not accuracy tests.** Most prompts are prose about the printing press plus a task instruction. Document Q&A puts the document in the prompt; no retrieval is timed.
+- **Input sizes are targets** (built at ~4 bytes per token). Each model's tokenizer and chat template set the real count, which is recorded.
+- **Output sizes are caps.** A natural early stop is valid and the actual count is kept.
+- **Context** is the next power of two at or above `input + output cap + 64`. MLX fails rather than truncates when the prompt doesn't fit; Ollama invalidates an attempt whose loaded context is missing or too small.
 
-Input sizes are approximate targets, built using a four-bytes-per-token estimate. The model's tokenizer and chat template determine the actual formatted count, which can differ between models. Output sizes are caps: a natural early stop is valid and the actual count is retained. A nominal 1,024-token cap does not mean the model produced 1,024 tokens.
-
-Requested context is the next power of two at or above `target input + output cap + 64`. MLX checks actual formatted input plus the full cap fits before generating and fails rather than truncating. Ollama records the loaded context; a missing or undersized loaded context invalidates the attempt. These checks do not establish identical token sequences across runtimes.
-
-The exact instructions and execution order are versioned in the [scenario catalog](../crates/anchor-hub/src/bench/prompts.rs).
-
-Balanced is the headline scenario. **Measure** in the model inspector runs that scenario alone; **Run suite** runs all nine. The full-suite repeat counts below apply to Run suite.
+Prompts and order are versioned in [`prompts.rs`](../crates/anchor-hub/src/bench/prompts.rs). **Balanced** is the headline workload: **Measure** in the inspector runs it alone, and **Run suite** runs all nine.
 
 ## How a run works
 
-1. **Freeze the plan.** Save the model identity, runtime/hardware information, method and prompt versions, requests, requested contexts, repeat budget and warmups before collection.
-2. **Run sequentially.** Concurrency is one. Scenarios are grouped by ascending requested context, then output cap. Ollama unloads before each context group; MLX loads the checkpoint once and creates a fresh prompt cache for every request.
-3. **Warm up each context.** Use a separate short lighthouse prompt, capped at 64 output tokens. The four warmup attempts are retained and excluded from scenario medians. Unloading and warmup do not prove cold filesystem or compilation caches.
-4. **Collect the declared repeats.** Thorough runs each scenario three times. Fast runs scenarios capped at 1,024 or more output tokens once, and the other four scenarios three times. A full Fast suite plans 17 measured attempts plus four warmups; Thorough plans 27 plus four.
-5. **Retain outcomes and summarize.** Preserve every started attempt, including failures, invalid data, cancellation and timeout. Only a complete, valid planned scenario contributes medians. A completed one-token response can still have an unavailable decode rate.
+```mermaid
+flowchart LR
+  P["Freeze the plan<br/>model · versions · repeats"] --> U
+  subgraph G["Each context group, smallest first"]
+    U["Unload model<br/>or fresh MLX cache"] --> W["Warm up<br/>kept, never counted"] --> M["Measured repeats<br/>one at a time"]
+  end
+  M --> E["Store every attempt<br/>raw frames · counters · outcome"]
+  E --> C{"All repeats<br/>valid?"}
+  C -->|yes| S["Medians"]
+  C -->|no| X["Unavailable<br/>reason kept"]
+```
 
-Ollama requests temperature zero, thinking disabled, no additional system prompt and a 60-second keep-alive. MLX uses greedy generation, the checkpoint's chat template and thinking disabled. No explicit random seed is set; these settings do not guarantee bit-for-bit determinism. Unspecified runtime options are not assumed equal between engines.
+1. **Freeze the plan** before any work: model identity, runtime and hardware, method and prompt versions, requests, repeat budget and warmups.
+2. **Run sequentially** (concurrency one), grouped by context then output cap. Ollama unloads before each context group; MLX loads once and uses a fresh prompt cache per request.
+3. **Warm up each context** with a short prompt (64-token cap). Warmups are stored but never enter medians. They don't guarantee cold filesystem or compilation caches.
+4. **Collect repeats.** Thorough runs every workload 3×. Fast runs workloads with caps ≥ 1,024 once and the rest 3× (17 measured attempts plus 4 warmups, versus 27 plus 4).
+5. **Keep everything.** Failed, invalid, cancelled and timed-out attempts stay in evidence. Only a complete, valid workload produces medians.
 
-Ordinary Ollama runs do not force an uncached prompt for every repeat. Cache counters are retained when available, and cache state otherwise stays unverified. MLX requires a fresh standard `KVCache` with zero initial offsets on each request. Allocator buffer reuse is separate from prompt-prefix reuse.
+Ollama uses temperature 0, thinking off, no extra system prompt and a 60 s keep-alive. MLX uses greedy decoding, the checkpoint's chat template and thinking off. No seed is set, so this isn't bit-for-bit determinism. Ollama repeats may reuse its prompt cache; cache counters are recorded when reported, otherwise cache state is marked unknown.
 
-## Metrics and timing boundaries
+## What each number means
 
-A **token** is a unit produced by the model's tokenizer; a streamed **chunk** can contain several tokens, part of a visible word, or no text. Anchor keeps token counters separate from received chunks.
+A **token** is a tokenizer unit. A streamed **chunk** can hold several tokens, part of a word, or nothing, so Anchor counts the two separately. Client timings use monotonic nanosecond clocks in Rust, outside UI rendering; the MLX worker uses its own clock, and durations are never mixed across clocks.
 
-Client timings use monotonic nanosecond offsets captured in Rust, outside UI rendering. Wall-clock dates label history; they are not used to calculate elapsed time. Worker timings use a separate monotonic clock inside the MLX process. Durations are formed within one clock, never by subtracting worker timestamps from Rust timestamps.
+```mermaid
+sequenceDiagram
+  participant A as Anchor
+  participant R as Runtime
+  A->>R: dispatch request
+  Note over A,R: TTFT = first visible output − dispatch<br/>(includes prompt processing)
+  R-->>A: first token
+  Note over A,R: Decode window: (N − 1) tokens ÷ time
+  R-->>A: tokens 2 … N
+  R-->>A: terminal frame (completion)
+```
 
-| Measurement | Calculation or observation | Scope |
+| Measurement | Calculation | Notes |
 |---|---|---|
-| TTFT / first-output latency | First nonempty reasoning or answer output − dispatch | Includes HTTP setup/server work for Ollama, or process communication and request preparation for MLX. Headers and empty frames do not count. First visible output can arrive after the first sampled token. |
-| First-answer latency | First separately identified answer output − dispatch | Available only when the adapter distinguishes answer from reasoning. Unavailable for the current MLX adapter. |
-| Last-content latency | Last nonempty output − dispatch | Retained separately from protocol completion. |
-| Completion latency | Valid terminal generation frame − dispatch | Requires valid completion; transport/request closure is checked separately. Partial failed output is retained without becoming a completed result. |
-| Ollama post-first decode | GGUF models: `(eval_count − 1) × 1e9 / eval_duration_ns`. Safetensors models (Ollama's MLX runner): `eval_count × 1e9 / eval_duration_ns` | Convention recorded per session from the model's reported format; see below. Uses engine token accounting, which can include hidden end tokens. |
-| MLX post-first decode | `(sampled tokens − 1) × 1e9 / (terminal worker ns − first-sample worker ns)` | Recorded first-sample → terminal-drain interval; includes sampled end-of-sequence tokens, consumer/process communication work and final synchronization. |
-| Ollama prefill | `(prompt_eval_count − prompt_eval_cached_count) × 1e9 / prompt_eval_duration_ns` | Runtime-reported prompt window. Requires known valid cache counts and positive duration; includes first-token work on the tested backend. |
-| MLX prefill | Retained MLX-LM `prompt_tps` | Runtime-reported prompt window, including first-token work; not an independently isolated prompt-compute timer. |
-| Load observation | Ollama warmup `load_duration`, or MLX's separately timed load window | Runtime-specific scope, not runtime startup or complete application cold start. |
-| Live waveform | Nonempty chunks received per second | Activity indicator, not the final token rate or token-by-token latency. |
+| TTFT | First nonempty reasoning or answer output − dispatch | Includes HTTP or process overhead. Headers and empty frames don't count. |
+| First-answer latency | First answer output − dispatch | Only when the runtime separates reasoning from answer (not MLX today). |
+| Completion latency | Valid terminal frame − dispatch | Partial output from a failure is kept but not counted as complete. |
+| Ollama decode (GGUF) | `(eval_count − 1) × 1e9 / eval_duration_ns` | Engine token accounting; can include hidden end tokens. |
+| Ollama decode (safetensors, MLX runner) | `eval_count × 1e9 / eval_duration_ns` | That runner's timer already covers the first token. |
+| MLX decode | `(sampled tokens − 1) × 1e9 / (terminal ns − first-sample ns)` | Worker clock; includes end tokens, process communication and final sync. |
+| Ollama prefill | `(prompt_eval_count − prompt_eval_cached_count) × 1e9 / prompt_eval_duration_ns` | Needs valid cache counts (Ollama 0.33.3+). |
+| MLX prefill | MLX-LM's reported `prompt_tps` | Runtime-reported, not independently timed. |
+| Load | Ollama warmup `load_duration`, or MLX's timed load window | Not full app cold start. |
+| Live waveform | Nonempty chunks per second | Activity indicator only. |
 
-For example, a request that waits 300 ms for its first output, then produces another 99 tokens over one second has **300 ms TTFT** and **99 tok/s post-first decode**, when the count and interval cover that same work. TTFT is never added to the backend decode timer.
+Example: 300 ms to first output, then 99 more tokens over one second, is **300 ms TTFT** and **99 tok/s decode**. TTFT is never folded into the decode timer.
 
 ### Why the first token is excluded
 
-Ollama's GGUF runners count the first token but start the generation timer after its work: the first token comes from the last prompt batch. This holds in the source of every Ollama release checked, 0.3.14 through 0.40.15 (the llama.cpp server fork, the Go runners and the bundled llama-server, llama.cpp b9452–b12111). A one-token response can report a one-microsecond timer floor and a raw rate of 1,000,000 tok/s. Ollama's MLX runner, used for safetensors models, instead leaves the last prompt token to its decode loop, so its timer also covers the step that produces the first token; there the full count is used.
-
-Each session records which convention applies, from the model format Ollama reports (`gguf` when absent: older releases have no MLX runner). GGUF reports no post-first decode rate when `N ≤ 1`. Sessions recorded before this field existed keep their original replay: post-first decode only with a matching Ollama 0.34.4 runner observation. Original counters and raw rates remain available.
-
-MLX uses actual sampled IDs and recorded worker timestamps rather than reconstructing a duration from MLX-LM's upstream rate. Its timing scope still differs from Ollama's backend timer. The two values must not be presented as equivalent GPU-only measurements.
+Ollama's GGUF runners count the first token but start the generation timer *after* producing it (it falls out of the last prompt batch). This holds in every release checked from source, 0.3.14 through 0.40.15. Including it inflates short replies: a one-token answer reports a 1 µs timer and 1,000,000 tok/s. Formula 2 subtracts that token, and a reply of one token or fewer has **no** decode rate rather than a fake zero or infinity. Each session records which convention applied, from the model format Ollama reports.
 
 ### Memory
 
-| Observation | What it includes | What it cannot establish |
+| Observation | What it is | What it isn't |
 |---|---|---|
-| Ollama resident bytes | A `/api/ps` snapshot while the model is loaded | Request peak, process resident memory (RSS), isolated GPU usage or total Mac memory |
-| MLX load allocator peak | Peak reset before model/tokenizer loading, read after weights evaluate and the load stream completes | Whole application startup, environment setup or total process memory |
-| MLX inference allocator peak | Per-request reset, recorded active/cached baseline, generation and completion of both participating streams | Exact KV-cache size, process RSS or total Mac memory; live model weights remain in scope |
+| Ollama resident bytes | `/api/ps` snapshot while loaded | Request peak, process RSS, or GPU-only usage |
+| MLX load peak | Allocator peak from reset through weight load | App startup or total process memory |
+| MLX inference peak | Per-request allocator peak, both streams drained | Exact KV size or total Mac memory |
 
-MLX records baseline, reset, peak and end values in the inference process. It synchronizes the worker and MLX-LM generation streams before and after the request window. Load and inference windows remain separate. Measurements store bytes; binary units such as MiB/GiB are displayed explicitly. CPU, GPU and allocator observations are not added together as disjoint physical usage on a unified-memory Mac.
+Values are stored in bytes and shown in binary units (MiB/GiB). CPU, GPU and allocator figures are never added together on unified memory. For *predicted* memory before a load, see the [fit methodology](fit-methodology.md).
 
-### Missing values and summaries
+### Missing values and medians
 
-- Missing counters are **unknown**, not zero. A recorded zero stays zero. Fully cached Ollama prefill is not applicable; cached counts above total input are invalid.
-- A valid one-token request remains completed, including its TTFT, even though decode is unavailable. Its nonexistent decode work is never reported as zero or infinite speed.
-- Each metric's scenario median requires a value for every declared measured repeat. Missing values are not silently dropped to obtain a more favorable median. Warmups never enter those medians.
-- Repeats are descriptive observations within a session. Three requests are not three independent experimental blocks. The current suite reports no confidence intervals, significance tests or probability that one model is faster.
+- **Unknown is not zero.** Missing counters stay unknown; a recorded zero stays zero.
+- A valid one-token reply is a completed request with a TTFT and no decode rate.
+- A workload's median needs a value for **every** planned repeat. Missing values are never dropped to get a better median.
+- Repeats are observations within one session, not independent experiments. No confidence intervals or significance tests are reported.
 
 ## How measurements are validated
 
-Validation has several scopes. A passing arithmetic or streaming check does not automatically validate answer quality or independent native timing.
-
-| Layer | Checks performed | Limit |
+| Layer | What is checked | Limit |
 |---|---|---|
-| HTTP and stored evidence | Controlled streaming fixtures exercise first/last/terminal timing, fragmented/empty frames, reasoning, cache arithmetic, malformed/missing counters, missing terminal frames, context/digest mismatch, cancellation and persistence/export replay | Fixtures validate the collector and calculations, not physical GPU execution |
-| Desktop workflow | Browser and native macOS tests exercise selection, run/stop, saved results, measurement details and validation reports through the UI/IPC path | Mocked runtime fixtures are not live model performance |
-| Installed Ollama | Fixed tokenizer/cache/completion probes; short/long generation and long input; matched local model/runner evidence; formula-2 arithmetic and legacy replay | Scoped to the tested build, models and requests; no independent GPU-only timer |
-| Native MLX | Same-process allocation/reset/release/cache probes; completed-work and auxiliary-stream checks; real text generation, sampled-ID conservation, context/cache/EOS checks, source/checkpoint identity and export replay | Scoped allocator/timing validation; overhead and quality equivalence remain unchecked |
+| Collector fixtures | Streaming timing, fragmented and empty frames, reasoning, cache arithmetic, malformed or missing counters, cancellation, persistence and export replay | Validates the math, not GPU execution |
+| Desktop workflows | Browser and native macOS tests drive selection, run/stop, saved results and validation reports through real IPC | Mocked runtimes aren't performance data |
+| Installed Ollama | Tokenizer, cache and completion probes; short, long and long-input generation; formula arithmetic and replay | Scoped to the tested build and models |
+| Native MLX | Allocator reset/peak probes, stream completion, real text generation, sampled-ID conservation, cache freshness, checkpoint identity, replay | No overhead or quality checks |
 
-In **Benchmarks → Measurement validation → Validate measurements**, Ollama runs ten predeclared requests, or eleven when reasoning is supported: fresh, repeated, shared-prefix and changed-prefix prompts; a one-token cap; natural completion; Unicode; short generation (cap 128); long generation (cap 512); long input (cap 128); and optional reasoning (cap 256). The added short/long/long-input cases each follow an observed unload.
+**Benchmarks → Measurement validation → Validate measurements** runs ten fixed requests on Ollama (eleven when the model supports reasoning): fresh, repeated, shared-prefix and changed-prefix prompts; a one-token cap; a natural stop; Unicode; short (128), long (512) and long-input (128) generations, each after an unload; and optional reasoning (256). It saves its own session and never creates leaderboard rows or certifies other sessions. MLX's checks run automatically with every suite. A failed check suppresses the affected rates and keeps the reason.
 
-Input-count “Matched” means the retained formatted prompt count agreed with IDs queried from the matching runner's tokenizer. That is a cross-check within the same runtime, not an independent tokenizer implementation. Cache results distinguish observed zero reuse, observed prefix reuse and unknown. “Stop reported” does not distinguish a hidden end-of-sequence token from a stop sequence. Retokenized visible text can therefore differ from the engine's output count.
+## What has been checked live
 
-Validation saves its own session and does not create leaderboard entries, tune the model or certify other sessions. MLX's boundary and allocator checks run automatically with its suite. Failed applicable checks suppress affected rates and retain the reason.
+All on an Apple M4. Raw exports stay local under the gitignored `.internal/benchmarking/` and are not distributed.
 
-The public test sources are [HTTP/SQLite](../crates/anchor-hub/tests/measurements_e2e.rs), [installed Ollama](../crates/anchor-hub/tests/ollama_decode_e2e.rs), [real MLX text generation](../crates/anchor-hub/tests/mlx_suite_e2e.rs), [browser workflows](../apps/desktop/e2e/anchor.spec.ts) and [native desktop workflows](../apps/desktop/e2e/native.mjs). Live observations were made on an Apple M4; exact identities are retained in local exports. Raw local validation exports are not distributed in this repository. See the [Ollama findings](ollama-calibration.md), [MLX findings](mlx-measurements.md) and [phase-rate study](phase-rate-calibration.md) for the recorded scope and historical observations.
+**Ollama 0.34.4** (llama3.2:1b Q8_0 and qwen3.5:9b Q4_K_M, model and runner binaries hashed):
+
+| Check | Observation |
+|---|---|
+| Input tokens | All 7 Llama and 8 Qwen probes matched the runner's own tokenizer count, including Unicode |
+| Cache after unload | Reported 0 cached tokens |
+| Identical prompt | Llama reused 154/155 tokens, Qwen 138/142 |
+| Changed suffix | Llama reused 143/153; Qwen 0/140 despite the shared prefix |
+| Natural stop | One visible word = two engine tokens (a hidden end token) |
+| One-token reply | `eval_duration = 1000 ns`, i.e. 1,000,000 tok/s raw, which is why formula 2 exists |
+| Representative decode | Llama 65–70 tok/s, Qwen 16–18 tok/s across short, long and long-input probes (individual observations, not a comparison) |
+
+Takeaways: prompt-cache reuse depends on the model and backend, so don't assume prefix reuse from the text alone; `stop` doesn't distinguish an end token from a stop sequence.
+
+**MLX 0.32.4 / MLX-LM 0.31.3:**
+
+- All nine Fast workloads passed end to end (GPU → worker → SQLite → export → offline replay) on Llama 3.2 1B 4-bit and 8-bit, and on Qwen 3.5 0.8B with its mixed attention/recurrent cache.
+- The classification workload, allocator checks and replay passed for Gemma 3 270M, Qwen 3.5 0.8B and Gemma 4 E2B, which also completed normal generations on Ollama.
+- A clean-cache install of Gemma 3 270M through the real GUI downloaded, cancelled after 10 MiB, retried reusing finished files, matched all 11 pinned checksums, then ran all nine workloads.
+- Replay rejects caches falsely marked empty, corrupt token traces and unknown protocol versions.
+
+The MLX catalog pins 64 paired entries (repository, commit, file sizes and checksums in [`workers/mlx/models.json`](../workers/mlx/models.json)). Catalog inclusion means the architecture loads in the locked MLX-LM, not that every checkpoint was run. Gemma 4 12B is excluded (its architecture isn't in MLX-LM 0.31.3), and GPT-OSS is held back because its reasoning levels need a separate request policy.
 
 ## Runtime support and limits
 
-This matrix states what this implementation has checked; it is not a list of the newest runtime releases.
-
-| Runtime/path | Implemented and exercised | Current limits |
+| Runtime | Checked | Limits |
 |---|---|---|
-| Local Ollama `/api/generate`, version 0.34.4, llama-server build `b1-161755f29` | Live Llama 3.2 1B Q8_0 and Qwen 3.5 9B Q4_K_M token/cache/completion probes. Formula-2 live acceptance on Llama. Post-first calculation requires recorded matching model, version, runner build and executable hash. | Output/EOS counts and prefill remain runtime-reported. Matching source/build metadata is not reproducible-build attestation or independent phase timing. |
-| Other Ollama versions, backends or remote servers | Events, counters, outcomes and client timings; post-first decode from the source-checked runner convention | No live token/cache probes. Prefill needs `prompt_eval_cached_count` (Ollama 0.33.3+); earlier releases count cached prompt tokens without reporting how many, so prefill stays unavailable. `/api/chat` is outside this suite's validation. |
-| Local built-in MLX-LM text architectures on Apple Silicon; MLX 0.32.4 / MLX-LM 0.31.3 | Locked optional worker, model template or recorded raw prompt, fresh empty model-native caches. Pinned downloads cover 64 paired catalog entries for text-generation benchmarks; see [MLX setup and live acceptance](mlx-measurements.md). | Requires uv. Available architectures are bounded by the locked MLX-LM runtime; catalog coverage is not live validation of every checkpoint or identical artifacts across engines. Missing context/vocabulary/cache evidence fails visibly. Vision/embedding workloads and remote model code are outside this suite. Timing includes communication/consumer work; separate reasoning/answer channels are unverified. |
-| Legacy native MLX synthetic protocol | Separate fixed-token timing/allocator validation and historical replay | Synthetic decode steps, not sampled real-text generation; excluded from text-suite ordering |
+| Ollama 0.34.4, local | Live token, cache and completion probes; formula-2 acceptance | Output/end-token counts and prefill are runtime-reported |
+| Other Ollama versions (0.32+) | Events, counters, client timings; decode from the source-checked convention | No live token/cache probes. `/api/chat` is outside this suite |
+| MLX-LM built-in text architectures | Locked worker, fresh caches, pinned downloads | Needs uv. Vision and embedding workloads aren't in this suite; reasoning/answer split unverified |
 
-Ollama KV-cache precision and Flash Attention settings remain unknown when the server does not expose them. A matching model name, parameter count or “8-bit” label does not establish identical weights, quantization, tokenizer, template or output quality across runtimes.
+Ollama's KV-cache precision and flash-attention settings are unknown when the server doesn't expose them. A matching model name or "8-bit" label doesn't make weights, tokenizer or template identical across runtimes.
 
-### Reading the leaderboard
-
-The leaderboard orders reported decode rates for the selected scenario, context and current method. Runtime views remain separate. MLX additionally filters by compatible tokenizer/template and runtime/source identity, prompt version, hardware and OS. Hardware match labels describe configuration similarity, not answer-quality verification. Unknown runtime settings can still affect results.
-
-There is no qualified cross-runtime winner claim. Model quality is unchecked; a fast wrong or short answer can still be a valid performance observation. The suite has no task scorer, quality-equivalence gate, randomized paired comparison, instrumentation-overhead budget or inferential uncertainty procedure. Aggregate concurrent throughput, request-capacity tests and true inter-token latency percentiles are not implemented by this sequential suite.
-
-Environment observations include available hardware/macOS information, power and thermal snapshots at boundaries. Nominal boundary readings do not prove the whole run stayed cool. Thermal slowdowns are retained. For your own comparisons, use the same workload/method and power conditions, avoid competing inference, retain all runs and inspect actual counts/cache states. A separate CLI process or another application can still contend with the desktop app.
+**Reading the leaderboard.** It orders reported decode rates for one workload, context and method, with runtimes kept separate. MLX rows additionally require a matching tokenizer/template, runtime, prompt version, hardware and OS. There is no task scorer, quality check, randomized pairing or uncertainty estimate, so a higher rank is not a better model. For your own comparisons: same workload and power state, no competing inference, and keep every run.
 
 ## Inspect and reproduce a result
 
-In the app, use **Run history** for executions and outcomes and **View checks** for saved validation reports. For offline inspection, the CLI can export a session with `anchor bench export SESSION_ID --include-content`; full exports can contain private text, token IDs and local filesystem paths, so review them before sharing.
-
-Each session has its own ID and retains its frozen plan, record/formula versions and observed attempts. Evidence includes raw frames, monotonic event offsets, counters, completion/closure events, actual context/model observations and environment snapshots. Runtime-specific tokenizer, binary, source and checkpoint fingerprints are included where collected. Unknown provenance stays unknown. Reruns preserve previous sessions.
-
-Replay reads the record/formula version and recalculates from raw evidence, ignoring exported derived values. The same replay supplies stored/exported summaries. It checks structural validity and recorded observations; it cannot prove that edited JSON came from genuine hardware. Hashes identify recorded artifacts, not a signed authenticity guarantee.
-
-For an independent review using a CLI built from the same checkout:
+Use **Run history** for executions and **View checks** for validation reports in the app. From the CLI:
 
 ```sh
-anchor bench replay evidence.json
-node tools/calibrate-phase-rates.mjs evidence.json
+anchor bench export SESSION_ID --include-content > evidence.json   # may contain prompts, outputs and local paths
+anchor bench replay evidence.json                                  # recalculate from raw evidence
+node tools/calibrate-phase-rates.mjs evidence.json                 # independent arithmetic check
+anchor bench calibrate llama3.2:1b --output ./calibration          # isolated validation session
+node tools/calibrate-ollama.mjs ./calibration/SESSION_ID.json
 ```
 
-The Node review invokes Rust replay and separately checks rate arithmetic, token/finish constraints and available timing windows. It requires the checkout's built `target/debug/anchor`; build it with `cargo build -p anchor-cli`. See [source build instructions](../README.md#build-from-source). This check supplies reproducibility, not an independent GPU clock.
+The Node checks need `target/debug/anchor` (`cargo build -p anchor-cli`). Replay ignores exported derived values and recomputes from raw frames using the recorded formula version. It checks structure and arithmetic; it can't prove edited JSON came from real hardware. Stop and graceful failures keep finalized evidence; a hard kill can lose the in-flight attempt.
 
-Graceful failure and Stop preserve finalized evidence. Frames are buffered until attempt finalization; abrupt host termination can lose that attempt's buffered frames and leave an unfinished record. An unfinished record does not prove the process is still running. Unstarted planned requests remain visible in the plan without fabricated attempt records.
-
-### Versions and historical results
-
-Current sessions use evidence record 1, formula 2, suite/method 5 and prompt catalog 1. Formula 1 replays its original arithmetic, including `eval_count / eval_duration` and legacy MLX-LM generation rates. Older methods remain in history with legacy labels and do not enter method-v5 ordering. Pre-evidence results cannot acquire missing raw events retroactively; pre-v4 prefill is unavailable because cache accounting was not preserved reliably.
-
-Changes to formulas, workload shape, context derivation or repeat policy require a new method version; prompt text changes require a prompt-catalog version. Support claims must be updated with their tested runtime/build scope. Keep this public document, runtime findings, README and concise in-app Method explanation consistent with the implementation.
+**Versions.** Current sessions use evidence record 1, formula 2, method 5 and prompt catalog 1. Formula 1 still replays its original arithmetic. Older methods stay in history with a legacy label and are excluded from current rankings. Any change to formulas, workload shape, context or repeat policy needs a new method version; prompt text changes need a new prompt-catalog version.
 
 ## References
 
-- [MLPerf Client](https://mlcommons.org/benchmarks/client/) separates first-token latency from token speed excluding the first token. Anchor follows this distinction; it is not an MLPerf-certified implementation or result.
-- [Ollama generate API](https://docs.ollama.com/api/generate) documents streaming and runtime counters. Anchor's tested first-token convention additionally depends on the pinned backend source linked in the [Ollama findings](ollama-calibration.md).
-- [MLX synchronization](https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.synchronize.html) completes work on the specified stream; Anchor explicitly drains both participating streams.
-- [MLX peak memory](https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.get_peak_memory.html) describes allocator usage since startup or reset, which determines the scope of Anchor's memory windows.
+- [MLPerf Client](https://mlcommons.org/benchmarks/client/) separates first-token latency from post-first-token speed, as Anchor does.
+- [Ollama generate API](https://docs.ollama.com/api/generate) for streaming and runtime counters; first-token convention from [llama.cpp `server-context.cpp`](https://github.com/ggml-org/llama.cpp/blob/161755f29/tools/server/server-context.cpp).
+- [MLX synchronize](https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.synchronize.html) and [peak memory](https://ml-explore.github.io/mlx/build/html/python/_autosummary/mlx.core.get_peak_memory.html) define the scope of the MLX timing and memory windows.
+- Test sources: [HTTP/SQLite](../crates/anchor-hub/tests/measurements_e2e.rs), [installed Ollama](../crates/anchor-hub/tests/ollama_decode_e2e.rs), [MLX](../crates/anchor-hub/tests/mlx_suite_e2e.rs), [browser](../apps/desktop/e2e/anchor.spec.ts), [native](../apps/desktop/e2e/native.mjs).

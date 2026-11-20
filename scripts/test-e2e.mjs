@@ -223,7 +223,7 @@ finally {
     report.nextActions = selected.filter(r => r.status !== 'passed').map(r => ({ stage: r.id, status: r.status, reason: r.reason, log: r.log, sources: r.sources, rerun: r.rerun }));
     await persist();
     await unlink(lock);
-    await writeFile(path.join(dir, 'NEXT.md'), `# Agent repair loop\n\nRead docs/testing.md and report.json. Fix product code or the isolated fixture's fidelity; preserve assertions. Rerun the failing stage, then the original scope. Do not auto-retry a failed run into a green result, widen runtime claims, delete user data, sign, publish or inspect credentials. Ask only for an unavailable external prerequisite, a product decision, or a destructive/credentialed action.\n\n${report.nextActions.map(a => `- ${a.stage}: ${a.status}; ${a.reason}\n  Log: ${a.log}\n  Sources: ${a.sources.join(', ')}\n  Rerun: ${a.rerun}`).join('\n')}\n`);
+    await writeFile(path.join(dir, 'NEXT.md'), `# Agent repair loop\n\nRead docs/development.md and report.json. Fix product code or the isolated fixture's fidelity; preserve assertions. Rerun the failing stage, then the original scope. Do not auto-retry a failed run into a green result, widen runtime claims, delete user data, sign, publish or inspect credentials. Ask only for an unavailable external prerequisite, a product decision, or a destructive/credentialed action.\n\n${report.nextActions.map(a => `- ${a.stage}: ${a.status}; ${a.reason}\n  Log: ${a.log}\n  Sources: ${a.sources.join(', ')}\n  Rerun: ${a.rerun}`).join('\n')}\n`);
     console.log(`\n${report.status.toUpperCase()} (${report.scope}) — ${path.join(dir, 'report.json')}`);
     process.exitCode = interrupted ? 130 : report.status === 'failed' ? 1 : report.status === 'blocked' ? 2 : 0;
 }
